@@ -662,7 +662,7 @@ func toSlice(v interface{}) ([]interface{}, bool) {
 
 // validateFlowGraph validates a v2 IVR flow graph for structural correctness.
 func validateFlowGraph(menu models.JSONB) error {
-	versionRaw, _ := menu["version"]
+	versionRaw := menu["version"]
 	var version int
 	switch v := versionRaw.(type) {
 	case float64:
@@ -723,7 +723,7 @@ func validateFlowGraph(menu models.JSONB) error {
 	}
 
 	// Validate edges
-	edgesRaw, _ := menu["edges"]
+	edgesRaw := menu["edges"]
 	if edgesRaw != nil {
 		edgesSlice, ok := toSlice(edgesRaw)
 		if !ok {
