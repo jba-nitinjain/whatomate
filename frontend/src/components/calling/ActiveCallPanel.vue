@@ -3,12 +3,14 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useCallingStore } from '@/stores/calling'
 import { Button } from '@/components/ui/button'
-import { Phone, PhoneOff, PhoneIncoming, Mic, MicOff } from 'lucide-vue-next'
+import { Phone, PhoneOff, PhoneIncoming, Mic, MicOff, ArrowRightLeft } from 'lucide-vue-next'
+import CallTransferPicker from '@/components/calling/CallTransferPicker.vue'
 import { toast } from 'vue-sonner'
 
 const { t } = useI18n()
 const store = useCallingStore()
 const acceptingId = ref<string | null>(null)
+const showTransferPicker = ref(false)
 
 const formattedDuration = computed(() => {
   const m = Math.floor(store.callDuration / 60)
@@ -111,6 +113,18 @@ async function handleAccept(id: string) {
           <Mic v-else class="h-4 w-4 text-zinc-300" />
         </Button>
 
+        <!-- Transfer (only when on active call) -->
+        <Button
+          v-if="store.isOnCall"
+          size="sm"
+          variant="outline"
+          class="h-10 w-10 rounded-full p-0 border-zinc-600"
+          :title="t('callTransfers.transfer')"
+          @click="showTransferPicker = true"
+        >
+          <ArrowRightLeft class="h-4 w-4 text-zinc-300" />
+        </Button>
+
         <!-- Accept incoming transfer (green) -->
         <Button
           v-if="firstWaiting"
@@ -135,5 +149,7 @@ async function handleAccept(id: string) {
         </Button>
       </div>
     </div>
+
+    <CallTransferPicker v-if="showTransferPicker" @close="showTransferPicker = false" />
   </Teleport>
 </template>
