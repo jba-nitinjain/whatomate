@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/shridarpatil/whatomate/internal/templateutil"
+	"github.com/shridarpatil/whatomate/internal/utils"
 	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"github.com/valyala/fasthttp"
@@ -408,7 +409,7 @@ func (a *App) broadcastNewMessage(orgID uuid.UUID, msg *models.Message, contact 
 	}
 	profileName := contact.ProfileName
 	if a.ShouldMaskPhoneNumbers(orgID) {
-		profileName = MaskIfPhoneNumber(profileName)
+		profileName = utils.MaskIfPhoneNumber(profileName)
 	}
 
 	payload := map[string]any{

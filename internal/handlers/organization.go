@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/database"
+	"github.com/shridarpatil/whatomate/internal/utils"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -210,47 +211,11 @@ func callingConfigDefault(val, fallback int) int {
 	return fallback
 }
 
-// MaskPhoneNumber masks a phone number showing only last 4 digits
-func MaskPhoneNumber(phone string) string {
-	if len(phone) <= 4 {
-		return phone
-	}
-	masked := ""
-	for i := 0; i < len(phone)-4; i++ {
-		masked += "*"
-	}
-	return masked + phone[len(phone)-4:]
-}
-
-// LooksLikePhoneNumber checks if a string looks like a phone number
-// (mostly digits, optionally with common phone formatting characters)
-func LooksLikePhoneNumber(s string) bool {
-	if len(s) < 7 {
-		return false
-	}
-	digitCount := 0
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			digitCount++
-		}
-	}
-	// If at least 7 digits and more than 70% of the string is digits
-	return digitCount >= 7 && float64(digitCount)/float64(len(s)) > 0.7
-}
-
-// MaskIfPhoneNumber masks a string if it looks like a phone number
-func MaskIfPhoneNumber(s string) string {
-	if LooksLikePhoneNumber(s) {
-		return MaskPhoneNumber(s)
-	}
-	return s
-}
-
 // MaskContactFields conditionally masks a profile name and phone number
 // if phone masking is enabled for the given organization.
 func (a *App) MaskContactFields(orgID interface{}, profileName, phoneNumber string) (string, string) {
 	if a.ShouldMaskPhoneNumbers(orgID) {
-		return MaskIfPhoneNumber(profileName), MaskPhoneNumber(phoneNumber)
+		return utils.MaskIfPhoneNumber(profileName), utils.MaskPhoneNumber(phoneNumber)
 	}
 	return profileName, phoneNumber
 }

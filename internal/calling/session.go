@@ -315,6 +315,7 @@ func (m *Manager) GetSessionByCallLogID(callLogID uuid.UUID) *CallSession {
 // orgCallingSettings holds per-org calling overrides resolved from a single DB query.
 type orgCallingSettings struct {
 	TransferTimeoutSecs int
+	MaskPhoneNumbers    bool
 	HoldMusicFile       string
 	RingbackFile        string
 }

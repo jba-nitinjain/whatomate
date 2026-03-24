@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/utils"
 )
 
 const (
@@ -137,6 +138,9 @@ func (m *Manager) applyOrgOverrides(s *orgCallingSettings, settings map[string]a
 	if settings == nil {
 		return
 	}
+	if v, ok := settings["mask_phone_numbers"].(bool); ok {
+		s.MaskPhoneNumbers = v
+	}
 	if v, ok := settings["transfer_timeout_secs"].(float64); ok && v > 0 {
 		s.TransferTimeoutSecs = int(v)
 	}
@@ -168,4 +172,14 @@ func (m *Manager) InvalidateIVRFlowCache(flowID uuid.UUID, orgID uuid.UUID, acco
 func (m *Manager) InvalidateOrgCallingSettingsCache(orgID uuid.UUID) {
 	ctx := context.Background()
 	m.redis.Del(ctx, orgSettingsCachePrefix+orgID.String())
+}
+
+// maybeMaskPhone masks a phone number if masking is enabled for the org.
+// Reuses the cached org settings (no extra DB query).
+func (m *Manager) maybeMaskPhone(orgID uuid.UUID, phone string) string {
+	settings := m.getOrgCallingSettingsCached(orgID)
+	if !settings.MaskPhoneNumbers {
+		return phone
+	}
+	return utils.MaskPhoneNumber(phone)
 }

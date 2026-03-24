@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/assignment"
 	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/utils"
 	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -294,7 +295,7 @@ func (a *App) ListAgentTransfers(r *fastglue.Request) error {
 	for i, t := range transfers {
 		phoneNumber := t.PhoneNumber
 		if shouldMask {
-			phoneNumber = MaskPhoneNumber(phoneNumber)
+			phoneNumber = utils.MaskPhoneNumber(phoneNumber)
 		}
 
 		resp := AgentTransferResponse{
@@ -311,7 +312,7 @@ func (a *App) ListAgentTransfers(r *fastglue.Request) error {
 		if t.ContactName != nil {
 			contactName := *t.ContactName
 			if shouldMask {
-				contactName = MaskIfPhoneNumber(contactName)
+				contactName = utils.MaskIfPhoneNumber(contactName)
 			}
 			resp.ContactName = contactName
 		}
@@ -966,7 +967,7 @@ func (a *App) PickNextTransfer(r *fastglue.Request) error {
 	shouldMask := a.ShouldMaskPhoneNumbers(orgID)
 	phoneNumber := transfer.PhoneNumber
 	if shouldMask {
-		phoneNumber = MaskPhoneNumber(phoneNumber)
+		phoneNumber = utils.MaskPhoneNumber(phoneNumber)
 	}
 
 	resp := AgentTransferResponse{
@@ -983,7 +984,7 @@ func (a *App) PickNextTransfer(r *fastglue.Request) error {
 	if transfer.Contact != nil {
 		contactName := transfer.Contact.ProfileName
 		if shouldMask {
-			contactName = MaskIfPhoneNumber(contactName)
+			contactName = utils.MaskIfPhoneNumber(contactName)
 		}
 		resp.ContactName = contactName
 	}

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"github.com/google/uuid"
+	"github.com/shridarpatil/whatomate/internal/utils"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -44,6 +45,17 @@ func (a *App) ListCallTransfers(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to fetch call transfers", nil, "")
 	}
 
+	// Mask phone numbers if enabled for this organization
+	if a.ShouldMaskPhoneNumbers(orgID) {
+		for i := range transfers {
+			transfers[i].CallerPhone = utils.MaskPhoneNumber(transfers[i].CallerPhone)
+			if transfers[i].Contact != nil {
+				transfers[i].Contact.PhoneNumber = utils.MaskPhoneNumber(transfers[i].Contact.PhoneNumber)
+				transfers[i].Contact.ProfileName = utils.MaskIfPhoneNumber(transfers[i].Contact.ProfileName)
+			}
+		}
+	}
+
 	return r.SendEnvelope(map[string]any{
 		"call_transfers": transfers,
 		"total":          total,
@@ -76,6 +88,14 @@ func (a *App) GetCallTransfer(r *fastglue.Request) error {
 		Preload("CallLog").
 		First(&transfer).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Call transfer not found", nil, "")
+	}
+
+	if a.ShouldMaskPhoneNumbers(orgID) {
+		transfer.CallerPhone = utils.MaskPhoneNumber(transfer.CallerPhone)
+		if transfer.Contact != nil {
+			transfer.Contact.PhoneNumber = utils.MaskPhoneNumber(transfer.Contact.PhoneNumber)
+			transfer.Contact.ProfileName = utils.MaskIfPhoneNumber(transfer.Contact.ProfileName)
+		}
 	}
 
 	return r.SendEnvelope(transfer)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/shridarpatil/whatomate/internal/utils"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -166,8 +167,8 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 		phoneNumber := c.PhoneNumber
 		profileName := c.ProfileName
 		if shouldMask {
-			phoneNumber = MaskPhoneNumber(phoneNumber)
-			profileName = MaskIfPhoneNumber(profileName)
+			phoneNumber = utils.MaskPhoneNumber(phoneNumber)
+			profileName = utils.MaskIfPhoneNumber(profileName)
 		}
 
 		serviceWindowOpen := c.LastInboundAt != nil && time.Since(*c.LastInboundAt) < 24*time.Hour
@@ -243,8 +244,8 @@ func (a *App) GetContact(r *fastglue.Request) error {
 	profileName := contact.ProfileName
 	shouldMask := a.ShouldMaskPhoneNumbers(orgID)
 	if shouldMask {
-		phoneNumber = MaskPhoneNumber(phoneNumber)
-		profileName = MaskIfPhoneNumber(profileName)
+		phoneNumber = utils.MaskPhoneNumber(phoneNumber)
+		profileName = utils.MaskIfPhoneNumber(profileName)
 	}
 
 	response := ContactResponse{
@@ -1503,8 +1504,8 @@ func (a *App) buildContactResponse(contact *models.Contact, orgID uuid.UUID) Con
 	profileName := contact.ProfileName
 	shouldMask := a.ShouldMaskPhoneNumbers(orgID)
 	if shouldMask {
-		phoneNumber = MaskPhoneNumber(phoneNumber)
-		profileName = MaskIfPhoneNumber(profileName)
+		phoneNumber = utils.MaskPhoneNumber(phoneNumber)
+		profileName = utils.MaskIfPhoneNumber(profileName)
 	}
 
 	// 24-hour service window: open if customer messaged within the last 24 hours.
