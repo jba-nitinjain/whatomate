@@ -831,6 +831,7 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 type CreateExternalMessageRequest struct {
 	ContactID         string             `json:"contact_id"`
 	PhoneNumber       string             `json:"phone_number"`
+	PhoneNumberID     string             `json:"phone_number_id"`
 	ProfileName       string             `json:"profile_name"`
 	WhatsAppAccount   string             `json:"whatsapp_account"`
 	Type              models.MessageType `json:"type"`
@@ -840,6 +841,9 @@ type CreateExternalMessageRequest struct {
 	MediaURL          string             `json:"media_url"`
 	MediaMimeType     string             `json:"media_mime_type"`
 	MediaFilename     string             `json:"media_filename"`
+	HeaderMediaURL    string             `json:"header_media_url"`
+	HeaderMediaMimeType string           `json:"header_media_mime_type"`
+	HeaderMediaFilename string           `json:"header_media_filename"`
 	InteractiveData   models.JSONB `json:"interactive_data"`
 	TemplateName      string             `json:"template_name"`
 	TemplateParams    models.JSONB `json:"template_params"`
@@ -902,19 +906,11 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 		contact = *c
 	}
 
-	accountName := req.WhatsAppAccount
-	if accountName == "" {
-		accountName = contact.WhatsAppAccount
-	}
-	account, err := a.resolveWhatsAppAccount(orgID, accountName)
+	account, err := a.resolveExternalMessageWhatsAppAccount(orgID, &contact, req)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 
-	if req.WhatsAppAccount != "" && contact.WhatsAppAccount != req.WhatsAppAccount {
-		a.DB.Model(&contact).Update("whats_app_account", req.WhatsAppAccount)
-		contact.WhatsAppAccount = req.WhatsAppAccount
-	}
 	if contact.WhatsAppAccount == "" || contact.WhatsAppAccount != account.Name {
 		a.DB.Model(&contact).Update("whats_app_account", account.Name)
 		contact.WhatsAppAccount = account.Name
@@ -948,11 +944,20 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 	if req.ExternalMessageID != "" {
 		metadata["external_message_id"] = req.ExternalMessageID
 	}
+	if req.PhoneNumberID != "" {
+		if _, ok := metadata["phone_number_id"]; !ok {
+			metadata["phone_number_id"] = req.PhoneNumberID
+		}
+	}
 
 	contentBody := req.Content.Body
 	interactiveData := req.InteractiveData
+	mediaURL := req.MediaURL
+	mediaMimeType := req.MediaMimeType
+	mediaFilename := req.MediaFilename
 	if req.Type == models.MessageTypeTemplate {
-		template, err := a.findTemplateForExternalMessage(orgID, account.Name, req.TemplateName)
+		var template *models.Template
+		template, err = a.findTemplateForExternalMessage(orgID, account.Name, req.TemplateName)
 		if err != nil {
 			a.Log.Warn("Template not found for external message render", "template_name", req.TemplateName, "account", account.Name, "error", err)
 		} else if template != nil {
@@ -964,6 +969,7 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 				interactiveData = a.buildInteractiveData(OutgoingMessageRequest{Template: template})
 			}
 		}
+		mediaURL, mediaMimeType, mediaFilename = resolveExternalTemplateMedia(req, template, mediaURL, mediaMimeType, mediaFilename)
 		if contentBody == "" {
 			contentBody = externalTemplateFallback(req.TemplateName)
 		}
@@ -978,9 +984,9 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 		Direction:         models.DirectionOutgoing,
 		MessageType:       req.Type,
 		Content:           contentBody,
-		MediaURL:          req.MediaURL,
-		MediaMimeType:     req.MediaMimeType,
-		MediaFilename:     req.MediaFilename,
+		MediaURL:          mediaURL,
+		MediaMimeType:     mediaMimeType,
+		MediaFilename:     mediaFilename,
 		TemplateName:      req.TemplateName,
 		TemplateParams:    req.TemplateParams,
 		InteractiveData:   interactiveData,
@@ -1135,5 +1141,57 @@ func externalTemplateFallback(templateName string) string {
 		return "[Template: " + templateName + "]"
 	}
 	return "[Template]"
+}
+
+func (a *App) resolveExternalMessageWhatsAppAccount(orgID uuid.UUID, contact *models.Contact, req CreateExternalMessageRequest) (*models.WhatsAppAccount, error) {
+	if req.PhoneNumberID != "" {
+		var account models.WhatsAppAccount
+		if err := a.DB.Where("organization_id = ? AND phone_id = ?", orgID, req.PhoneNumberID).First(&account).Error; err != nil {
+			return nil, fmt.Errorf("WhatsApp account not found for phone_number_id")
+		}
+		a.decryptAccountSecrets(&account)
+		return &account, nil
+	}
+
+	accountName := req.WhatsAppAccount
+	if accountName == "" && contact != nil {
+		accountName = contact.WhatsAppAccount
+	}
+	return a.resolveWhatsAppAccount(orgID, accountName)
+}
+
+func resolveExternalTemplateMedia(req CreateExternalMessageRequest, template *models.Template, mediaURL, mediaMimeType, mediaFilename string) (string, string, string) {
+	if req.HeaderMediaURL != "" || req.HeaderMediaMimeType != "" || req.HeaderMediaFilename != "" {
+		if req.HeaderMediaURL != "" {
+			mediaURL = req.HeaderMediaURL
+		}
+		if req.HeaderMediaMimeType != "" {
+			mediaMimeType = req.HeaderMediaMimeType
+		}
+		if req.HeaderMediaFilename != "" {
+			mediaFilename = req.HeaderMediaFilename
+		}
+		return mediaURL, mediaMimeType, mediaFilename
+	}
+
+	if mediaURL == "" && templateHasRenderableHeaderMedia(template) {
+		mediaURL = strings.TrimSpace(template.HeaderContent)
+	}
+
+	return mediaURL, mediaMimeType, mediaFilename
+}
+
+func templateHasRenderableHeaderMedia(template *models.Template) bool {
+	if template == nil {
+		return false
+	}
+
+	switch strings.ToUpper(strings.TrimSpace(template.HeaderType)) {
+	case "IMAGE", "VIDEO", "DOCUMENT":
+		content := strings.TrimSpace(template.HeaderContent)
+		return strings.HasPrefix(content, "http://") || strings.HasPrefix(content, "https://") || strings.HasPrefix(content, "/")
+	default:
+		return false
+	}
 }
 
