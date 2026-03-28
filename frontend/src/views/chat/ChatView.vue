@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick, computed, defineAsyncComponent } from 'vue'
+import DOMPurify from 'dompurify'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useContactsStore, type Contact, type Message } from '@/stores/contacts'
@@ -1049,6 +1050,60 @@ function getMessageContent(message: Message): string {
   return '[Message]'
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function formatWhatsAppText(text: string): string {
+  if (!text) return ''
+
+  let html = escapeHtml(text).replace(/\r\n/g, '\n')
+
+  const codeBlocks: string[] = []
+  html = html.replace(/```([\s\S]*?)```/g, (_, code: string) => {
+    const placeholder = `__WA_CODE_BLOCK_${codeBlocks.length}__`
+    codeBlocks.push(`<pre><code>${code}</code></pre>`)
+    return placeholder
+  })
+
+  const inlineCodes: string[] = []
+  html = html.replace(/`([^`\n]+)`/g, (_, code: string) => {
+    const placeholder = `__WA_INLINE_CODE_${inlineCodes.length}__`
+    inlineCodes.push(`<code>${code}</code>`)
+    return placeholder
+  })
+
+  html = html.replace(
+    /\b(https?:\/\/[^\s<]+[^\s<.,!?;:)\]])/g,
+    '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>',
+  )
+
+  html = html.replace(/(^|[\s(>])\*([^*\n]+)\*(?=($|[\s.,!?;:)\]]))/gm, '$1<strong>$2</strong>')
+  html = html.replace(/(^|[\s(>])_([^_\n]+)_(?=($|[\s.,!?;:)\]]))/gm, '$1<em>$2</em>')
+  html = html.replace(/(^|[\s(>])~([^~\n]+)~(?=($|[\s.,!?;:)\]]))/gm, '$1<s>$2</s>')
+
+  html = html.replace(/\n/g, '<br>')
+
+  html = html.replace(/__WA_CODE_BLOCK_(\d+)__/g, (_, index: string) => codeBlocks[Number(index)] || '')
+  html = html.replace(/__WA_INLINE_CODE_(\d+)__/g, (_, index: string) => inlineCodes[Number(index)] || '')
+
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['a', 'br', 'strong', 'em', 's', 'code', 'pre'],
+    ALLOWED_ATTR: ['href', 'target', 'rel'],
+  })
+}
+
+function formatMessageContent(message: Message): string {
+  return formatWhatsAppText(getMessageContent(message))
+}
+
+const formattedTemplatePreview = computed(() => formatWhatsAppText(templatePreview.value))
+
 interface LocationData {
   latitude: number
   longitude: number
@@ -1868,11 +1923,11 @@ async function sendMediaMessage() {
                 </div>
                 <!-- Button reply - WhatsApp style -->
                 <div v-if="message.message_type === 'button_reply'" class="button-reply-bubble">
-                  <span class="whitespace-pre-wrap break-words">{{ getMessageContent(message) }}</span>
+                  <span class="wa-formatted-message break-words" v-html="formatMessageContent(message)"></span>
                   <span class="chat-bubble-time"><span>{{ formatMessageTime(message.created_at) }}</span></span>
                 </div>
                 <!-- Text content (for text messages or captions) -->
-                <span v-else-if="getMessageContent(message)" class="whitespace-pre-wrap break-words">{{ getMessageContent(message) }}<span class="chat-bubble-time"><span>{{ formatMessageTime(message.created_at) }}</span><component v-if="message.direction === 'outgoing'" :is="getMessageStatusIcon(message.status)" :class="['h-4 w-4 status-icon', getMessageStatusClass(message.status)]" /></span></span>
+                <span v-else-if="getMessageContent(message)" class="break-words"><span class="wa-formatted-message" v-html="formatMessageContent(message)"></span><span class="chat-bubble-time"><span>{{ formatMessageTime(message.created_at) }}</span><component v-if="message.direction === 'outgoing'" :is="getMessageStatusIcon(message.status)" :class="['h-4 w-4 status-icon', getMessageStatusClass(message.status)]" /></span></span>
                 <!-- Fallback for media without URL -->
                 <span v-else-if="isMediaMessage(message) && !message.media_url" class="text-muted-foreground italic">[{{ message.message_type.charAt(0).toUpperCase() + message.message_type.slice(1) }}]<span class="chat-bubble-time"><span>{{ formatMessageTime(message.created_at) }}</span><component v-if="message.direction === 'outgoing'" :is="getMessageStatusIcon(message.status)" :class="['h-4 w-4 status-icon', getMessageStatusClass(message.status)]" /></span></span>
                 <!-- Interactive buttons - WhatsApp style -->
@@ -2045,7 +2100,7 @@ async function sendMediaMessage() {
               Replying to {{ contactsStore.replyingTo.direction === 'incoming' ? (contactsStore.currentContact?.profile_name || contactsStore.currentContact?.name || 'Customer') : 'Yourself' }}
             </p>
             <p class="text-sm truncate text-white/70 light:text-gray-700">
-              {{ getMessageContent(contactsStore.replyingTo) || '[Media]' }}
+              <span class="wa-formatted-message" v-html="formatMessageContent(contactsStore.replyingTo) || '[Media]'"></span>
             </p>
           </div>
           <button class="w-6 h-6 rounded hover:bg-white/[0.08] light:hover:bg-gray-200 flex items-center justify-center shrink-0 transition-colors" @click="contactsStore.clearReplyingTo">
@@ -2184,7 +2239,7 @@ async function sendMediaMessage() {
             <label class="text-xs font-medium text-muted-foreground">{{ $t('chat.preview') }}</label>
             <div class="chat-bubble chat-bubble-outgoing ml-auto" style="max-width: 100%;">
               <img v-if="templateHeaderPreview" :src="templateHeaderPreview" class="rounded-lg mb-2 max-h-40 w-full object-cover" />
-              <span class="whitespace-pre-wrap break-words text-sm">{{ templatePreview }}</span>
+              <span class="wa-formatted-message break-words text-sm" v-html="formattedTemplatePreview"></span>
               <div
                 v-if="selectedTemplate?.buttons?.length"
                 class="interactive-buttons mt-2 -mx-2 -mb-1.5 border-t"
@@ -2359,5 +2414,30 @@ async function sendMediaMessage() {
 .sticky-date-enter-from,
 .sticky-date-leave-to {
   opacity: 0;
+}
+
+.wa-formatted-message :deep(a) {
+  color: inherit;
+  text-decoration: underline;
+  word-break: break-word;
+}
+
+.wa-formatted-message :deep(pre) {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0.35rem 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.5rem;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 0.875em;
+}
+
+.wa-formatted-message :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.wa-formatted-message :deep(pre code) {
+  background: transparent;
+  padding: 0;
 }
 </style>
