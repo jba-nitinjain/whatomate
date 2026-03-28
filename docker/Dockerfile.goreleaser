@@ -3,8 +3,14 @@
 
 # Piper TTS download stage
 FROM debian:bookworm-slim AS piper-dl
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN wget -q https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz -O /tmp/piper.tar.gz \
+RUN case "${TARGETARCH}" in \
+        amd64) piper_arch="x86_64" ;; \
+        arm64) piper_arch="aarch64" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && wget -q "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_${piper_arch}.tar.gz" -O /tmp/piper.tar.gz \
     && tar xf /tmp/piper.tar.gz -C /tmp \
     && rm /tmp/piper.tar.gz
 # Download default English voice model (~60MB)

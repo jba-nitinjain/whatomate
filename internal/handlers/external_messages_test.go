@@ -115,6 +115,53 @@ func TestApp_CreateExternalMessage(t *testing.T) {
 		assert.Len(t, mockServer.sentMessages, 0)
 	})
 
+	t.Run("template message renders template body", func(t *testing.T) {
+		t.Parallel()
+
+		app := newTestApp(t)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("primary"))
+		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
+		template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+
+		template.BodyContent = "Hello {{name}}, your portal is {{portal}}"
+		require.NoError(t, app.DB.Model(template).Updates(map[string]any{
+			"body_content": template.BodyContent,
+		}).Error)
+
+		req := testutil.NewJSONRequest(t, map[string]any{
+			"contact_id":          contact.ID.String(),
+			"whatsapp_account":    account.Name,
+			"type":                "template",
+			"template_name":       template.Name,
+			"template_params":     map[string]any{"name": "Nitin Jain", "portal": "Income Tax"},
+			"content":             map[string]string{"body": "[Template: credentials_v1]"},
+			"whatsapp_message_id": "wamid.external-template-123",
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+
+		err := app.CreateExternalMessage(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		var resp struct {
+			Data handlers.MessageResponse `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+		assert.Equal(t, models.MessageTypeTemplate, resp.Data.MessageType)
+		assert.Equal(t, map[string]any{"body": "Hello Nitin Jain, your portal is Income Tax"}, resp.Data.Content)
+
+		var msg models.Message
+		require.NoError(t, app.DB.First(&msg, resp.Data.ID).Error)
+		assert.Equal(t, "Hello Nitin Jain, your portal is Income Tax", msg.Content)
+
+		var updatedContact models.Contact
+		require.NoError(t, app.DB.First(&updatedContact, contact.ID).Error)
+		assert.Equal(t, "Hello Nitin Jain, your portal is Income Tax", updatedContact.LastMessagePreview)
+	})
+
 	t.Run("phone number create requires contacts write", func(t *testing.T) {
 		t.Parallel()
 

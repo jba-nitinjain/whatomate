@@ -949,6 +949,26 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 		metadata["external_message_id"] = req.ExternalMessageID
 	}
 
+	contentBody := req.Content.Body
+	interactiveData := req.InteractiveData
+	if req.Type == models.MessageTypeTemplate {
+		template, err := a.findTemplateForExternalMessage(orgID, account.Name, req.TemplateName)
+		if err != nil {
+			a.Log.Warn("Template not found for external message render", "template_name", req.TemplateName, "account", account.Name, "error", err)
+		} else if template != nil {
+			renderedContent := templateutil.ReplaceWithStringParams(template.BodyContent, jsonbToStringMap(req.TemplateParams))
+			if renderedContent != "" {
+				contentBody = renderedContent
+			}
+			if interactiveData == nil && len(template.Buttons) > 0 {
+				interactiveData = a.buildInteractiveData(OutgoingMessageRequest{Template: template})
+			}
+		}
+		if contentBody == "" {
+			contentBody = externalTemplateFallback(req.TemplateName)
+		}
+	}
+
 	msg := &models.Message{
 		BaseModel:         models.BaseModel{ID: uuid.New(), CreatedAt: createdAt, UpdatedAt: createdAt},
 		OrganizationID:    orgID,
@@ -957,13 +977,13 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 		WhatsAppMessageID: req.WhatsAppMessageID,
 		Direction:         models.DirectionOutgoing,
 		MessageType:       req.Type,
-		Content:           req.Content.Body,
+		Content:           contentBody,
 		MediaURL:          req.MediaURL,
 		MediaMimeType:     req.MediaMimeType,
 		MediaFilename:     req.MediaFilename,
 		TemplateName:      req.TemplateName,
 		TemplateParams:    req.TemplateParams,
-		InteractiveData:   req.InteractiveData,
+		InteractiveData:   interactiveData,
 		FlowResponse:      req.FlowResponse,
 		Status:            models.MessageStatusSent,
 		SentByUserID:      &userID,
@@ -1044,6 +1064,9 @@ func (a *App) getPersistedMessagePreview(msg *models.Message) string {
 		}
 		return "[Document]"
 	case models.MessageTypeTemplate:
+		if msg.Content != "" {
+			return truncateString(msg.Content, 100)
+		}
 		if msg.TemplateName != "" {
 			return "[Template: " + msg.TemplateName + "]"
 		}
@@ -1064,5 +1087,53 @@ func (a *App) getPersistedMessagePreview(msg *models.Message) string {
 		}
 		return "[Message]"
 	}
+}
+
+func (a *App) findTemplateForExternalMessage(orgID uuid.UUID, accountName, templateName string) (*models.Template, error) {
+	if templateName == "" {
+		return nil, nil
+	}
+
+	var template models.Template
+	query := a.DB.Where("organization_id = ? AND name = ?", orgID, templateName)
+	if accountName != "" {
+		query = query.Where("whats_app_account = ?", accountName)
+	}
+	if err := query.First(&template).Error; err != nil && accountName != "" {
+		if err := a.DB.Where("organization_id = ? AND name = ?", orgID, templateName).First(&template).Error; err != nil {
+			return nil, err
+		}
+		return &template, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	return &template, nil
+}
+
+func jsonbToStringMap(data models.JSONB) map[string]string {
+	if len(data) == 0 {
+		return nil
+	}
+
+	result := make(map[string]string, len(data))
+	for key, value := range data {
+		if value == nil {
+			continue
+		}
+		result[key] = fmt.Sprintf("%v", value)
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func externalTemplateFallback(templateName string) string {
+	if templateName != "" {
+		return "[Template: " + templateName + "]"
+	}
+	return "[Template]"
 }
 
