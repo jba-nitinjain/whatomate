@@ -59,19 +59,19 @@ Modern, open-source WhatsApp Business Platform. Single binary app.
 
 ### Docker
 
-The latest image is available on Docker Hub at [`shridh0r/whatomate:latest`](https://hub.docker.com/r/shridh0r/whatomate)
+The compose setup can build the app directly from [`jba-nitinjain/whatomate`](https://github.com/jba-nitinjain/whatomate.git) instead of pulling a prebuilt image.
 
 ```bash
 # Download compose file, sample config, and env file
-curl -LO https://raw.githubusercontent.com/shridarpatil/whatomate/main/docker/docker-compose.yml
-curl -LO https://raw.githubusercontent.com/shridarpatil/whatomate/main/config.example.toml
-curl -L https://raw.githubusercontent.com/shridarpatil/whatomate/main/docker/.env.example -o .env
+curl -LO https://raw.githubusercontent.com/jba-nitinjain/whatomate/main/docker/docker-compose.yml
+curl -LO https://raw.githubusercontent.com/jba-nitinjain/whatomate/main/config.example.toml
+curl -L https://raw.githubusercontent.com/jba-nitinjain/whatomate/main/docker/.env.example -o .env
 
 # Copy and edit config
 cp config.example.toml config.toml
 # Edit .env to set PostgreSQL credentials and timezone
 
-# Run services
+# Build from the repo and run services
 docker compose up -d
 ```
 

@@ -499,6 +499,10 @@ function removeButton(index: number) {
   formData.value.buttons.splice(index, 1)
 }
 
+function buttonHasDynamicURL(button: any): boolean {
+  return button?.type === 'URL' && typeof button?.url === 'string' && /\{\{([^}]+)\}\}/.test(button.url)
+}
+
 // Handle header media file selection
 function onHeaderMediaFileChange(event: Event) {
   const input = event.target as HTMLInputElement
@@ -965,6 +969,13 @@ function formatPreview(text: string, samples: any[]): string {
                 <Label class="text-xs">{{ $t('templates.buttonUrl') }}</Label>
                 <Input v-model="button.url" placeholder="https://example.com/{{path}}" class="h-9" />
                 <p class="text-xs text-muted-foreground">{{ $t('templates.buttonUrlHint') }}</p>
+              </div>
+              <div v-if="buttonHasDynamicURL(button)" class="space-y-1">
+                <Label class="text-xs">Dynamic URL Sample</Label>
+                <Input v-model="button.example" placeholder="promo-123" class="h-9" />
+                <p class="text-xs text-muted-foreground">
+                  Required by Meta for URL buttons with a dynamic placeholder.
+                </p>
               </div>
 
               <!-- Phone number specific fields -->

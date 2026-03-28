@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -559,6 +560,78 @@ func TestApp_StartCampaign_CanResumePaused(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
 	assert.Len(t, mockQueue.Jobs, 1)
+}
+
+func TestApp_StartCampaign_RequiresHeaderMedia(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("start-header-media")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("header-media-account"))
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	require.NoError(t, app.DB.Model(template).Updates(map[string]interface{}{
+		"header_type": "IMAGE",
+	}).Error)
+
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusDraft)
+	createTestRecipient(t, app, campaign.ID, "+1234567890", models.MessageStatusPending)
+
+	req := testutil.NewJSONRequest(t, nil)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+
+	err := app.StartCampaign(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusBadRequest, testutil.GetResponseStatusCode(req))
+	assert.Empty(t, mockQueue.Jobs)
+}
+
+func TestApp_StartCampaign_SchedulesFutureCampaign(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("schedule-future")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("schedule-future-account"))
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusDraft)
+	scheduledAt := time.Now().Add(2 * time.Hour)
+	require.NoError(t, app.DB.Model(campaign).Update("scheduled_at", scheduledAt).Error)
+	createTestRecipient(t, app, campaign.ID, "+1234567890", models.MessageStatusPending)
+
+	req := testutil.NewJSONRequest(t, nil)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+
+	err := app.StartCampaign(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	assert.Empty(t, mockQueue.Jobs)
+
+	var updated models.BulkMessageCampaign
+	require.NoError(t, app.DB.Where("id = ?", campaign.ID).First(&updated).Error)
+	assert.Equal(t, models.CampaignStatusScheduled, updated.Status)
+}
+
+func TestApp_ProcessDueCampaigns_StartsScheduledCampaign(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("schedule-due")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("schedule-due-account"))
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusScheduled)
+	scheduledAt := time.Now().Add(-5 * time.Minute)
+	require.NoError(t, app.DB.Model(campaign).Update("scheduled_at", scheduledAt).Error)
+	createTestRecipient(t, app, campaign.ID, "+1234567890", models.MessageStatusPending)
+
+	app.ProcessDueCampaigns(context.Background())
+
+	require.Len(t, mockQueue.Jobs, 1)
+
+	var updated models.BulkMessageCampaign
+	require.NoError(t, app.DB.Where("id = ?", campaign.ID).First(&updated).Error)
+	assert.Equal(t, models.CampaignStatusProcessing, updated.Status)
+	assert.NotNil(t, updated.StartedAt)
 }
 
 // --- PauseCampaign Tests ---

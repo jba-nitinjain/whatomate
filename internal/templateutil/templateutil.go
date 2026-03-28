@@ -58,6 +58,31 @@ func ResolveParamsFromMap(paramNames []string, params map[string]string) []strin
 	return result
 }
 
+// ResolveParamsMapFromMap resolves parameters into a name->value map using template parameter names.
+// It supports both named keys (e.g. "name") and positional keys (e.g. "1").
+func ResolveParamsMapFromMap(paramNames []string, params map[string]string) map[string]string {
+	if len(paramNames) == 0 || len(params) == 0 {
+		return nil
+	}
+
+	result := make(map[string]string, len(paramNames))
+	for i, name := range paramNames {
+		if val, ok := params[name]; ok {
+			result[name] = val
+			continue
+		}
+		key := fmt.Sprintf("%d", i+1)
+		if val, ok := params[key]; ok {
+			result[name] = val
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
 // ResolveParams resolves both positional and named parameters to ordered values
 // using a map[string]interface{} parameter source (e.g. models.JSONB).
 func ResolveParams(bodyContent string, params map[string]interface{}) []string {
@@ -87,6 +112,178 @@ func ResolveParams(bodyContent string, params map[string]interface{}) []string {
 		result[i] = ""
 	}
 	return result
+}
+
+// ResolveParamsMap resolves parameters into a name->value map using a JSON-like parameter source.
+func ResolveParamsMap(content string, params map[string]interface{}) map[string]string {
+	paramNames := ExtParamNames(content)
+	if len(paramNames) == 0 || len(params) == 0 {
+		return nil
+	}
+
+	result := make(map[string]string, len(paramNames))
+	for i, name := range paramNames {
+		if val, ok := params[name]; ok {
+			result[name] = fmt.Sprintf("%v", val)
+			continue
+		}
+		key := fmt.Sprintf("%d", i+1)
+		if val, ok := params[key]; ok {
+			result[name] = fmt.Sprintf("%v", val)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// ResolveURLButtonParamsFromMap extracts dynamic URL button parameters for template sending.
+// It looks up named placeholders directly and also supports explicit button-specific keys like
+// button_0 and button_url_0.
+func ResolveURLButtonParamsFromMap(buttons []interface{}, params map[string]string) (map[int]string, []string) {
+	if len(buttons) == 0 {
+		return nil, nil
+	}
+
+	resolved := make(map[int]string)
+	missingSet := make(map[string]struct{})
+
+	for idx, button := range buttons {
+		btnMap, ok := button.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		btnType, _ := btnMap["type"].(string)
+		if strings.ToUpper(btnType) != "URL" {
+			continue
+		}
+
+		rawURL, _ := btnMap["url"].(string)
+		paramNames := ExtParamNames(rawURL)
+		if len(paramNames) == 0 {
+			continue
+		}
+
+		if val, ok := params[fmt.Sprintf("button_url_%d", idx)]; ok && strings.TrimSpace(val) != "" {
+			resolved[idx] = val
+			continue
+		}
+		if val, ok := params[fmt.Sprintf("button_%d", idx)]; ok && strings.TrimSpace(val) != "" {
+			resolved[idx] = val
+			continue
+		}
+
+		found := false
+		for _, name := range paramNames {
+			if val, ok := params[name]; ok && strings.TrimSpace(val) != "" {
+				resolved[idx] = val
+				found = true
+				break
+			}
+		}
+		if !found {
+			missingSet[paramNames[0]] = struct{}{}
+		}
+	}
+
+	if len(resolved) == 0 {
+		resolved = nil
+	}
+
+	var missing []string
+	for name := range missingSet {
+		missing = append(missing, name)
+	}
+
+	return resolved, missing
+}
+
+// ResolveURLButtonParams extracts dynamic URL button parameters from a JSON-like parameter source.
+func ResolveURLButtonParams(buttons []interface{}, params map[string]interface{}) (map[int]string, []string) {
+	if len(buttons) == 0 {
+		return nil, nil
+	}
+
+	resolved := make(map[int]string)
+	missingSet := make(map[string]struct{})
+
+	for idx, button := range buttons {
+		btnMap, ok := button.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		btnType, _ := btnMap["type"].(string)
+		if strings.ToUpper(btnType) != "URL" {
+			continue
+		}
+
+		rawURL, _ := btnMap["url"].(string)
+		paramNames := ExtParamNames(rawURL)
+		if len(paramNames) == 0 {
+			continue
+		}
+
+		if val, ok := params[fmt.Sprintf("button_url_%d", idx)]; ok && fmt.Sprintf("%v", val) != "" {
+			resolved[idx] = fmt.Sprintf("%v", val)
+			continue
+		}
+		if val, ok := params[fmt.Sprintf("button_%d", idx)]; ok && fmt.Sprintf("%v", val) != "" {
+			resolved[idx] = fmt.Sprintf("%v", val)
+			continue
+		}
+
+		found := false
+		for _, name := range paramNames {
+			if val, ok := params[name]; ok && fmt.Sprintf("%v", val) != "" {
+				resolved[idx] = fmt.Sprintf("%v", val)
+				found = true
+				break
+			}
+		}
+		if !found {
+			missingSet[paramNames[0]] = struct{}{}
+		}
+	}
+
+	if len(resolved) == 0 {
+		resolved = nil
+	}
+
+	var missing []string
+	for name := range missingSet {
+		missing = append(missing, name)
+	}
+
+	return resolved, missing
+}
+
+// ExtractURLButtonParamNames returns all unique dynamic parameter names referenced by URL buttons.
+func ExtractURLButtonParamNames(buttons []interface{}) []string {
+	seen := make(map[string]struct{})
+	var names []string
+
+	for _, button := range buttons {
+		btnMap, ok := button.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		btnType, _ := btnMap["type"].(string)
+		if strings.ToUpper(btnType) != "URL" {
+			continue
+		}
+		rawURL, _ := btnMap["url"].(string)
+		for _, name := range ExtParamNames(rawURL) {
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			names = append(names, name)
+		}
+	}
+
+	return names
 }
 
 // ReplaceWithStringParams replaces {{1}}, {{2}}, {{name}}, etc. placeholders with actual values

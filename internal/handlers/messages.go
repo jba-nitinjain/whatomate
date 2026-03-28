@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shridarpatil/whatomate/internal/contactutil"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/shridarpatil/whatomate/internal/templateutil"
 	"github.com/shridarpatil/whatomate/internal/utils"
@@ -53,6 +54,7 @@ type OutgoingMessageRequest struct {
 	// Template messages
 	Template      *models.Template
 	BodyParams    map[string]string // Parameter name -> value (supports both named and positional)
+	ButtonParams  map[int]string    // URL button index -> dynamic value
 	HeaderMediaID string            // WhatsApp media ID for template header (IMAGE/VIDEO/DOCUMENT)
 
 	// WhatsApp Flow messages
@@ -185,7 +187,7 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 			if req.Template == nil {
 				return "", fmt.Errorf("template is required for template messages")
 			}
-			components := whatsapp.BuildTemplateComponents(req.BodyParams, req.Template.HeaderType, req.HeaderMediaID)
+			components := whatsapp.BuildTemplateComponents(req.BodyParams, req.ButtonParams, req.Template.Buttons, req.Template.HeaderType, req.HeaderMediaID)
 			return a.WhatsApp.SendTemplateMessage(sendCtx, waAccount, req.Contact.PhoneNumber, req.Template.Name, req.Template.Language, components)
 
 		case models.MessageTypeFlow:
@@ -702,21 +704,29 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 
 	// Extract parameter names and resolve values
 	paramNames := templateutil.ExtParamNames(template.BodyContent)
+	buttonParamNames := templateutil.ExtractURLButtonParamNames(template.Buttons)
 	bodyParams := templateutil.ResolveParamsFromMap(paramNames, req.TemplateParams)
+	resolvedBodyParams := templateutil.ResolveParamsMapFromMap(paramNames, req.TemplateParams)
+	buttonParams, missingButtonParams := templateutil.ResolveURLButtonParamsFromMap(template.Buttons, req.TemplateParams)
 
 	// Validate that all required parameters are provided
+	var missingParams []string
 	if len(paramNames) > 0 {
-		var missingParams []string
 		for i, name := range paramNames {
 			if i >= len(bodyParams) || bodyParams[i] == "" {
 				missingParams = append(missingParams, name)
 			}
 		}
-		if len(missingParams) > 0 {
-			return r.SendErrorEnvelope(fasthttp.StatusBadRequest,
-				fmt.Sprintf("Missing template parameters: %s. Expected parameters: %v", strings.Join(missingParams, ", "), paramNames),
-				nil, "")
-		}
+	}
+	if len(missingButtonParams) > 0 {
+		missingParams = append(missingParams, missingButtonParams...)
+	}
+	if len(missingParams) > 0 {
+		expectedParams := append([]string{}, paramNames...)
+		expectedParams = append(expectedParams, buttonParamNames...)
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest,
+			fmt.Sprintf("Missing template parameters: %s. Expected parameters: %v", strings.Join(missingParams, ", "), expectedParams),
+			nil, "")
 	}
 
 	// Resolve header media for templates with IMAGE/VIDEO/DOCUMENT headers.
@@ -782,7 +792,8 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		Contact:       contact,
 		Type:          models.MessageTypeTemplate,
 		Template:      &template,
-		BodyParams:    req.TemplateParams,
+		BodyParams:    resolvedBodyParams,
+		ButtonParams:  buttonParams,
 		HeaderMediaID: headerMediaID,
 		MediaURL:      headerLocalPath,
 		MediaMimeType: headerMimeType,
@@ -813,5 +824,245 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		UpdatedAt:       message.UpdatedAt,
 	}
 	return r.SendEnvelope(response)
+}
+
+// CreateExternalMessageRequest represents an externally-sourced outgoing message
+// that should be persisted without calling the WhatsApp API.
+type CreateExternalMessageRequest struct {
+	ContactID         string             `json:"contact_id"`
+	PhoneNumber       string             `json:"phone_number"`
+	ProfileName       string             `json:"profile_name"`
+	WhatsAppAccount   string             `json:"whatsapp_account"`
+	Type              models.MessageType `json:"type"`
+	Content           struct {
+		Body string `json:"body"`
+	} `json:"content"`
+	MediaURL          string             `json:"media_url"`
+	MediaMimeType     string             `json:"media_mime_type"`
+	MediaFilename     string             `json:"media_filename"`
+	InteractiveData   models.JSONB `json:"interactive_data"`
+	TemplateName      string             `json:"template_name"`
+	TemplateParams    models.JSONB `json:"template_params"`
+	FlowResponse      models.JSONB `json:"flow_response"`
+	Metadata          models.JSONB `json:"metadata"`
+	WhatsAppMessageID string             `json:"whatsapp_message_id"`
+	ExternalMessageID string             `json:"external_message_id"`
+	ReplyToMessageID  string             `json:"reply_to_message_id"`
+	SentAt            *time.Time         `json:"sent_at"`
+}
+
+// CreateExternalMessage persists an outbound message record from an external source
+// without sending it to WhatsApp.
+func (a *App) CreateExternalMessage(r *fastglue.Request) error {
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+	if !a.HasPermission(userID, models.ResourceChat, models.ActionWrite, orgID) {
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
+	}
+
+	var req CreateExternalMessageRequest
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
+	}
+
+	if req.ContactID == "" && req.PhoneNumber == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Either contact_id or phone_number is required", nil, "")
+	}
+	if req.Type == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "type is required", nil, "")
+	}
+
+	// Resolve or create contact.
+	var contact models.Contact
+	if req.ContactID != "" {
+		contactID, err := uuid.Parse(req.ContactID)
+		if err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid contact_id", nil, "")
+		}
+
+		query := a.DB.Where("id = ? AND organization_id = ?", contactID, orgID)
+		if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead, orgID) {
+			query = query.Where("assigned_user_id = ?", userID)
+		}
+		if err := query.First(&contact).Error; err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Contact not found", nil, "")
+		}
+	} else {
+		if !a.HasPermission(userID, models.ResourceContacts, models.ActionWrite, orgID) {
+			return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You do not have permission to create contacts", nil, "")
+		}
+
+		c, _, err := contactutil.GetOrCreateContact(a.DB, orgID, strings.TrimSpace(req.PhoneNumber), req.ProfileName)
+		if err != nil {
+			a.Log.Error("Failed to resolve contact for external message", "error", err)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to resolve contact", nil, "")
+		}
+		contact = *c
+	}
+
+	accountName := req.WhatsAppAccount
+	if accountName == "" {
+		accountName = contact.WhatsAppAccount
+	}
+	account, err := a.resolveWhatsAppAccount(orgID, accountName)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
+
+	if req.WhatsAppAccount != "" && contact.WhatsAppAccount != req.WhatsAppAccount {
+		a.DB.Model(&contact).Update("whats_app_account", req.WhatsAppAccount)
+		contact.WhatsAppAccount = req.WhatsAppAccount
+	}
+	if contact.WhatsAppAccount == "" || contact.WhatsAppAccount != account.Name {
+		a.DB.Model(&contact).Update("whats_app_account", account.Name)
+		contact.WhatsAppAccount = account.Name
+	}
+
+	var replyToMessage *models.Message
+	if req.ReplyToMessageID != "" {
+		replyToID, err := uuid.Parse(req.ReplyToMessageID)
+		if err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid reply_to_message_id", nil, "")
+		}
+		var replyTo models.Message
+		if err := a.DB.Where("id = ? AND contact_id = ?", replyToID, contact.ID).First(&replyTo).Error; err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Reply-to message not found", nil, "")
+		}
+		replyToMessage = &replyTo
+	}
+
+	createdAt := time.Now()
+	if req.SentAt != nil && !req.SentAt.IsZero() {
+		createdAt = req.SentAt.UTC()
+	}
+
+	metadata := req.Metadata
+	if metadata == nil {
+		metadata = models.JSONB{}
+	}
+	if _, ok := metadata["source"]; !ok {
+		metadata["source"] = "external_api"
+	}
+	if req.ExternalMessageID != "" {
+		metadata["external_message_id"] = req.ExternalMessageID
+	}
+
+	msg := &models.Message{
+		BaseModel:         models.BaseModel{ID: uuid.New(), CreatedAt: createdAt, UpdatedAt: createdAt},
+		OrganizationID:    orgID,
+		WhatsAppAccount:   account.Name,
+		ContactID:         contact.ID,
+		WhatsAppMessageID: req.WhatsAppMessageID,
+		Direction:         models.DirectionOutgoing,
+		MessageType:       req.Type,
+		Content:           req.Content.Body,
+		MediaURL:          req.MediaURL,
+		MediaMimeType:     req.MediaMimeType,
+		MediaFilename:     req.MediaFilename,
+		TemplateName:      req.TemplateName,
+		TemplateParams:    req.TemplateParams,
+		InteractiveData:   req.InteractiveData,
+		FlowResponse:      req.FlowResponse,
+		Status:            models.MessageStatusSent,
+		SentByUserID:      &userID,
+		Metadata:          metadata,
+	}
+
+	if replyToMessage != nil {
+		msg.IsReply = true
+		msg.ReplyToMessageID = &replyToMessage.ID
+	}
+
+	if err := a.DB.Create(msg).Error; err != nil {
+		a.Log.Error("Failed to create external message", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create message", nil, "")
+	}
+
+	preview := a.getPersistedMessagePreview(msg)
+	a.DB.Model(&contact).Updates(map[string]any{
+		"last_message_at":      createdAt,
+		"last_message_preview": preview,
+		"whats_app_account":    account.Name,
+	})
+	contact.LastMessageAt = &createdAt
+	contact.LastMessagePreview = preview
+
+	a.broadcastNewMessage(orgID, msg, &contact)
+
+	response := MessageResponse{
+		ID:              msg.ID,
+		ContactID:       msg.ContactID,
+		Direction:       msg.Direction,
+		MessageType:     msg.MessageType,
+		Content:         map[string]string{"body": msg.Content},
+		MediaURL:        msg.MediaURL,
+		MediaMimeType:   msg.MediaMimeType,
+		MediaFilename:   msg.MediaFilename,
+		InteractiveData: msg.InteractiveData,
+		Status:          msg.Status,
+		WAMID:           msg.WhatsAppMessageID,
+		IsReply:         msg.IsReply,
+		WhatsAppAccount: msg.WhatsAppAccount,
+		CreatedAt:       msg.CreatedAt,
+		UpdatedAt:       msg.UpdatedAt,
+	}
+	if msg.IsReply && msg.ReplyToMessageID != nil && replyToMessage != nil {
+		replyToID := msg.ReplyToMessageID.String()
+		response.ReplyToMessageID = &replyToID
+		response.ReplyToMessage = &ReplyPreview{
+			ID:          replyToMessage.ID.String(),
+			Content:     map[string]string{"body": replyToMessage.Content},
+			MessageType: replyToMessage.MessageType,
+			Direction:   replyToMessage.Direction,
+		}
+	}
+
+	return r.SendEnvelope(response)
+}
+
+func (a *App) getPersistedMessagePreview(msg *models.Message) string {
+	switch msg.MessageType {
+	case models.MessageTypeText, models.MessageTypeInteractive, models.MessageTypeLocation, models.MessageTypeContact:
+		return truncateString(msg.Content, 100)
+	case models.MessageTypeImage:
+		if msg.Content != "" {
+			return truncateString(msg.Content, 100)
+		}
+		return "[Image]"
+	case models.MessageTypeVideo:
+		if msg.Content != "" {
+			return truncateString(msg.Content, 100)
+		}
+		return "[Video]"
+	case models.MessageTypeAudio:
+		return "[Audio]"
+	case models.MessageTypeDocument:
+		if msg.MediaFilename != "" {
+			return "[Document: " + msg.MediaFilename + "]"
+		}
+		return "[Document]"
+	case models.MessageTypeTemplate:
+		if msg.TemplateName != "" {
+			return "[Template: " + msg.TemplateName + "]"
+		}
+		return "[Template]"
+	case models.MessageTypeFlow:
+		if msg.Content != "" {
+			return truncateString(msg.Content, 100)
+		}
+		return "[Flow]"
+	case models.MessageTypeReaction:
+		if msg.Content != "" {
+			return truncateString(msg.Content, 100)
+		}
+		return "[Reaction]"
+	default:
+		if msg.Content != "" {
+			return truncateString(msg.Content, 100)
+		}
+		return "[Message]"
+	}
 }
 

@@ -246,20 +246,12 @@ func (w *Worker) checkCampaignCompletion(ctx context.Context, campaignID, organi
 func (w *Worker) sendTemplateMessage(ctx context.Context, account *models.WhatsAppAccount, template *models.Template, recipient *models.BulkMessageRecipient, campaignHeaderMediaID string) (string, error) {
 	waAccount := account.ToWAAccount()
 
-	// Resolve body parameters into a map for BuildTemplateComponents
-	resolvedParams := templateutil.ResolveParams(template.BodyContent, recipient.TemplateParams)
-	bodyParams := make(map[string]string, len(resolvedParams))
-	paramNames := templateutil.ExtParamNames(template.BodyContent)
-	for i, val := range resolvedParams {
-		if i < len(paramNames) {
-			bodyParams[paramNames[i]] = val
-		} else {
-			bodyParams[fmt.Sprintf("%d", i+1)] = val
-		}
-	}
+	// Resolve body and button parameters for template sending.
+	bodyParams := templateutil.ResolveParamsMap(template.BodyContent, recipient.TemplateParams)
+	buttonParams, _ := templateutil.ResolveURLButtonParams(template.Buttons, recipient.TemplateParams)
 
 	// Use the shared component builder (same as chat template sending)
-	components := whatsapp.BuildTemplateComponents(bodyParams, template.HeaderType, campaignHeaderMediaID)
+	components := whatsapp.BuildTemplateComponents(bodyParams, buttonParams, template.Buttons, template.HeaderType, campaignHeaderMediaID)
 
 	return w.WhatsApp.SendTemplateMessage(ctx, waAccount, recipient.PhoneNumber, template.Name, template.Language, components)
 }

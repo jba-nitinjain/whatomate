@@ -406,6 +406,7 @@ func (a *App) SyncTemplates(r *fastglue.Request) error {
 			Language:        metaTemplate.Language,
 			Category:        metaTemplate.Category,
 			Status:          metaTemplate.Status,
+			SampleValues:    extractTemplateSampleValues(metaTemplate),
 		}
 
 		// Parse components
@@ -435,9 +436,10 @@ func (a *App) SyncTemplates(r *fastglue.Request) error {
 		if err := a.DB.Unscoped().Where("organization_id = ? AND whats_app_account = ? AND name = ? AND language = ?",
 			orgID, account.Name, template.Name, template.Language).First(&existing).Error; err == nil {
 			// Update existing and restore if soft-deleted (explicitly set deleted_at to NULL)
-			template.ID = existing.ID
-			a.DB.Unscoped().Model(&template).Updates(map[string]interface{}{
+			a.DB.Unscoped().Model(&models.Template{}).Where("id = ?", existing.ID).Updates(map[string]interface{}{
 				"meta_template_id": template.MetaTemplateID,
+				"name":             template.Name,
+				"language":         template.Language,
 				"display_name":     template.DisplayName,
 				"category":         template.Category,
 				"status":           template.Status,
@@ -446,6 +448,7 @@ func (a *App) SyncTemplates(r *fastglue.Request) error {
 				"body_content":     template.BodyContent,
 				"footer_content":   template.FooterContent,
 				"buttons":          template.Buttons,
+				"sample_values":    template.SampleValues,
 				"deleted_at":       nil, // Restore soft-deleted template
 			})
 		} else {
@@ -527,6 +530,105 @@ func convertFromJSONBArray(arr models.JSONBArray) []interface{} {
 		return []interface{}{}
 	}
 	return []interface{}(arr)
+}
+
+func extractTemplateSampleValues(metaTemplate whatsapp.MetaTemplate) models.JSONBArray {
+	var sampleValues []interface{}
+
+	for _, comp := range metaTemplate.Components {
+		if comp.Example != nil {
+			switch comp.Type {
+			case "HEADER":
+				if len(comp.Example.HeaderTextNamedParams) > 0 {
+					for _, example := range comp.Example.HeaderTextNamedParams {
+						paramName := example["param_name"]
+						value := example["example"]
+						if paramName != "" && value != "" {
+							sampleValues = append(sampleValues, map[string]interface{}{
+								"component":  "header",
+								"param_name": paramName,
+								"value":      value,
+							})
+						}
+					}
+				} else {
+					for idx, value := range comp.Example.HeaderText {
+						if value == "" {
+							continue
+						}
+						sampleValues = append(sampleValues, map[string]interface{}{
+							"component": "header",
+							"index":     idx + 1,
+							"value":     value,
+						})
+					}
+				}
+			case "BODY":
+				if len(comp.Example.BodyTextNamedParams) > 0 {
+					for _, example := range comp.Example.BodyTextNamedParams {
+						paramName := example["param_name"]
+						value := example["example"]
+						if paramName != "" && value != "" {
+							sampleValues = append(sampleValues, map[string]interface{}{
+								"component":  "body",
+								"param_name": paramName,
+								"value":      value,
+							})
+						}
+					}
+				} else if len(comp.Example.BodyText) > 0 {
+					for idx, value := range comp.Example.BodyText[0] {
+						if value == "" {
+							continue
+						}
+						sampleValues = append(sampleValues, map[string]interface{}{
+							"component": "body",
+							"index":     idx + 1,
+							"value":     value,
+						})
+					}
+				}
+			}
+		}
+
+		if comp.Type == "BUTTONS" {
+			for btnIdx, button := range comp.Buttons {
+				switch example := button.Example.(type) {
+				case string:
+					if example != "" {
+						sampleValues = append(sampleValues, map[string]interface{}{
+							"component":    "button",
+							"button_index": btnIdx,
+							"value":        example,
+						})
+					}
+				case []interface{}:
+					if len(example) > 0 {
+						if value, ok := example[0].(string); ok && value != "" {
+							sampleValues = append(sampleValues, map[string]interface{}{
+								"component":    "button",
+								"button_index": btnIdx,
+								"value":        value,
+							})
+						}
+					}
+				case []string:
+					if len(example) > 0 && example[0] != "" {
+						sampleValues = append(sampleValues, map[string]interface{}{
+							"component":    "button",
+							"button_index": btnIdx,
+							"value":        example[0],
+						})
+					}
+				}
+			}
+		}
+	}
+
+	if len(sampleValues) == 0 {
+		return models.JSONBArray{}
+	}
+	return models.JSONBArray(sampleValues)
 }
 
 // UploadTemplateMedia uploads a media file for use as template header sample

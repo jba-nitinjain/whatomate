@@ -594,6 +594,66 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		assert.Equal(t, "button", dbMsg.InteractiveData["type"])
 	})
 
+	t.Run("template with dynamic URL button sends button component", func(t *testing.T) {
+		t.Parallel()
+		mockServer := newMockWhatsAppServer()
+		defer mockServer.close()
+
+		app := newMsgTestApp(t, mockServer)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		account := createTestAccount(t, app, org.ID)
+		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
+
+		tpl := &models.Template{
+			BaseModel:       models.BaseModel{ID: uuid.New()},
+			OrganizationID:  org.ID,
+			WhatsAppAccount: account.Name,
+			Name:            "url_btn_tpl_" + uuid.New().String()[:8],
+			DisplayName:     "URL Button Template",
+			Language:        "en",
+			Status:          string(models.TemplateStatusApproved),
+			BodyContent:     "Track your order",
+			Buttons: models.JSONBArray{
+				map[string]interface{}{
+					"type": "URL",
+					"text": "Track",
+					"url":  "https://example.com/{{tracking_code}}",
+				},
+			},
+		}
+		require.NoError(t, app.DB.Create(tpl).Error)
+
+		req := testutil.NewJSONRequest(t, map[string]interface{}{
+			"contact_id":    contact.ID.String(),
+			"template_name": tpl.Name,
+			"template_params": map[string]string{
+				"tracking_code": "ORD-42",
+			},
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+
+		err := app.SendTemplateMessage(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		app.WaitForBackgroundTasks()
+
+		require.Len(t, mockServer.sentMessages, 1)
+		templateData := mockServer.sentMessages[0]["template"].(map[string]interface{})
+		components := templateData["components"].([]interface{})
+		require.Len(t, components, 2)
+
+		buttonComp := components[1].(map[string]interface{})
+		assert.Equal(t, "button", buttonComp["type"])
+		assert.Equal(t, "url", buttonComp["sub_type"])
+		assert.Equal(t, "0", buttonComp["index"])
+		params := buttonComp["parameters"].([]interface{})
+		require.Len(t, params, 1)
+		assert.Equal(t, "ORD-42", params[0].(map[string]interface{})["text"])
+	})
+
 	t.Run("template without buttons has no interactive_data", func(t *testing.T) {
 		t.Parallel()
 		mockServer := newMockWhatsAppServer()
