@@ -271,8 +271,9 @@ func BodyParamsToComponents(bodyParams map[string]string) []map[string]interface
 }
 
 // BuildTemplateComponents builds the full WhatsApp template components array,
-// including an optional header component (for IMAGE/VIDEO/DOCUMENT) and body parameters.
-func BuildTemplateComponents(bodyParams map[string]string, headerType string, headerMediaID string) []map[string]interface{} {
+// including an optional header component (for IMAGE/VIDEO/DOCUMENT), body parameters,
+// and dynamic URL button parameters.
+func BuildTemplateComponents(bodyParams map[string]string, buttonParams map[int]string, buttons []interface{}, headerType string, headerMediaID string) []map[string]interface{} {
 	var components []map[string]interface{}
 
 	// Add header component if media is provided
@@ -293,6 +294,33 @@ func BuildTemplateComponents(bodyParams map[string]string, headerType string, he
 	// Add body component with text parameters
 	bodyComponents := BodyParamsToComponents(bodyParams)
 	components = append(components, bodyComponents...)
+
+	// Add button components for URL buttons with dynamic placeholders
+	for idx, button := range buttons {
+		btnMap, ok := button.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		btnType, _ := btnMap["type"].(string)
+		if strings.ToUpper(btnType) != "URL" {
+			continue
+		}
+		paramValue := buttonParams[idx]
+		if paramValue == "" {
+			continue
+		}
+		components = append(components, map[string]interface{}{
+			"type":     "button",
+			"sub_type": "url",
+			"index":    fmt.Sprintf("%d", idx),
+			"parameters": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": paramValue,
+				},
+			},
+		})
+	}
 
 	if len(components) == 0 {
 		return nil

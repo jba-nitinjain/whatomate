@@ -98,9 +98,11 @@ type TemplateButton struct {
 
 // TemplateExample represents example values for template variables
 type TemplateExample struct {
-	HeaderText   []string   `json:"header_text,omitempty"`
-	HeaderHandle []string   `json:"header_handle,omitempty"`
-	BodyText     [][]string `json:"body_text,omitempty"`
+	HeaderText            []string            `json:"header_text,omitempty"`
+	HeaderHandle          []string            `json:"header_handle,omitempty"`
+	BodyText              [][]string          `json:"body_text,omitempty"`
+	HeaderTextNamedParams []map[string]string `json:"header_text_named_params,omitempty"`
+	BodyTextNamedParams   []map[string]string `json:"body_text_named_params,omitempty"`
 }
 
 // TemplateListResponse represents response from fetching templates

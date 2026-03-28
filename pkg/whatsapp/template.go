@@ -129,7 +129,7 @@ func (c *Client) SubmitTemplate(ctx context.Context, account *Account, template 
 	// Buttons component
 	if len(template.Buttons) > 0 {
 		buttons := []map[string]interface{}{}
-		for _, btn := range template.Buttons {
+		for i, btn := range template.Buttons {
 			if btnMap, ok := btn.(map[string]interface{}); ok {
 				btnType, _ := btnMap["type"].(string)
 				btnType = strings.ToUpper(btnType)
@@ -154,8 +154,11 @@ func (c *Client) SubmitTemplate(ctx context.Context, account *Account, template 
 					button["text"] = btnText
 					button["url"] = btnURL
 					if strings.Contains(btnURL, "{{") {
-						if example, ok := btnMap["example"].(string); ok && example != "" {
+						example := extractURLButtonExample(template.SampleValues, i, btnMap)
+						if example != "" {
 							button["example"] = []string{example}
+						} else {
+							return "", fmt.Errorf("sample value is required for dynamic URL button %q", btnText)
 						}
 					}
 				case "PHONE_NUMBER":
@@ -383,4 +386,49 @@ func extractNamedExamplesForComponent(sampleValues []interface{}, componentType 
 	}
 
 	return results
+}
+
+func extractURLButtonExample(sampleValues []interface{}, buttonIndex int, button map[string]interface{}) string {
+	if example, ok := button["example"].(string); ok && example != "" {
+		return example
+	}
+	if examples, ok := button["example"].([]interface{}); ok && len(examples) > 0 {
+		if value, ok := examples[0].(string); ok && value != "" {
+			return value
+		}
+	}
+	if examples, ok := button["example"].([]string); ok && len(examples) > 0 && examples[0] != "" {
+		return examples[0]
+	}
+	if example, ok := button["example_text"].(string); ok && example != "" {
+		return example
+	}
+
+	for _, sv := range sampleValues {
+		svMap, ok := sv.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		component, _ := svMap["component"].(string)
+		if component != "button" && component != fmt.Sprintf("button_%d", buttonIndex) {
+			continue
+		}
+
+		if idx, ok := svMap["button_index"].(float64); ok && int(idx) != buttonIndex {
+			continue
+		}
+		if idx, ok := svMap["button_index"].(int); ok && idx != buttonIndex {
+			continue
+		}
+
+		if value, _ := svMap["value"].(string); value != "" {
+			return value
+		}
+		if example, _ := svMap["example"].(string); example != "" {
+			return example
+		}
+	}
+
+	return ""
 }

@@ -84,6 +84,56 @@ POST /api/contacts/{id}/messages
 }
 ```
 
+## Insert External Sent Record
+
+Persist an outbound message that was sent by another system, without sending it to WhatsApp again.
+
+```bash
+POST /api/messages/external
+```
+
+### Request Body
+
+```json
+{
+  "phone_number": "919876543210",
+  "whatsapp_account": "primary",
+  "type": "text",
+  "content": {
+    "body": "Sent from external CRM"
+  },
+  "external_message_id": "crm-msg-123",
+  "whatsapp_message_id": "wamid.HBg...",
+  "sent_at": "2026-03-27T10:30:00Z"
+}
+```
+
+### Notes
+
+- Provide either `contact_id` or `phone_number`
+- If `phone_number` is used, the contact is created automatically if needed
+- The message is stored with status `sent`
+- This endpoint does not call the WhatsApp API
+
+### Response
+
+```json
+{
+  "status": "success",
+  "data": {
+    "id": "uuid",
+    "contact_id": "uuid",
+    "direction": "outgoing",
+    "message_type": "text",
+    "content": {
+      "body": "Sent from external CRM"
+    },
+    "status": "sent",
+    "wamid": "wamid.HBg..."
+  }
+}
+```
+
 ## Send Template Message
 
 Send a pre-approved template message.

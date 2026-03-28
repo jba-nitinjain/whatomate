@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -382,9 +383,11 @@ func (a *App) StartCampaign(r *fastglue.Request) error {
 		return nil
 	}
 
-	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
-	if err != nil {
-		return nil
+	var campaign models.BulkMessageCampaign
+	if err := a.DB.Where("id = ? AND organization_id = ?", id, orgID).
+		Preload("Template").
+		First(&campaign).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Campaign not found", nil, "")
 	}
 
 	// Check if campaign can be started
@@ -392,65 +395,110 @@ func (a *App) StartCampaign(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Campaign cannot be started in current state", nil, "")
 	}
 
-	// Get all pending recipients
-	var recipients []models.BulkMessageRecipient
-	if err := a.DB.Where("campaign_id = ? AND status = ?", id, models.MessageStatusPending).Find(&recipients).Error; err != nil {
+	if err := a.validateCampaignReadyForStart(&campaign); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
+
+	recipients, err := a.loadPendingCampaignRecipients(campaign.ID)
+	if err != nil {
 		a.Log.Error("Failed to load recipients", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load recipients", nil, "")
 	}
-
 	if len(recipients) == 0 {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Campaign has no pending recipients", nil, "")
 	}
 
-	// Validate template still exists
-	if campaign.TemplateID != uuid.Nil {
-		var template models.Template
-		if err := a.DB.Where("id = ? AND organization_id = ?", campaign.TemplateID, orgID).First(&template).Error; err != nil {
-			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Campaign template no longer exists", nil, "")
-		}
-	}
-
-	// Update status to processing
 	now := time.Now()
-	updates := map[string]interface{}{
-		"status":     models.CampaignStatusProcessing,
-		"started_at": now,
+	if campaign.ScheduledAt != nil && campaign.ScheduledAt.After(now) {
+		if err := a.DB.Model(&campaign).Updates(map[string]interface{}{
+			"status": models.CampaignStatusScheduled,
+		}).Error; err != nil {
+			a.Log.Error("Failed to schedule campaign", "error", err)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to schedule campaign", nil, "")
+		}
+
+		a.Log.Info("Campaign scheduled", "campaign_id", id, "scheduled_at", campaign.ScheduledAt)
+		return r.SendEnvelope(map[string]interface{}{
+			"message":      "Campaign scheduled",
+			"status":       models.CampaignStatusScheduled,
+			"scheduled_at": campaign.ScheduledAt,
+		})
 	}
 
-	if err := a.DB.Model(campaign).Updates(updates).Error; err != nil {
+	if err := a.enqueueCampaignRecipients(r.RequestCtx, &campaign, recipients, now, campaign.Status); err != nil {
 		a.Log.Error("Failed to start campaign", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to start campaign", nil, "")
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to queue recipients", nil, "")
 	}
 
 	a.Log.Info("Campaign started", "campaign_id", id, "recipients", len(recipients))
 
-	// Enqueue all recipients as individual jobs for parallel processing
+	return r.SendEnvelope(map[string]interface{}{
+		"message": "Campaign started",
+		"status":  models.CampaignStatusProcessing,
+	})
+}
+
+func (a *App) validateCampaignReadyForStart(campaign *models.BulkMessageCampaign) error {
+	if campaign.Template == nil && campaign.TemplateID != uuid.Nil {
+		var template models.Template
+		if err := a.DB.Where("id = ? AND organization_id = ?", campaign.TemplateID, campaign.OrganizationID).First(&template).Error; err != nil {
+			return fmt.Errorf("campaign template no longer exists")
+		}
+		campaign.Template = &template
+	}
+	if campaign.Template == nil {
+		return fmt.Errorf("campaign template no longer exists")
+	}
+
+	switch campaign.Template.HeaderType {
+	case "IMAGE", "VIDEO", "DOCUMENT":
+		if strings.TrimSpace(campaign.HeaderMediaID) == "" {
+			return fmt.Errorf("template requires %s header media. Upload campaign media before starting", strings.ToLower(campaign.Template.HeaderType))
+		}
+	}
+
+	return nil
+}
+
+func (a *App) loadPendingCampaignRecipients(campaignID uuid.UUID) ([]models.BulkMessageRecipient, error) {
+	var recipients []models.BulkMessageRecipient
+	err := a.DB.Where("campaign_id = ? AND status = ?", campaignID, models.MessageStatusPending).Find(&recipients).Error
+	return recipients, err
+}
+
+func (a *App) enqueueCampaignRecipients(ctx context.Context, campaign *models.BulkMessageCampaign, recipients []models.BulkMessageRecipient, now time.Time, fallbackStatus models.CampaignStatus) error {
+	updates := map[string]interface{}{
+		"status":     models.CampaignStatusProcessing,
+		"started_at": now,
+	}
+	if err := a.DB.Model(campaign).Updates(updates).Error; err != nil {
+		return err
+	}
+
 	jobs := make([]*queue.RecipientJob, len(recipients))
 	for i, recipient := range recipients {
 		jobs[i] = &queue.RecipientJob{
-			CampaignID:     id,
+			CampaignID:     campaign.ID,
 			RecipientID:    recipient.ID,
-			OrganizationID: orgID,
+			OrganizationID: campaign.OrganizationID,
 			PhoneNumber:    recipient.PhoneNumber,
 			RecipientName:  recipient.RecipientName,
 			TemplateParams: recipient.TemplateParams,
 		}
 	}
 
-	if err := a.Queue.EnqueueRecipients(r.RequestCtx, jobs); err != nil {
-		a.Log.Error("Failed to enqueue recipients", "error", err)
-		// Revert status on failure
-		a.DB.Model(campaign).Update("status", models.CampaignStatusDraft)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to queue recipients", nil, "")
+	if err := a.Queue.EnqueueRecipients(ctx, jobs); err != nil {
+		revert := map[string]interface{}{
+			"status": fallbackStatus,
+		}
+		if fallbackStatus != models.CampaignStatusProcessing {
+			revert["started_at"] = nil
+		}
+		a.DB.Model(campaign).Updates(revert)
+		return err
 	}
 
-	a.Log.Info("Recipients enqueued for processing", "campaign_id", id, "count", len(jobs))
-
-	return r.SendEnvelope(map[string]interface{}{
-		"message": "Campaign started",
-		"status":  models.CampaignStatusProcessing,
-	})
+	return nil
 }
 
 // PauseCampaign implements pausing a campaign

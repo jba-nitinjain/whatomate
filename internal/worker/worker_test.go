@@ -559,6 +559,67 @@ func TestWorker_sendTemplateMessage_NoParams(t *testing.T) {
 	}
 }
 
+func TestWorker_sendTemplateMessage_WithDynamicURLButton(t *testing.T) {
+	w := testWorker(t)
+
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		rw.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
+			"messages": []map[string]interface{}{
+				{"id": "wamid.test789"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	w.WhatsApp = whatsapp.NewWithBaseURL(w.Log, server.URL)
+
+	account := &models.WhatsAppAccount{
+		PhoneID:     "123",
+		BusinessID:  "456",
+		AccessToken: "token",
+		APIVersion:  "v21.0",
+	}
+
+	template := &models.Template{
+		Name:        "url_button_template",
+		Language:    "en",
+		BodyContent: "Track your order",
+		Buttons: models.JSONBArray{
+			map[string]interface{}{
+				"type": "URL",
+				"text": "Track",
+				"url":  "https://example.com/{{tracking_code}}",
+			},
+		},
+	}
+
+	recipient := &models.BulkMessageRecipient{
+		PhoneNumber: "1234567890",
+		TemplateParams: models.JSONB{
+			"tracking_code": "TRACK-123",
+		},
+	}
+
+	msgID, err := w.sendTemplateMessage(context.Background(), account, template, recipient, "")
+	require.NoError(t, err)
+	assert.Equal(t, "wamid.test789", msgID)
+
+	templateData := capturedBody["template"].(map[string]interface{})
+	components := templateData["components"].([]interface{})
+	require.Len(t, components, 2)
+
+	buttonComponent := components[1].(map[string]interface{})
+	assert.Equal(t, "button", buttonComponent["type"])
+	assert.Equal(t, "url", buttonComponent["sub_type"])
+	assert.Equal(t, "0", buttonComponent["index"])
+	params := buttonComponent["parameters"].([]interface{})
+	require.Len(t, params, 1)
+	assert.Equal(t, "TRACK-123", params[0].(map[string]interface{})["text"])
+}
+
 func TestWorker_Close_NilConsumer(t *testing.T) {
 	w := &Worker{
 		Consumer: nil, // No consumer

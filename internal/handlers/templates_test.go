@@ -1115,3 +1115,93 @@ func TestApp_SyncTemplates_ViaQueryParam(t *testing.T) {
 	require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
 	assert.Equal(t, 2, resp.Data.Count)
 }
+
+func TestApp_SyncTemplates_RefreshesExistingTemplateData(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": []map[string]interface{}{
+				{
+					"id":       "meta-updated-1",
+					"name":     "existing_template",
+					"language": "en",
+					"category": "UTILITY",
+					"status":   "APPROVED",
+					"components": []map[string]interface{}{
+						{
+							"type":   "HEADER",
+							"format": "TEXT",
+							"text":   "Hello {{name}}",
+							"example": map[string]interface{}{
+								"header_text_named_params": []map[string]string{
+									{"param_name": "name", "example": "Alice"},
+								},
+							},
+						},
+						{
+							"type": "BODY",
+							"text": "Track order {{order_id}}",
+							"example": map[string]interface{}{
+								"body_text_named_params": []map[string]string{
+									{"param_name": "order_id", "example": "ORD-100"},
+								},
+							},
+						},
+						{
+							"type": "BUTTONS",
+							"buttons": []map[string]interface{}{
+								{
+									"type":    "URL",
+									"text":    "Track",
+									"url":     "https://example.com/{{order_id}}",
+									"example": []string{"ORD-100"},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	app := newTemplateTestApp(t, server)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+
+	existing := &models.Template{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  org.ID,
+		WhatsAppAccount: account.Name,
+		Name:            "existing_template",
+		DisplayName:     "Old Template",
+		Language:        "en",
+		Category:        "MARKETING",
+		Status:          "DRAFT",
+		BodyContent:     "Old body",
+		Buttons:         models.JSONBArray{map[string]interface{}{"type": "URL", "text": "Old", "url": "https://old.example.com"}},
+	}
+	require.NoError(t, app.DB.Create(existing).Error)
+
+	req := testutil.NewJSONRequest(t, map[string]interface{}{
+		"whatsapp_account": account.Name,
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+
+	err := app.SyncTemplates(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var updated models.Template
+	require.NoError(t, app.DB.Where("id = ?", existing.ID).First(&updated).Error)
+	assert.Equal(t, "meta-updated-1", updated.MetaTemplateID)
+	assert.Equal(t, "UTILITY", updated.Category)
+	assert.Equal(t, "APPROVED", updated.Status)
+	assert.Equal(t, "Hello {{name}}", updated.HeaderContent)
+	assert.Equal(t, "Track order {{order_id}}", updated.BodyContent)
+	require.Len(t, updated.Buttons, 1)
+	require.NotEmpty(t, updated.SampleValues)
+}

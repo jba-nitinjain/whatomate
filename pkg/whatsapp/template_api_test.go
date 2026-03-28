@@ -173,6 +173,66 @@ func TestClient_SubmitTemplate_MissingVariableSamples(t *testing.T) {
 	assert.Contains(t, err.Error(), "sample values are required")
 }
 
+func TestClient_SubmitTemplate_WithDynamicURLButton(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+
+		components := body["components"].([]interface{})
+		var buttonsComp map[string]interface{}
+		for _, comp := range components {
+			value := comp.(map[string]interface{})
+			if value["type"] == "BUTTONS" {
+				buttonsComp = value
+				break
+			}
+		}
+
+		require.NotNil(t, buttonsComp)
+		buttons := buttonsComp["buttons"].([]interface{})
+		require.Len(t, buttons, 1)
+		button := buttons[0].(map[string]interface{})
+		assert.Equal(t, "URL", button["type"])
+		assert.Equal(t, "Track", button["text"])
+		assert.Equal(t, "https://example.com/{{order_id}}", button["url"])
+		assert.Equal(t, []interface{}{"ORD-123"}, button["example"])
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": "tmpl-url-123"})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server)
+	account := testAccount(server.URL)
+
+	tmpl := &whatsapp.TemplateSubmission{
+		Name:        "track_order",
+		Language:    "en",
+		Category:    "UTILITY",
+		BodyContent: "Track your order",
+		Buttons: []interface{}{
+			map[string]interface{}{
+				"type": "URL",
+				"text": "Track",
+				"url":  "https://example.com/{{order_id}}",
+			},
+		},
+		SampleValues: []interface{}{
+			map[string]interface{}{
+				"component":    "button",
+				"button_index": 0,
+				"value":        "ORD-123",
+			},
+		},
+	}
+
+	id, err := client.SubmitTemplate(context.Background(), account, tmpl)
+	require.NoError(t, err)
+	assert.Equal(t, "tmpl-url-123", id)
+}
+
 // --- FetchTemplates ---
 
 func TestClient_FetchTemplates_Success(t *testing.T) {

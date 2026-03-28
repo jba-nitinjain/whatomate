@@ -236,6 +236,10 @@ func runServer(args []string) {
 		lo.Error("Failed to start campaign stats subscriber", "error", err)
 	}
 
+	// Start scheduled campaign processor
+	app.StartScheduledCampaignProcessor(time.Minute)
+	lo.Info("Scheduled campaign processor started")
+
 	// Parse allowed origins for CORS
 	allowedOrigins := middleware.ParseAllowedOrigins(cfg.Server.AllowedOrigins)
 
@@ -311,6 +315,11 @@ func runServer(args []string) {
 	app.StopCampaignStatsSubscriber()
 	lo.Info("Campaign stats subscriber stopped")
 
+	// Stop scheduled campaign processor
+	lo.Info("Stopping scheduled campaign processor...")
+	app.StopScheduledCampaignProcessor()
+	lo.Info("Scheduled campaign processor stopped")
+
 	// Stop SLA processor
 	lo.Info("Stopping SLA processor...")
 	slaCancel()
@@ -332,6 +341,7 @@ func runServer(args []string) {
 	if err := server.Shutdown(); err != nil {
 		lo.Error("Server shutdown error", "error", err)
 	}
+	app.WaitForBackgroundTasks()
 	lo.Info("Server stopped")
 }
 
@@ -604,6 +614,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/contacts/{id}/messages", app.SendMessage)
 	g.POST("/api/contacts/{id}/messages/{message_id}/reaction", app.SendReaction)
 	g.POST("/api/messages", app.SendMessage) // Legacy route
+	g.POST("/api/messages/external", app.CreateExternalMessage)
 	g.POST("/api/messages/template", app.SendTemplateMessage)
 	g.POST("/api/messages/media", app.SendMediaMessage)
 	g.PUT("/api/messages/{id}/read", app.MarkMessageRead)

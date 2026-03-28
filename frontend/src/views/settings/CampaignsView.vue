@@ -108,6 +108,7 @@ interface Template {
   body_content?: string
   header_type?: string  // TEXT, IMAGE, DOCUMENT, VIDEO
   header_content?: string
+  buttons?: any[]
 }
 
 interface CSVRow {
@@ -377,7 +378,8 @@ const manualInputValidation = computed((): ManualInputValidation => {
 const newCampaign = ref({
   name: '',
   whatsapp_account: '',
-  template_id: ''
+  template_id: '',
+  scheduled_at: ''
 })
 
 // AlertDialog state
@@ -534,7 +536,8 @@ async function createCampaign() {
     const response = await campaignsService.create({
       name: newCampaign.value.name,
       whatsapp_account: newCampaign.value.whatsapp_account,
-      template_id: newCampaign.value.template_id
+      template_id: newCampaign.value.template_id,
+      scheduled_at: toCampaignScheduledAt(newCampaign.value.scheduled_at)
     })
     const created = response.data.data || response.data
     // Upload media if a file was selected
@@ -560,7 +563,8 @@ function resetForm() {
   newCampaign.value = {
     name: '',
     whatsapp_account: '',
-    template_id: ''
+    template_id: '',
+    scheduled_at: ''
   }
   clearCampaignMedia()
 }
@@ -570,7 +574,8 @@ function openEditDialog(campaign: Campaign) {
   newCampaign.value = {
     name: campaign.name,
     whatsapp_account: campaign.whatsapp_account || '',
-    template_id: campaign.template_id || ''
+    template_id: campaign.template_id || '',
+    scheduled_at: formatDateTimeLocal(campaign.scheduled_at)
   }
   showCreateDialog.value = true
 }
@@ -594,7 +599,8 @@ async function saveCampaign() {
       await campaignsService.update(editingCampaignId.value, {
         name: newCampaign.value.name,
         whatsapp_account: newCampaign.value.whatsapp_account,
-        template_id: newCampaign.value.template_id
+        template_id: newCampaign.value.template_id,
+        scheduled_at: toCampaignScheduledAt(newCampaign.value.scheduled_at)
       })
       // Upload media if a file was selected
       if (campaignMediaFile.value) {
@@ -919,20 +925,48 @@ function getRecipientStatusClass(status: string): string {
 
 // CSV functions
 function getTemplateParamNames(template: Template): string[] {
-  // Extract parameter names from body_content on-the-fly
-  // Supports both positional ({{1}}, {{2}}) and named ({{name}}, {{order_id}}) parameters
-  if (!template.body_content) return []
-  const matches = template.body_content.match(/\{\{([^}]+)\}\}/g) || []
-  const seen = new Set<string>()
-  const names: string[] = []
-  for (const m of matches) {
-    const name = m.replace(/[{}]/g, '').trim()
-    if (name && !seen.has(name)) {
-      seen.add(name)
-      names.push(name)
+  const contents = [template.body_content || '']
+  for (const button of template.buttons || []) {
+    if (String(button?.type || '').toUpperCase() === 'URL' && button?.url) {
+      contents.push(String(button.url))
     }
   }
+
+  const seen = new Set<string>()
+  const names: string[] = []
+
+  for (const content of contents) {
+    const matches = content.match(/\{\{([^}]+)\}\}/g) || []
+    for (const m of matches) {
+      const name = m.replace(/[{}]/g, '').trim()
+      if (name && !seen.has(name)) {
+        seen.add(name)
+        names.push(name)
+      }
+    }
+  }
+
   return names
+}
+
+function formatDateTimeLocal(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hours}:${minutes}`
+}
+
+function toCampaignScheduledAt(value: string): string | null {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toISOString()
 }
 
 function highlightTemplateParams(content: string): string {
@@ -1300,6 +1334,18 @@ async function addRecipientsFromCSV() {
                 </Select>
                 <p v-if="templates.length === 0" class="text-xs text-muted-foreground">
                   {{ $t('campaigns.noTemplatesFound') }}
+                </p>
+              </div>
+              <div class="grid gap-2">
+                <Label for="scheduled_at">Schedule Send</Label>
+                <Input
+                  id="scheduled_at"
+                  v-model="newCampaign.scheduled_at"
+                  type="datetime-local"
+                  :disabled="isCreating"
+                />
+                <p class="text-xs text-muted-foreground">
+                  Leave empty to start immediately when the campaign is started.
                 </p>
               </div>
               <!-- Header media upload (shown when template needs IMAGE/VIDEO/DOCUMENT) -->
