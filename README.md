@@ -77,6 +77,24 @@ docker compose up -d
 
 Go to `http://localhost:8080` and login with `admin@admin.com` / `admin`
 
+#### Docker Hub Publishing
+
+When publishing images to Docker Hub, always push a multi-arch image that includes both:
+
+- `linux/amd64`
+- `linux/arm64`
+
+Example:
+
+```bash
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -f docker/Dockerfile \
+  -t nikyjain/whatomate:latest \
+  -t nikyjain/whatomate:<tag> \
+  --push .
+```
+
 __________________
 
 ### Binary

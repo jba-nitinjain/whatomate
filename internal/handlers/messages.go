@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -974,6 +976,18 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 			contentBody = externalTemplateFallback(req.TemplateName)
 		}
 	}
+	if isRemoteMediaURL(mediaURL) {
+		originalMediaURL := mediaURL
+		localMediaURL, resolvedMimeType, resolvedFilename, err := a.persistExternalMedia(mediaURL, mediaMimeType, mediaFilename)
+		if err != nil {
+			a.Log.Warn("Failed to persist external message media locally", "error", err, "media_url", mediaURL, "message_type", req.Type)
+		} else {
+			mediaURL = localMediaURL
+			mediaMimeType = resolvedMimeType
+			mediaFilename = resolvedFilename
+			metadata["external_media_url"] = originalMediaURL
+		}
+	}
 
 	msg := &models.Message{
 		BaseModel:         models.BaseModel{ID: uuid.New(), CreatedAt: createdAt, UpdatedAt: createdAt},
@@ -1179,6 +1193,60 @@ func resolveExternalTemplateMedia(req CreateExternalMessageRequest, template *mo
 	}
 
 	return mediaURL, mediaMimeType, mediaFilename
+}
+
+func isRemoteMediaURL(mediaURL string) bool {
+	mediaURL = strings.ToLower(strings.TrimSpace(mediaURL))
+	return strings.HasPrefix(mediaURL, "http://") || strings.HasPrefix(mediaURL, "https://")
+}
+
+func (a *App) persistExternalMedia(mediaURL, mediaMimeType, mediaFilename string) (string, string, string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(mediaURL)
+	if err != nil {
+		return "", "", "", fmt.Errorf("download media: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", "", fmt.Errorf("download media: unexpected status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", "", fmt.Errorf("read media: %w", err)
+	}
+
+	resolvedMimeType := strings.TrimSpace(mediaMimeType)
+	if resolvedMimeType == "" {
+		resolvedMimeType = strings.TrimSpace(resp.Header.Get("Content-Type"))
+	}
+	if idx := strings.Index(resolvedMimeType, ";"); idx >= 0 {
+		resolvedMimeType = strings.TrimSpace(resolvedMimeType[:idx])
+	}
+	if resolvedMimeType == "" && len(data) > 0 {
+		resolvedMimeType = http.DetectContentType(data)
+	}
+	if resolvedMimeType == "" {
+		resolvedMimeType = "application/octet-stream"
+	}
+
+	resolvedFilename := strings.TrimSpace(mediaFilename)
+	if resolvedFilename == "" {
+		if parsedURL, err := url.Parse(mediaURL); err == nil {
+			resolvedFilename = path.Base(parsedURL.Path)
+		}
+	}
+	if resolvedFilename == "" || resolvedFilename == "." || resolvedFilename == "/" {
+		resolvedFilename = "external-media" + getExtensionFromMimeType(resolvedMimeType)
+	}
+
+	localPath, err := a.saveMediaLocally(data, resolvedMimeType, resolvedFilename)
+	if err != nil {
+		return "", "", "", fmt.Errorf("save media locally: %w", err)
+	}
+
+	return localPath, resolvedMimeType, resolvedFilename, nil
 }
 
 func templateHasRenderableHeaderMedia(template *models.Template) bool {
