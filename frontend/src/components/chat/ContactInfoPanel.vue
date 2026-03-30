@@ -63,10 +63,13 @@ interface SessionData {
   panel_config: PanelConfig
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   contact: Contact
   sessionData?: SessionData | null
-}>()
+  mobile?: boolean
+}>(), {
+  mobile: false
+})
 
 const emit = defineEmits<{
   close: []
@@ -101,6 +104,8 @@ onMounted(async () => {
 })
 
 function startResize(e: MouseEvent) {
+  if (props.mobile) return
+
   isResizing.value = true
   const startX = e.clientX
   const startWidth = panelWidth.value
@@ -161,6 +166,11 @@ function getColorClass(color?: string): string {
     default:
       return 'bg-muted text-muted-foreground'
   }
+}
+
+function getGridClass(columns: number): string {
+  if (columns !== 2) return 'grid-cols-1'
+  return props.mobile ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'
 }
 
 // Sort sections by order
@@ -247,11 +257,15 @@ async function updateContactTags(tags: string[]) {
 
 <template>
   <div
-    class="flex flex-col bg-card h-full relative"
-    :style="{ width: `${panelWidth}px` }"
+    :class="[
+      'relative flex h-full flex-col bg-card',
+      props.mobile ? 'w-full' : ''
+    ]"
+    :style="props.mobile ? undefined : { width: `${panelWidth}px` }"
   >
     <!-- Resize Handle -->
     <div
+      v-if="!props.mobile"
       class="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 z-10 border-l"
       :class="{ 'bg-primary/30': isResizing }"
       @mousedown="startResize"
@@ -404,7 +418,7 @@ async function updateContactTags(tags: string[]) {
                 <div
                   :class="[
                     'grid gap-2 pt-2',
-                    section.columns === 2 ? 'grid-cols-2' : 'grid-cols-1'
+                    getGridClass(section.columns)
                   ]"
                 >
                   <div
@@ -440,7 +454,7 @@ async function updateContactTags(tags: string[]) {
               <div
                 :class="[
                   'grid gap-2',
-                  section.columns === 2 ? 'grid-cols-2' : 'grid-cols-1'
+                  getGridClass(section.columns)
                 ]"
               >
                 <div

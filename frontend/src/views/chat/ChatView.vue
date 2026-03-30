@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick, computed, defineAsyncComponent } from 'vue'
 import DOMPurify from 'dompurify'
+import { useMediaQuery } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useContactsStore, type Contact, type Message } from '@/stores/contacts'
@@ -24,6 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { Sheet, SheetContent } from '@/components/ui/sheet'
 import {
   Popover,
   PopoverContent,
@@ -69,6 +71,7 @@ import {
   UserPlus,
   UserMinus,
   UserX,
+  ChevronLeft,
   Play,
   Reply,
   X,
@@ -85,7 +88,8 @@ import {
   Code,
   RotateCw,
   Filter,
-  StickyNote
+  StickyNote,
+  Info
 } from 'lucide-vue-next'
 import { getInitials, getAvatarGradient } from '@/lib/utils'
 import { useColorMode } from '@/composables/useColorMode'
@@ -99,7 +103,6 @@ import { useNotesStore } from '@/stores/notes'
 import { useHeaderMedia } from '@/composables/useHeaderMedia'
 import { CreateContactDialog } from '@/components/shared'
 import HeaderMediaUpload from '@/components/shared/HeaderMediaUpload.vue'
-import { Info } from 'lucide-vue-next'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -111,6 +114,7 @@ const transfersStore = useTransfersStore()
 const tagsStore = useTagsStore()
 const notesStore = useNotesStore()
 const { isDark } = useColorMode()
+const isMobile = useMediaQuery('(max-width: 767px)')
 
 const canWriteContacts = authStore.hasPermission('contacts', 'write')
 
@@ -184,10 +188,24 @@ const isServiceWindowExpired = computed(() => {
   if (!contact) return false
   return contact.service_window_open === false
 })
+const showContactsList = computed(() => !isMobile.value || !contactsStore.currentContact)
+const showChatPane = computed(() => !isMobile.value || !!contactsStore.currentContact)
+const showDesktopNotesPanel = computed(() => !isMobile.value && !!contactsStore.currentContact && isNotesPanelOpen.value)
+const showDesktopInfoPanel = computed(() => !isMobile.value && !!contactsStore.currentContact && isInfoPanelOpen.value)
 
 function openTemplatePicker() {
   const btn = templatePickerRef.value?.querySelector('button')
   btn?.click()
+}
+
+function closeSidePanels() {
+  isNotesPanelOpen.value = false
+  isInfoPanelOpen.value = false
+}
+
+function returnToContactList() {
+  closeSidePanels()
+  router.push('/chat')
 }
 
 // Add contact dialog state
@@ -484,6 +502,7 @@ watch(contactId, async (newId) => {
     notesStore.clearNotes()
     await selectContact(newId)
   } else {
+    closeSidePanels()
     wsService.setCurrentContact(null)
     contactsStore.setCurrentContact(null)
     contactsStore.clearMessages()
@@ -494,6 +513,10 @@ watch(contactId, async (newId) => {
 async function selectContact(id: string) {
   const contact = contactsStore.contacts.find(c => c.id === id)
   if (contact) {
+    if (isMobile.value) {
+      closeSidePanels()
+    }
+
     // Remove old scroll listener before switching contacts
     messagesScroll.cleanup()
 
@@ -561,7 +584,7 @@ async function selectContact(id: string) {
     try {
       const response = await contactsService.getSessionData(id)
       contactSessionData.value = response.data.data || response.data
-      if (contactSessionData.value?.panel_config?.sections?.length > 0) {
+      if (!isMobile.value && contactSessionData.value?.panel_config?.sections?.length > 0) {
         isInfoPanelOpen.value = true
       }
     } catch {
@@ -1376,9 +1399,15 @@ async function sendMediaMessage() {
 </script>
 
 <template>
-  <div class="flex h-full bg-[#0a0a0b] light:bg-gray-50">
+  <div class="relative flex h-full overflow-hidden bg-[#0a0a0b] light:bg-gray-50">
     <!-- Contacts List -->
-    <div class="w-80 border-r border-white/[0.08] light:border-gray-200 flex flex-col bg-[#0a0a0b] light:bg-white">
+    <div
+      :class="[
+        'border-r border-white/[0.08] light:border-gray-200 flex flex-col bg-[#0a0a0b] light:bg-white',
+        isMobile ? 'w-full' : 'w-80',
+        showContactsList ? 'flex' : 'hidden'
+      ]"
+    >
       <!-- Search Header -->
       <div class="p-2 border-b border-white/[0.08] light:border-gray-200">
         <div class="flex items-center gap-2">
@@ -1524,7 +1553,12 @@ async function sendMediaMessage() {
     </div>
 
     <!-- Chat Area -->
-    <div class="flex-1 flex flex-col bg-[#0f0f10] light:bg-gray-50">
+    <div
+      :class="[
+        'min-w-0 flex-1 flex-col bg-[#0f0f10] light:bg-gray-50',
+        showChatPane ? 'flex' : 'hidden'
+      ]"
+    >
       <!-- No Contact Selected -->
       <div
         v-if="!contactsStore.currentContact"
@@ -1542,29 +1576,38 @@ async function sendMediaMessage() {
       <!-- Chat Interface -->
       <template v-else>
         <!-- Chat Header -->
-        <div class="h-14 flex-shrink-0 px-4 border-b border-white/[0.08] light:border-gray-200 flex items-center justify-between bg-[#0f0f10] light:bg-white">
-          <div class="flex items-center gap-2">
+        <div class="h-14 flex-shrink-0 px-3 sm:px-4 border-b border-white/[0.08] light:border-gray-200 flex items-center justify-between bg-[#0f0f10] light:bg-white">
+          <div class="flex min-w-0 items-center gap-2">
+            <Button
+              v-if="isMobile"
+              variant="ghost"
+              size="icon"
+              class="h-8 w-8 shrink-0 text-white/50 hover:text-white hover:bg-white/[0.08] light:text-gray-500 light:hover:text-gray-900 light:hover:bg-gray-100"
+              @click="returnToContactList"
+            >
+              <ChevronLeft class="h-4 w-4" />
+            </Button>
             <Avatar class="h-8 w-8 ring-2 ring-white/[0.1] light:ring-gray-200">
               <AvatarImage :src="contactsStore.currentContact.avatar_url" />
               <AvatarFallback :class="'text-xs bg-gradient-to-br text-white ' + getAvatarGradient(contactsStore.currentContact.name || contactsStore.currentContact.phone_number)">
                 {{ getInitials(contactsStore.currentContact.name || contactsStore.currentContact.phone_number) }}
               </AvatarFallback>
             </Avatar>
-            <div>
+            <div class="min-w-0">
               <div class="flex items-center gap-1.5">
-                <p class="text-sm font-medium text-white light:text-gray-900">
+                <p class="truncate text-sm font-medium text-white light:text-gray-900">
                   {{ contactsStore.currentContact.name || contactsStore.currentContact.phone_number }}
                 </p>
                 <Badge v-if="activeTransferId" class="text-[10px] h-5 bg-orange-500/20 text-orange-400 light:bg-orange-100 light:text-orange-700">
                   Paused
                 </Badge>
               </div>
-              <p class="text-[11px] text-white/50 light:text-gray-500">
+              <p class="truncate text-[11px] text-white/50 light:text-gray-500">
                 {{ contactsStore.currentContact.phone_number }}
               </p>
             </div>
           </div>
-          <div class="flex items-center gap-1">
+          <div class="flex shrink-0 items-center gap-0.5 sm:gap-1">
             <CallButton
               v-if="contactsStore.currentContact?.phone_number && selectedAccount"
               :contact-id="contactsStore.currentContact.id"
@@ -1572,7 +1615,7 @@ async function sendMediaMessage() {
               :contact-name="contactsStore.currentContact.name || contactsStore.currentContact.phone_number"
               :whatsapp-account="selectedAccount"
             />
-            <Tooltip v-if="canAssignContacts">
+            <Tooltip v-if="canAssignContacts && !isMobile">
               <TooltipTrigger as-child>
                 <Button variant="ghost" size="icon" class="h-8 w-8 text-white/50 hover:text-white hover:bg-white/[0.08] light:text-gray-500 light:hover:text-gray-900 light:hover:bg-gray-100" @click="isAssignDialogOpen = true">
                   <UserPlus class="h-4 w-4" />
@@ -1580,7 +1623,7 @@ async function sendMediaMessage() {
               </TooltipTrigger>
               <TooltipContent>{{ $t('chat.assignToAgent') }}</TooltipContent>
             </Tooltip>
-            <Tooltip v-if="activeTransferId">
+            <Tooltip v-if="activeTransferId && !isMobile">
               <TooltipTrigger as-child>
                 <Button variant="ghost" size="icon" class="h-8 w-8 text-white/50 hover:text-white hover:bg-white/[0.08] light:text-gray-500 light:hover:text-gray-900 light:hover:bg-gray-100" :disabled="isResuming" @click="resumeChatbot">
                   <Play class="h-4 w-4" />
@@ -1589,21 +1632,23 @@ async function sendMediaMessage() {
               <TooltipContent>{{ $t('chat.resumeChatbot') }}</TooltipContent>
             </Tooltip>
             <!-- Custom Action Buttons -->
-            <Tooltip v-for="action in customActions" :key="action.id">
-              <TooltipTrigger as-child>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="h-8 w-8 text-white/50 hover:text-white hover:bg-white/[0.08] light:text-gray-500 light:hover:text-gray-900 light:hover:bg-gray-100"
-                  :disabled="executingActionId === action.id"
-                  @click="executeCustomAction(action)"
-                >
-                  <Loader2 v-if="executingActionId === action.id" class="h-4 w-4 animate-spin" />
-                  <component v-else :is="getActionIcon(action.icon)" class="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{{ action.name }}</TooltipContent>
-            </Tooltip>
+            <template v-if="!isMobile">
+              <Tooltip v-for="action in customActions" :key="action.id">
+                <TooltipTrigger as-child>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="h-8 w-8 text-white/50 hover:text-white hover:bg-white/[0.08] light:text-gray-500 light:hover:text-gray-900 light:hover:bg-gray-100"
+                    :disabled="executingActionId === action.id"
+                    @click="executeCustomAction(action)"
+                  >
+                    <Loader2 v-if="executingActionId === action.id" class="h-4 w-4 animate-spin" />
+                    <component v-else :is="getActionIcon(action.icon)" class="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{{ action.name }}</TooltipContent>
+              </Tooltip>
+            </template>
             <Tooltip>
               <TooltipTrigger as-child>
                 <Button
@@ -1666,6 +1711,22 @@ async function sendMediaMessage() {
                   <Info class="mr-2 h-4 w-4" />
                   <span>{{ isInfoPanelOpen ? $t('chat.hideContactDetails') : $t('chat.viewContactDetails') }}</span>
                 </DropdownMenuItem>
+                <DropdownMenuItem @click="isNotesPanelOpen = !isNotesPanelOpen">
+                  <StickyNote class="mr-2 h-4 w-4" />
+                  <span>{{ $t('chat.internalNotes') }}</span>
+                </DropdownMenuItem>
+                <template v-if="customActions.length > 0">
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    v-for="action in customActions"
+                    :key="`action-${action.id}`"
+                    :disabled="executingActionId === action.id"
+                    @click="executeCustomAction(action)"
+                  >
+                    <component :is="getActionIcon(action.icon)" class="mr-2 h-4 w-4" />
+                    <span>{{ action.name }}</span>
+                  </DropdownMenuItem>
+                </template>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -1674,9 +1735,10 @@ async function sendMediaMessage() {
         <!-- Account Tabs (shown when contact has messages from multiple WhatsApp accounts) -->
         <div
           v-if="orgAccounts.length > 1 && selectedAccount"
-          class="flex-shrink-0 px-4 py-2 border-b border-white/[0.08] light:border-gray-200 bg-[#0a0a0b] light:bg-gray-50"
+          class="flex-shrink-0 border-b border-white/[0.08] light:border-gray-200 bg-[#0a0a0b] light:bg-gray-50"
         >
-          <div class="inline-flex items-center gap-1 rounded-lg bg-white/[0.06] light:bg-gray-100 p-1">
+          <div class="overflow-x-auto px-3 py-2 sm:px-4">
+            <div class="inline-flex min-w-max items-center gap-1 rounded-lg bg-white/[0.06] light:bg-gray-100 p-1">
             <button
               v-for="acct in orgAccounts"
               :key="acct.name"
@@ -1690,6 +1752,7 @@ async function sendMediaMessage() {
             >
               {{ acct.name }}
             </button>
+            </div>
           </div>
         </div>
 
@@ -1705,7 +1768,7 @@ async function sendMediaMessage() {
             </div>
           </Transition>
 
-          <ScrollArea :ref="(el: any) => messagesScroll.scrollAreaRef.value = el" class="h-full p-3 chat-background">
+          <ScrollArea :ref="(el: any) => messagesScroll.scrollAreaRef.value = el" class="h-full p-2 sm:p-3 chat-background">
             <div class="space-y-2">
               <!-- Loading indicator for older messages -->
               <div v-if="contactsStore.isLoadingOlderMessages" class="flex justify-center py-2">
@@ -2000,7 +2063,7 @@ async function sendMediaMessage() {
                 </span>
               </div>
               <!-- Action buttons for incoming messages -->
-              <div v-if="message.direction === 'incoming'" class="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity self-center ml-1">
+              <div v-if="message.direction === 'incoming'" class="ml-1 flex flex-col gap-0.5 self-end opacity-100 transition-opacity md:self-center md:opacity-0 md:group-hover:opacity-100">
                 <Popover :open="reactionPickerMessageId === message.id" @update:open="(open: boolean) => reactionPickerMessageId = open ? message.id : null">
                   <PopoverTrigger as-child>
                     <Button variant="ghost" size="icon" class="h-6 w-6">
@@ -2030,7 +2093,7 @@ async function sendMediaMessage() {
                 </Button>
               </div>
               <!-- Reply button for outgoing messages (shown on hover) -->
-              <div v-if="message.direction === 'outgoing'" class="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity self-center ml-1">
+              <div v-if="message.direction === 'outgoing'" class="ml-1 flex flex-col gap-0.5 self-end opacity-100 transition-opacity md:self-center md:opacity-0 md:group-hover:opacity-100">
                 <Popover :open="reactionPickerMessageId === message.id" @update:open="(open: boolean) => reactionPickerMessageId = open ? message.id : null">
                   <PopoverTrigger as-child>
                     <Button variant="ghost" size="icon" class="h-6 w-6">
@@ -2081,7 +2144,7 @@ async function sendMediaMessage() {
         <!-- Service window expired banner -->
         <div
           v-if="isServiceWindowExpired"
-          class="px-4 py-2.5 border-t border-red-500/20 bg-red-500/10 flex items-center gap-2"
+          class="flex flex-col items-start gap-2 border-t border-red-500/20 bg-red-500/10 px-4 py-2.5 sm:flex-row sm:items-center"
         >
           <Clock class="h-4 w-4 text-red-500 shrink-0" />
           <span class="text-sm text-red-500 flex-1">{{ $t('chat.serviceWindowExpired') }}</span>
@@ -2109,63 +2172,65 @@ async function sendMediaMessage() {
         </div>
 
         <!-- Message Input -->
-        <div class="p-4 border-t border-white/[0.08] light:border-gray-200 bg-[#0f0f10] light:bg-white">
-          <form @submit.prevent="sendMessage" class="flex items-center gap-2 p-2 rounded-xl bg-white/[0.06] light:bg-gray-100 border border-white/[0.08] light:border-gray-200">
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <span>
-                  <Popover v-model:open="emojiPickerOpen">
-                    <PopoverTrigger as-child>
-                      <button type="button" class="w-9 h-9 rounded-lg hover:bg-white/[0.08] light:hover:bg-gray-200 flex items-center justify-center transition-colors">
-                        <Smile class="w-[18px] h-[18px] text-white/40 light:text-gray-500" />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent side="top" align="start" class="w-auto p-0">
-                      <EmojiPicker
-                        :native="true"
-                        :disable-skin-tones="true"
-                        :theme="isDark ? 'dark' : 'light'"
-                        @select="insertEmoji($event.i)"
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{{ $t('chat.emoji') }}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <span>
-                  <CannedResponsePicker
-                    :contact="contactsStore.currentContact"
-                    :external-open="cannedPickerOpen"
-                    :external-search="cannedSearchQuery"
-                    @select="insertCannedResponse"
-                    @close="closeCannedPicker"
-                  />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{{ $t('chat.cannedResponses') }}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <span ref="templatePickerRef">
-                  <TemplatePicker
-                    :selected-account="selectedAccount"
-                    @select-with-params="handleTemplateWithParams"
-                  />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{{ $t('chat.sendTemplate') }}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <button type="button" class="w-9 h-9 rounded-lg hover:bg-white/[0.08] light:hover:bg-gray-200 flex items-center justify-center transition-colors" @click="openFilePicker">
-                  <Paperclip class="w-[18px] h-[18px] text-white/40 light:text-gray-500" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{{ $t('chat.attachFile') }}</TooltipContent>
-            </Tooltip>
+        <div class="border-t border-white/[0.08] bg-[#0f0f10] p-3 light:border-gray-200 light:bg-white sm:p-4">
+          <form @submit.prevent="sendMessage" class="flex flex-col gap-2 rounded-xl border border-white/[0.08] bg-white/[0.06] p-2 light:border-gray-200 light:bg-gray-100 sm:flex-row sm:items-end">
+            <div class="flex shrink-0 items-center gap-1 overflow-x-auto sm:overflow-visible">
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <span>
+                    <Popover v-model:open="emojiPickerOpen">
+                      <PopoverTrigger as-child>
+                        <button type="button" class="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-white/[0.08] light:hover:bg-gray-200">
+                          <Smile class="h-[18px] w-[18px] text-white/40 light:text-gray-500" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent side="top" align="start" class="w-auto p-0">
+                        <EmojiPicker
+                          :native="true"
+                          :disable-skin-tones="true"
+                          :theme="isDark ? 'dark' : 'light'"
+                          @select="insertEmoji($event.i)"
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{{ $t('chat.emoji') }}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <span>
+                    <CannedResponsePicker
+                      :contact="contactsStore.currentContact"
+                      :external-open="cannedPickerOpen"
+                      :external-search="cannedSearchQuery"
+                      @select="insertCannedResponse"
+                      @close="closeCannedPicker"
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{{ $t('chat.cannedResponses') }}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <span ref="templatePickerRef">
+                    <TemplatePicker
+                      :selected-account="selectedAccount"
+                      @select-with-params="handleTemplateWithParams"
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{{ $t('chat.sendTemplate') }}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <button type="button" class="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-white/[0.08] light:hover:bg-gray-200" @click="openFilePicker">
+                    <Paperclip class="h-[18px] w-[18px] text-white/40 light:text-gray-500" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{{ $t('chat.attachFile') }}</TooltipContent>
+              </Tooltip>
+            </div>
             <input
               ref="fileInputRef"
               type="file"
@@ -2173,18 +2238,20 @@ async function sendMediaMessage() {
               class="hidden"
               @change="handleFileSelect"
             />
-            <textarea
-              ref="messageInputRef"
-              v-model="messageInput"
-              :placeholder="$t('chat.typeMessage') + '...'"
-              rows="1"
-              class="flex-1 bg-transparent text-[14px] text-white light:text-gray-900 placeholder:text-white/30 light:placeholder:text-gray-400 focus:outline-none resize-none min-h-[36px] max-h-[120px] py-2 overflow-y-auto"
-              @keydown.enter.exact.prevent="sendMessage"
-              @input="autoResizeTextarea"
-            />
-            <button type="submit" class="w-9 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 light:bg-emerald-500 light:hover:bg-emerald-600 flex items-center justify-center transition-colors disabled:opacity-50" :disabled="!messageInput.trim() || isSending">
-              <Send class="w-4 h-4 text-white" />
-            </button>
+            <div class="flex min-w-0 flex-1 items-end gap-2">
+              <textarea
+                ref="messageInputRef"
+                v-model="messageInput"
+                :placeholder="$t('chat.typeMessage') + '...'"
+                rows="1"
+                class="min-h-[36px] max-h-[120px] flex-1 resize-none overflow-y-auto bg-transparent py-2 text-[14px] text-white placeholder:text-white/30 focus:outline-none light:text-gray-900 light:placeholder:text-gray-400"
+                @keydown.enter.exact.prevent="sendMessage"
+                @input="autoResizeTextarea"
+              />
+              <button type="submit" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-600 transition-colors hover:bg-emerald-500 disabled:opacity-50 light:bg-emerald-500 light:hover:bg-emerald-600" :disabled="!messageInput.trim() || isSending">
+                <Send class="h-4 w-4 text-white" />
+              </button>
+            </div>
           </form>
         </div>
       </template>
@@ -2192,19 +2259,51 @@ async function sendMediaMessage() {
 
     <!-- Notes Side Panel -->
     <ConversationNotes
-      v-if="contactsStore.currentContact && isNotesPanelOpen"
-      :contact-id="contactsStore.currentContact.id"
+      v-if="showDesktopNotesPanel"
+      :contact-id="contactsStore.currentContact!.id"
       @close="isNotesPanelOpen = false"
     />
 
     <!-- Contact Info Panel -->
     <ContactInfoPanel
-      v-if="contactsStore.currentContact && isInfoPanelOpen"
-      :contact="contactsStore.currentContact"
+      v-if="showDesktopInfoPanel"
+      :contact="contactsStore.currentContact!"
       :session-data="contactSessionData"
       @close="isInfoPanelOpen = false"
       @tags-updated="(tags) => contactsStore.updateContactTags(contactsStore.currentContact!.id, tags)"
     />
+
+    <!-- Mobile Notes Panel -->
+    <Sheet
+      v-if="contactsStore.currentContact && isMobile"
+      :open="isNotesPanelOpen"
+      @update:open="(open: boolean) => isNotesPanelOpen = open"
+    >
+      <SheetContent side="right" class="w-full max-w-none border-l-0 p-0 [&>button]:hidden">
+        <ConversationNotes
+          :contact-id="contactsStore.currentContact!.id"
+          mobile
+          @close="isNotesPanelOpen = false"
+        />
+      </SheetContent>
+    </Sheet>
+
+    <!-- Mobile Contact Info Panel -->
+    <Sheet
+      v-if="contactsStore.currentContact && isMobile"
+      :open="isInfoPanelOpen"
+      @update:open="(open: boolean) => isInfoPanelOpen = open"
+    >
+      <SheetContent side="right" class="w-full max-w-none border-l-0 p-0 [&>button]:hidden">
+        <ContactInfoPanel
+          :contact="contactsStore.currentContact!"
+          :session-data="contactSessionData"
+          mobile
+          @close="isInfoPanelOpen = false"
+          @tags-updated="(tags) => contactsStore.updateContactTags(contactsStore.currentContact!.id, tags)"
+        />
+      </SheetContent>
+    </Sheet>
 
     <!-- Template Params Dialog -->
     <Dialog v-model:open="templateDialogOpen">
