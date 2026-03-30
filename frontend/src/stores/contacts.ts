@@ -346,6 +346,7 @@ export const useContactsStore = defineStore('contacts', () => {
     searchQuery,
     selectedTags,
     replyingTo,
+    accountFilter,
     filteredContacts,
     sortedContacts,
     // Contacts pagination

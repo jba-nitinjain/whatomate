@@ -125,6 +125,7 @@ const isSending = ref(false)
 const isAssignDialogOpen = ref(false)
 const isTransferring = ref(false)
 const isResuming = ref(false)
+const isRefreshingView = ref(false)
 const isInfoPanelOpen = ref(false)
 const isNotesPanelOpen = ref(false)
 const contactSessionData = ref<any>(null)
@@ -312,6 +313,68 @@ async function fetchCustomActions() {
   } catch (error) {
     // Silently fail - custom actions are optional
     console.error('Failed to fetch custom actions:', error)
+  }
+}
+
+async function fetchContactSessionData(id: string, autoOpen = false) {
+  try {
+    const response = await contactsService.getSessionData(id)
+    contactSessionData.value = response.data.data || response.data
+    if (autoOpen && !isMobile.value && contactSessionData.value?.panel_config?.sections?.length > 0) {
+      isInfoPanelOpen.value = true
+    }
+  } catch {
+    contactSessionData.value = null
+  }
+}
+
+async function refreshChatData() {
+  if (isRefreshingView.value) return
+
+  isRefreshingView.value = true
+  try {
+    const refreshTasks: Promise<unknown>[] = [
+      contactsStore.fetchContacts(),
+      transfersStore.fetchTransfers({ status: 'active' })
+    ]
+
+    if (contactsStore.currentContact) {
+      const currentId = contactsStore.currentContact.id
+      refreshTasks.push(
+        contactsStore.fetchMessages(
+          currentId,
+          selectedAccount.value ? { account: selectedAccount.value } : undefined
+        )
+      )
+
+      if (isNotesPanelOpen.value || notesStore.currentContactId === currentId) {
+        refreshTasks.push(notesStore.fetchNotes(currentId))
+      }
+
+      if (isInfoPanelOpen.value || contactSessionData.value) {
+        refreshTasks.push(fetchContactSessionData(currentId, false))
+      }
+    }
+
+    await Promise.all(refreshTasks)
+
+    if (contactsStore.currentContact) {
+      const refreshedContact = contactsStore.contacts.find(c => c.id === contactsStore.currentContact?.id)
+      if (refreshedContact) {
+        contactsStore.currentContact = {
+          ...contactsStore.currentContact,
+          ...refreshedContact,
+          unread_count: 0
+        }
+      }
+    }
+
+    await nextTick()
+    loadMediaForMessages()
+  } catch {
+    toast.error(t('common.failedLoad', { resource: 'chat' }))
+  } finally {
+    isRefreshingView.value = false
   }
 }
 
@@ -581,15 +644,7 @@ async function selectContact(id: string) {
     notesStore.fetchNotes(id)
 
     // Fetch session data and auto-open panel if configured
-    try {
-      const response = await contactsService.getSessionData(id)
-      contactSessionData.value = response.data.data || response.data
-      if (!isMobile.value && contactSessionData.value?.panel_config?.sections?.length > 0) {
-        isInfoPanelOpen.value = true
-      }
-    } catch {
-      contactSessionData.value = null
-    }
+    await fetchContactSessionData(id, true)
   }
 }
 
@@ -1419,6 +1474,21 @@ async function sendMediaMessage() {
               class="pl-8 h-8 text-sm bg-white/[0.04] border-white/[0.1] text-white placeholder:text-white/40 light:bg-gray-50 light:border-gray-200 light:text-gray-900 light:placeholder:text-gray-400"
             />
           </div>
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-8 w-8 shrink-0 text-white/40 hover:text-white hover:bg-white/[0.08] light:text-gray-500 light:hover:text-gray-900 light:hover:bg-gray-100"
+                :disabled="isRefreshingView"
+                @click="refreshChatData"
+              >
+                <Loader2 v-if="isRefreshingView" class="h-4 w-4 animate-spin" />
+                <RotateCw v-else class="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{{ $t('common.refresh') }}</TooltipContent>
+          </Tooltip>
           <!-- Add Contact -->
           <Tooltip v-if="canWriteContacts">
             <TooltipTrigger as-child>
@@ -1631,6 +1701,21 @@ async function sendMediaMessage() {
               </TooltipTrigger>
               <TooltipContent>{{ $t('chat.resumeChatbot') }}</TooltipContent>
             </Tooltip>
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-8 w-8 text-white/50 hover:text-white hover:bg-white/[0.08] light:text-gray-500 light:hover:text-gray-900 light:hover:bg-gray-100"
+                  :disabled="isRefreshingView"
+                  @click="refreshChatData"
+                >
+                  <Loader2 v-if="isRefreshingView" class="h-4 w-4 animate-spin" />
+                  <RotateCw v-else class="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{{ $t('common.refresh') }}</TooltipContent>
+            </Tooltip>
             <!-- Custom Action Buttons -->
             <template v-if="!isMobile">
               <Tooltip v-for="action in customActions" :key="action.id">
@@ -1714,6 +1799,11 @@ async function sendMediaMessage() {
                 <DropdownMenuItem @click="isNotesPanelOpen = !isNotesPanelOpen">
                   <StickyNote class="mr-2 h-4 w-4" />
                   <span>{{ $t('chat.internalNotes') }}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem :disabled="isRefreshingView" @click="refreshChatData">
+                  <RotateCw v-if="!isRefreshingView" class="mr-2 h-4 w-4" />
+                  <Loader2 v-else class="mr-2 h-4 w-4 animate-spin" />
+                  <span>{{ $t('common.refresh') }}</span>
                 </DropdownMenuItem>
                 <template v-if="customActions.length > 0">
                   <DropdownMenuSeparator />

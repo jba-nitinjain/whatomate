@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -27,20 +27,38 @@ const authStore = useAuthStore()
 const isCollapsed = ref(false)
 const isMobileMenuOpen = ref(false)
 
-// Refresh user data and connect WebSocket on mount
-onMounted(() => {
-  if (authStore.isAuthenticated) {
-    // Fetch fresh permissions in background (non-destructive — interceptor handles 401)
-    authStore.refreshUserData()
+async function connectRealtime() {
+  if (!authStore.isAuthenticated) return
 
-    wsService.connect(async () => {
-      try {
-        const resp = await authService.getWSToken()
-        return resp.data.data.token
-      } catch {
-        return null
-      }
-    })
+  // Refresh permissions in background; interceptor handles expired sessions.
+  authStore.refreshUserData()
+
+  await wsService.connect(async () => {
+    try {
+      const resp = await authService.getWSToken()
+      return resp.data.data.token
+    } catch {
+      return null
+    }
+  })
+}
+
+// Restore session early so realtime updates work on fresh page loads too.
+onMounted(() => {
+  if (!authStore.isAuthenticated) {
+    authStore.restoreSession()
+  }
+
+  if (authStore.isAuthenticated) {
+    connectRealtime()
+  }
+})
+
+watch(() => authStore.isAuthenticated, (isAuthenticated) => {
+  if (isAuthenticated) {
+    connectRealtime()
+  } else {
+    wsService.disconnect()
   }
 })
 

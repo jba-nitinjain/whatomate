@@ -104,7 +104,7 @@ class WebSocketService {
   private getTokenFn: (() => Promise<string | null>) | null = null
 
   async connect(getToken?: () => Promise<string | null>) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return
     }
 
@@ -139,7 +139,7 @@ class WebSocketService {
 
         // Force refresh data after reconnection to sync any missed updates
         if (isReconnection) {
-          this.refreshStaleData()
+          void this.refreshStaleData()
         }
       }
 
@@ -548,14 +548,30 @@ class WebSocketService {
     }
   }
 
-  private refreshStaleData() {
-    // Refresh contacts list
+  private async refreshStaleData() {
     const contactsStore = useContactsStore()
-    contactsStore.fetchContacts()
-
-    // Refresh transfers
     const transfersStore = useTransfersStore()
-    transfersStore.fetchTransfers()
+    const notesStore = useNotesStore()
+
+    const refreshTasks: Promise<unknown>[] = [
+      contactsStore.fetchContacts(),
+      transfersStore.fetchTransfers()
+    ]
+
+    if (contactsStore.currentContact) {
+      refreshTasks.push(
+        contactsStore.fetchMessages(
+          contactsStore.currentContact.id,
+          contactsStore.accountFilter ? { account: contactsStore.accountFilter } : undefined
+        )
+      )
+
+      if (notesStore.currentContactId === contactsStore.currentContact.id) {
+        refreshTasks.push(notesStore.fetchNotes(contactsStore.currentContact.id))
+      }
+    }
+
+    await Promise.allSettled(refreshTasks)
 
     // Show subtle notification
     toast.info('Connection restored', {
