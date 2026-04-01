@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -17,14 +18,17 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { PageHeader, SearchInput, DataTable, DeleteConfirmDialog, RefreshButton, type Column } from '@/components/shared'
 import { api, templatesService } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 import { useOrganizationsStore } from '@/stores/organizations'
 import { toast } from 'vue-sonner'
-import { Plus, RefreshCw, FileText, Eye, Pencil, Trash2, Loader2, MessageSquare, Image, FileIcon, Video, X, Check, AlertCircle, Send, Upload, ChevronsUpDown } from 'lucide-vue-next'
+import { Plus, RefreshCw, FileText, Eye, Pencil, Trash2, Loader2, MessageSquare, Image, FileIcon, Video, X, Check, AlertCircle, Send, Upload, ChevronsUpDown, Megaphone } from 'lucide-vue-next'
 import { getErrorMessage } from '@/lib/api-utils'
 import { useDebounceFn } from '@vueuse/core'
 import { useViewRefresh } from '@/composables/useViewRefresh'
 
 const { t } = useI18n()
+const router = useRouter()
+const authStore = useAuthStore()
 
 interface WhatsAppAccount {
   id: string
@@ -60,6 +64,7 @@ const isSyncing = ref(false)
 const searchQuery = ref('')
 const selectedAccount = ref<string>(localStorage.getItem('templates_selected_account') || 'all')
 const selectedStatus = ref<string>(localStorage.getItem('templates_selected_status') || 'all')
+const canCreateCampaign = computed(() => authStore.hasPermission('campaigns', 'write'))
 
 // Dialog state
 const isDialogOpen = ref(false)
@@ -358,6 +363,21 @@ function openEditDialog(template: Template) {
 function openPreview(template: Template) {
   previewTemplate.value = template
   isPreviewOpen.value = true
+}
+
+function createCampaignFromTemplate(template: Template) {
+  const displayName = template.display_name || template.name
+  const suggestedCampaignName = `${displayName} Campaign`
+
+  router.push({
+    name: 'campaigns',
+    query: {
+      createFromTemplate: '1',
+      templateId: template.id,
+      account: template.whatsapp_account,
+      campaignName: suggestedCampaignName,
+    },
+  })
 }
 
 async function saveTemplate() {
@@ -735,6 +755,16 @@ function formatPreview(text: string, samples: any[]): string {
                   <div class="flex items-center justify-end gap-1">
                     <Button variant="ghost" size="icon" class="h-8 w-8" @click="openPreview(template)">
                       <Eye class="h-4 w-4" />
+                    </Button>
+                    <Button
+                      v-if="canCreateCampaign"
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8 text-orange-600 hover:text-orange-700"
+                      :title="$t('campaigns.createCampaign')"
+                      @click="createCampaignFromTemplate(template)"
+                    >
+                      <Megaphone class="h-4 w-4" />
                     </Button>
                     <Button
                       variant="ghost"
@@ -1170,6 +1200,15 @@ function formatPreview(text: string, samples: any[]): string {
 
         <DialogFooter>
           <Button variant="outline" size="sm" @click="isPreviewOpen = false">{{ $t('common.close') }}</Button>
+          <Button
+            v-if="previewTemplate && canCreateCampaign"
+            variant="outline"
+            size="sm"
+            @click="createCampaignFromTemplate(previewTemplate); isPreviewOpen = false"
+          >
+            <Megaphone class="h-4 w-4 mr-2" />
+            {{ $t('campaigns.createCampaign') }}
+          </Button>
           <Button
             v-if="previewTemplate?.status === 'DRAFT' || previewTemplate?.status === 'REJECTED'"
             size="sm"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -48,6 +49,7 @@ import { toast } from 'vue-sonner'
 import { PageHeader, DataTable, DeleteConfirmDialog, SearchInput, type Column } from '@/components/shared'
 import HeaderMediaUpload from '@/components/shared/HeaderMediaUpload.vue'
 import { useHeaderMedia } from '@/composables/useHeaderMedia'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 import { getErrorMessage } from '@/lib/api-utils'
 import {
   Plus,
@@ -78,6 +80,8 @@ import { formatDate } from '@/lib/utils'
 import { useDebounceFn } from '@vueuse/core'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 
 interface Campaign {
   id: string
@@ -558,11 +562,66 @@ const campaignToCancel = ref<Campaign | null>(null)
 // WebSocket subscription for real-time stats updates
 let unsubscribeCampaignStats: (() => void) | null = null
 
+function isLiveCampaignStatus(status?: Campaign['status'] | string | null) {
+  return ['scheduled', 'queued', 'processing', 'running', 'paused'].includes(status || '')
+}
+
+const hasRealtimeCampaignActivity = computed(() => {
+  if (showCampaignReportDialog.value || showRecipientsDialog.value) {
+    return true
+  }
+
+  if (selectedCampaign.value && isLiveCampaignStatus(selectedCampaign.value.status)) {
+    return true
+  }
+
+  return campaigns.value.some(campaign => isLiveCampaignStatus(campaign.status))
+})
+
+async function refreshCampaignRealtime(options: { refreshRecipients?: boolean } = {}) {
+  if (!hasRealtimeCampaignActivity.value) {
+    return
+  }
+
+  await fetchCampaigns()
+
+  if (!selectedCampaign.value) {
+    return
+  }
+
+  const refreshedCampaign = campaigns.value.find(campaign => campaign.id === selectedCampaign.value?.id)
+  if (!refreshedCampaign) {
+    return
+  }
+
+  selectedCampaign.value = refreshedCampaign
+
+  if (options.refreshRecipients || showCampaignReportDialog.value || showRecipientsDialog.value) {
+    await loadCampaignRecipients(refreshedCampaign, true)
+  }
+}
+
+const queueRealtimeRefresh = useDebounceFn((refreshRecipients = false) => {
+  void refreshCampaignRealtime({ refreshRecipients })
+}, 1200, { maxWait: 4000 })
+
+const { refreshNow: refreshCampaignRealtimeNow } = useViewRefresh(
+  () => refreshCampaignRealtime({ refreshRecipients: showCampaignReportDialog.value || showRecipientsDialog.value }),
+  {
+    intervalMs: 5000,
+    minGapMs: 3000,
+    refreshOnFocus: true,
+    refreshOnVisible: true
+  }
+)
+
 onMounted(async () => {
   await Promise.all([
     fetchCampaigns(),
     fetchAccounts()
   ])
+
+  await handleCreateFromTemplateRoute()
 
   // Subscribe to campaign stats updates
   unsubscribeCampaignStats = wsService.onCampaignStatsUpdate((payload) => {
@@ -588,6 +647,8 @@ onMounted(async () => {
     if (payload.status) {
       activeCampaign.status = payload.status
     }
+
+    queueRealtimeRefresh(Boolean(activeCampaign && activeCampaign.id === payload.campaign_id))
   })
 })
 
@@ -664,6 +725,13 @@ watch(addRecipientsTab, (tab) => {
   fetchCampaignContacts()
 })
 
+watch(
+  () => [route.query.createFromTemplate, route.query.templateId, route.query.account, route.query.campaignName],
+  () => {
+    handleCreateFromTemplateRoute()
+  }
+)
+
 // Watch for filter changes
 watch([filterStatus, selectedRange], () => {
   currentPage.value = 1
@@ -716,6 +784,31 @@ async function fetchAccounts() {
     console.error('Failed to fetch accounts:', error)
     accounts.value = []
   }
+}
+
+async function handleCreateFromTemplateRoute() {
+  if (route.name !== 'campaigns') return
+  if (route.query.createFromTemplate !== '1') return
+
+  const templateId = typeof route.query.templateId === 'string' ? route.query.templateId : ''
+  const account = typeof route.query.account === 'string' ? route.query.account : ''
+  const campaignName = typeof route.query.campaignName === 'string' ? route.query.campaignName : ''
+
+  if (!templateId || !account) {
+    await router.replace({ name: 'campaigns' })
+    return
+  }
+
+  editingCampaignId.value = null
+  resetForm()
+
+  newCampaign.value.whatsapp_account = account
+  await fetchTemplates(account)
+  newCampaign.value.template_id = templateId
+  newCampaign.value.name = campaignName || 'New Campaign'
+  showCreateDialog.value = true
+
+  await router.replace({ name: 'campaigns' })
 }
 
 async function fetchCampaignContacts() {
@@ -1116,6 +1209,7 @@ async function openCampaignReport(campaign: Campaign) {
   resetRecipientFilters()
   showCampaignReportDialog.value = true
   await loadCampaignRecipients(campaign)
+  await refreshCampaignRealtimeNow(true)
 }
 
 async function viewRecipients(campaign: Campaign) {
@@ -1123,6 +1217,7 @@ async function viewRecipients(campaign: Campaign) {
   resetRecipientFilters()
   showRecipientsDialog.value = true
   await loadCampaignRecipients(campaign)
+  await refreshCampaignRealtimeNow(true)
 }
 
 async function refreshSelectedCampaignData() {
