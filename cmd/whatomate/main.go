@@ -240,6 +240,10 @@ func runServer(args []string) {
 	app.StartScheduledCampaignProcessor(time.Minute)
 	lo.Info("Scheduled campaign processor started")
 
+	// Start chat retention processor
+	app.StartChatRetentionProcessor(60*24*time.Hour, 24*time.Hour)
+	lo.Info("Chat retention processor started", "retention_days", 60)
+
 	// Parse allowed origins for CORS
 	allowedOrigins := middleware.ParseAllowedOrigins(cfg.Server.AllowedOrigins)
 
@@ -319,6 +323,11 @@ func runServer(args []string) {
 	lo.Info("Stopping scheduled campaign processor...")
 	app.StopScheduledCampaignProcessor()
 	lo.Info("Scheduled campaign processor stopped")
+
+	// Stop chat retention processor
+	lo.Info("Stopping chat retention processor...")
+	app.StopChatRetentionProcessor()
+	lo.Info("Chat retention processor stopped")
 
 	// Stop SLA processor
 	lo.Info("Stopping SLA processor...")

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -58,6 +59,12 @@ type RecipientRequest struct {
 	PhoneNumber    string                 `json:"phone_number" validate:"required"`
 	RecipientName  string                 `json:"recipient_name"`
 	TemplateParams map[string]interface{} `json:"template_params"`
+}
+
+type CampaignRecipientImportRequest struct {
+	Recipients []RecipientRequest `json:"recipients"`
+	ContactIDs []string           `json:"contact_ids"`
+	TagNames   []string           `json:"tag_names"`
 }
 
 // ListCampaigns implements campaign listing
@@ -682,23 +689,82 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Can only add recipients to draft campaigns", nil, "")
 	}
 
-	var req struct {
-		Recipients []RecipientRequest `json:"recipients" validate:"required"`
-	}
+	var req CampaignRecipientImportRequest
 	if err := a.decodeRequest(r, &req); err != nil {
 		return nil
 	}
 
-	// Create recipients
-	recipients := make([]models.BulkMessageRecipient, len(req.Recipients))
-	for i, rec := range req.Recipients {
-		recipients[i] = models.BulkMessageRecipient{
+	if len(req.Recipients) == 0 && len(req.ContactIDs) == 0 && len(req.TagNames) == 0 {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "At least one recipient, contact, or contact group is required", nil, "")
+	}
+
+	existingPhones := make(map[string]struct{})
+	var existingRecipients []models.BulkMessageRecipient
+	if err := a.DB.Where("campaign_id = ?", id).Find(&existingRecipients).Error; err != nil {
+		a.Log.Error("Failed to load existing campaign recipients", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load campaign recipients", nil, "")
+	}
+	for _, recipient := range existingRecipients {
+		phone := normalizeCampaignRecipientPhone(recipient.PhoneNumber)
+		if phone != "" {
+			existingPhones[phone] = struct{}{}
+		}
+	}
+
+	recipientMap := make(map[string]RecipientRequest)
+	for _, rec := range req.Recipients {
+		phone := normalizeCampaignRecipientPhone(rec.PhoneNumber)
+		if phone == "" {
+			continue
+		}
+		if _, exists := existingPhones[phone]; exists {
+			continue
+		}
+		if _, exists := recipientMap[phone]; exists {
+			continue
+		}
+		recipientMap[phone] = RecipientRequest{
+			PhoneNumber:    phone,
+			RecipientName:  strings.TrimSpace(rec.RecipientName),
+			TemplateParams: rec.TemplateParams,
+		}
+	}
+
+	selectedContacts, err := a.loadCampaignImportContacts(orgID, req.ContactIDs, req.TagNames)
+	if err != nil {
+		a.Log.Error("Failed to load campaign contacts for import", "error", err, "campaign_id", id)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load contacts for import", nil, "")
+	}
+	for _, contact := range selectedContacts {
+		phone := normalizeCampaignRecipientPhone(contact.PhoneNumber)
+		if phone == "" {
+			continue
+		}
+		if _, exists := existingPhones[phone]; exists {
+			continue
+		}
+		if _, exists := recipientMap[phone]; exists {
+			continue
+		}
+		recipientMap[phone] = RecipientRequest{
+			PhoneNumber:   phone,
+			RecipientName: strings.TrimSpace(contact.ProfileName),
+		}
+	}
+
+	if len(recipientMap) == 0 {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "No new recipients found to add", nil, "")
+	}
+
+	recipients := make([]models.BulkMessageRecipient, 0, len(recipientMap))
+	for _, rec := range recipientMap {
+		recipients = append(recipients, models.BulkMessageRecipient{
 			CampaignID:     id,
 			PhoneNumber:    rec.PhoneNumber,
 			RecipientName:  rec.RecipientName,
 			TemplateParams: models.JSONB(rec.TemplateParams),
 			Status:         models.MessageStatusPending,
-		}
+		})
 	}
 
 	if err := a.DB.Create(&recipients).Error; err != nil {
@@ -711,11 +777,11 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 	a.DB.Model(&models.BulkMessageRecipient{}).Where("campaign_id = ?", id).Count(&totalCount)
 	a.DB.Model(campaign).Update("total_recipients", totalCount)
 
-	a.Log.Info("Recipients added to campaign", "campaign_id", id, "count", len(req.Recipients))
+	a.Log.Info("Recipients added to campaign", "campaign_id", id, "count", len(recipients))
 
 	return r.SendEnvelope(map[string]interface{}{
 		"message":          "Recipients added successfully",
-		"added_count":      len(req.Recipients),
+		"added_count":      len(recipients),
 		"total_recipients": totalCount,
 	})
 }
@@ -755,6 +821,78 @@ func (a *App) GetCampaignRecipients(r *fastglue.Request) error {
 		"recipients": recipients,
 		"total":      len(recipients),
 	})
+}
+
+func normalizeCampaignRecipientPhone(phone string) string {
+	phone = strings.TrimSpace(phone)
+	phone = strings.TrimPrefix(phone, "+")
+	return phone
+}
+
+func (a *App) loadCampaignImportContacts(orgID uuid.UUID, contactIDs []string, tagNames []string) ([]models.Contact, error) {
+	contactsByID := make(map[uuid.UUID]models.Contact)
+
+	if len(contactIDs) > 0 {
+		parsedIDs := make([]uuid.UUID, 0, len(contactIDs))
+		for _, contactID := range contactIDs {
+			contactID = strings.TrimSpace(contactID)
+			if contactID == "" {
+				continue
+			}
+			parsedID, err := uuid.Parse(contactID)
+			if err != nil {
+				continue
+			}
+			parsedIDs = append(parsedIDs, parsedID)
+		}
+
+		if len(parsedIDs) > 0 {
+			var directContacts []models.Contact
+			if err := a.DB.Where("organization_id = ? AND id IN ?", orgID, parsedIDs).Find(&directContacts).Error; err != nil {
+				return nil, err
+			}
+			for _, contact := range directContacts {
+				contactsByID[contact.ID] = contact
+			}
+		}
+	}
+
+	cleanTags := make([]string, 0, len(tagNames))
+	for _, tagName := range tagNames {
+		tagName = strings.TrimSpace(tagName)
+		if tagName != "" {
+			cleanTags = append(cleanTags, tagName)
+		}
+	}
+
+	if len(cleanTags) > 0 {
+		query := a.DB.Where("organization_id = ?", orgID)
+		conditions := make([]string, 0, len(cleanTags))
+		args := make([]any, 0, len(cleanTags))
+		for _, tagName := range cleanTags {
+			tagJSON, _ := json.Marshal([]string{tagName})
+			conditions = append(conditions, "tags @> ?::jsonb")
+			args = append(args, string(tagJSON))
+		}
+		if len(conditions) > 0 {
+			query = query.Where("("+strings.Join(conditions, " OR ")+")", args...)
+		}
+
+		var taggedContacts []models.Contact
+		if err := query.Find(&taggedContacts).Error; err != nil {
+			return nil, err
+		}
+		for _, contact := range taggedContacts {
+			contactsByID[contact.ID] = contact
+		}
+	}
+
+	contacts := make([]models.Contact, 0, len(contactsByID))
+	for _, contact := range contactsByID {
+		contacts = append(contacts, contact)
+	}
+
+	return contacts, nil
 }
 
 // DeleteCampaignRecipient deletes a single recipient from a campaign

@@ -33,6 +33,7 @@ type App struct {
 	Queue             queue.Queue
 	CampaignSubCancel context.CancelFunc
 	ScheduledCampaignCancel context.CancelFunc
+	ChatRetentionCancel context.CancelFunc
 	// HTTPClient is a shared HTTP client with connection pooling for external API calls
 	HTTPClient *http.Client
 	// Assigner provides shared team-based agent assignment (used by both chat and call transfers)

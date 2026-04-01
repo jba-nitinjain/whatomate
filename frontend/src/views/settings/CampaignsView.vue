@@ -41,7 +41,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { campaignsService, templatesService, accountsService } from '@/services/api'
+import { campaignsService, templatesService, accountsService, contactsService, tagsService, type Tag } from '@/services/api'
 import { wsService } from '@/services/websocket'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'vue-sonner'
@@ -135,6 +135,15 @@ interface Account {
   phone_id: string
 }
 
+interface CampaignContact {
+  id: string
+  phone_number: string
+  profile_name?: string
+  name?: string
+  whatsapp_account?: string
+  tags?: string[]
+}
+
 interface Recipient {
   id: string
   phone_number: string
@@ -142,7 +151,10 @@ interface Recipient {
   status: string
   sent_at?: string
   delivered_at?: string
+  read_at?: string
   error_message?: string
+  template_params?: Record<string, any>
+  created_at?: string
 }
 
 const campaigns = ref<Campaign[]>([])
@@ -255,12 +267,154 @@ const formatDateRangeDisplay = computed(() => {
 
 // Recipients state
 const showRecipientsDialog = ref(false)
+const showCampaignReportDialog = ref(false)
 const showAddRecipientsDialog = ref(false)
 const selectedCampaign = ref<Campaign | null>(null)
 const recipients = ref<Recipient[]>([])
 const isLoadingRecipients = ref(false)
 const isAddingRecipients = ref(false)
 const recipientsInput = ref('')
+const recipientSearchQuery = ref('')
+const recipientFilterStatus = ref('all')
+const lastLoadedRecipientsCampaignId = ref<string | null>(null)
+
+const activeCampaignStatuses = new Set(['scheduled', 'queued', 'processing', 'running', 'paused'])
+const recipientStatusOrder = ['pending', 'queued', 'processing', 'sent', 'delivered', 'read', 'failed', 'cancelled']
+
+const campaignOverview = computed(() => {
+  return campaigns.value.reduce(
+    (summary, campaign) => {
+      const processedCount = getCampaignProcessedCount(campaign)
+      summary.totalCampaigns += 1
+      summary.activeCampaigns += activeCampaignStatuses.has(campaign.status) ? 1 : 0
+      summary.totalRecipients += campaign.total_recipients
+      summary.processedRecipients += processedCount
+      summary.pendingRecipients += Math.max(campaign.total_recipients - processedCount, 0)
+      summary.sentCount += campaign.sent_count
+      summary.deliveredCount += campaign.delivered_count
+      summary.readCount += campaign.read_count
+      summary.failedCount += campaign.failed_count
+      return summary
+    },
+    {
+      totalCampaigns: 0,
+      activeCampaigns: 0,
+      totalRecipients: 0,
+      processedRecipients: 0,
+      pendingRecipients: 0,
+      sentCount: 0,
+      deliveredCount: 0,
+      readCount: 0,
+      failedCount: 0,
+    }
+  )
+})
+
+const selectedCampaignMetrics = computed(() => {
+  if (!selectedCampaign.value) return null
+
+  const campaign = selectedCampaign.value
+  const processed = getCampaignProcessedCount(campaign)
+  const pending = Math.max(campaign.total_recipients - processed, 0)
+
+  return {
+    processed,
+    pending,
+    progressRate: getProgressPercentage(campaign),
+    deliveryRate: getPercentage(campaign.delivered_count, campaign.total_recipients),
+    readRate: getPercentage(campaign.read_count, campaign.total_recipients),
+    failureRate: getPercentage(campaign.failed_count, campaign.total_recipients),
+  }
+})
+
+const recipientStatusOptions = computed(() => {
+  const availableStatuses = new Set(recipients.value.map(recipient => recipient.status).filter(Boolean))
+  const dynamicStatuses = [...availableStatuses].filter(status => !recipientStatusOrder.includes(status)).sort()
+  const orderedStatuses = [
+    ...recipientStatusOrder.filter(status => availableStatuses.has(status)),
+    ...dynamicStatuses,
+  ]
+
+  return [
+    { value: 'all', label: 'All recipients' },
+    ...orderedStatuses.map(status => ({
+      value: status,
+      label: formatStatusLabel(status),
+    })),
+  ]
+})
+
+const recipientDashboard = computed(() => {
+  const counts = {
+    total: recipients.value.length,
+    pending: 0,
+    sent: 0,
+    delivered: 0,
+    read: 0,
+    failed: 0,
+  }
+
+  for (const recipient of recipients.value) {
+    switch (recipient.status) {
+      case 'pending':
+      case 'queued':
+      case 'processing':
+        counts.pending += 1
+        break
+      case 'sent':
+        counts.sent += 1
+        break
+      case 'delivered':
+        counts.delivered += 1
+        break
+      case 'read':
+        counts.read += 1
+        break
+      case 'failed':
+        counts.failed += 1
+        break
+      default:
+        break
+    }
+  }
+
+  return counts
+})
+
+const filteredRecipients = computed(() => {
+  const search = recipientSearchQuery.value.trim().toLowerCase()
+
+  return recipients.value.filter((recipient) => {
+    const matchesStatus = recipientFilterStatus.value === 'all' || recipient.status === recipientFilterStatus.value
+    if (!matchesStatus) return false
+
+    if (!search) return true
+
+    return [
+      recipient.phone_number,
+      recipient.recipient_name,
+      recipient.error_message,
+      JSON.stringify(recipient.template_params || {}),
+    ]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(search))
+  })
+})
+
+const recipientFailureSummary = computed(() => {
+  const grouped = new Map<string, number>()
+
+  for (const recipient of recipients.value) {
+    if (recipient.status !== 'failed') continue
+    const message = (recipient.error_message || 'Unknown failure').trim() || 'Unknown failure'
+    grouped.set(message, (grouped.get(message) || 0) + 1)
+  }
+
+  return [...grouped.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([message, count]) => ({ message, count }))
+})
 
 // CSV upload state
 const csvFile = ref<File | null>(null)
@@ -268,6 +422,13 @@ const csvValidation = ref<CSVValidation | null>(null)
 const isValidatingCSV = ref(false)
 const selectedTemplate = ref<Template | null>(null)
 const addRecipientsTab = ref('manual')
+const campaignContacts = ref<CampaignContact[]>([])
+const availableContactGroups = ref<Tag[]>([])
+const isLoadingCampaignContacts = ref(false)
+const isLoadingContactGroups = ref(false)
+const contactSearchQuery = ref('')
+const selectedContactIds = ref<string[]>([])
+const selectedContactGroupNames = ref<string[]>([])
 
 // Media upload state
 // Computed: template parameter format hints
@@ -275,6 +436,12 @@ const templateParamNames = computed(() => {
   if (!selectedTemplate.value) return []
   return getTemplateParamNames(selectedTemplate.value)
 })
+
+const canImportFromContacts = computed(() => Boolean(selectedTemplate.value) && templateParamNames.value.length === 0)
+
+const selectedContactCount = computed(() => selectedContactIds.value.length)
+
+const selectedContactGroupCount = computed(() => selectedContactGroupNames.value.length)
 
 const manualEntryFormat = computed(() => {
   const params = templateParamNames.value
@@ -409,6 +576,18 @@ onMounted(async () => {
         campaign.status = payload.status
       }
     }
+    const activeCampaign = selectedCampaign.value
+    if (!activeCampaign || activeCampaign.id !== payload.campaign_id) {
+      return
+    }
+
+    activeCampaign.sent_count = payload.sent_count
+    activeCampaign.delivered_count = payload.delivered_count
+    activeCampaign.read_count = payload.read_count
+    activeCampaign.failed_count = payload.failed_count
+    if (payload.status) {
+      activeCampaign.status = payload.status
+    }
   })
 })
 
@@ -438,6 +617,12 @@ async function fetchCampaigns() {
     // API returns: { status: "success", data: { campaigns: [...], total: N } }
     const data = response.data.data || response.data
     campaigns.value = data.campaigns || []
+    if (selectedCampaign.value) {
+      const updatedCampaign = campaigns.value.find(campaign => campaign.id === selectedCampaign.value?.id)
+      if (updatedCampaign) {
+        selectedCampaign.value = updatedCampaign
+      }
+    }
     totalItems.value = data.total ?? campaigns.value.length
   } catch (error) {
     console.error('Failed to fetch campaigns:', error)
@@ -462,6 +647,22 @@ const debouncedSearch = useDebounceFn(() => {
 }, 300)
 
 watch(searchQuery, () => debouncedSearch())
+
+const debouncedContactSearch = useDebounceFn(() => {
+  fetchCampaignContacts()
+}, 300)
+
+watch(contactSearchQuery, () => {
+  if (addRecipientsTab.value === 'contacts') {
+    debouncedContactSearch()
+  }
+})
+
+watch(addRecipientsTab, (tab) => {
+  if (tab !== 'contacts') return
+  fetchContactGroups()
+  fetchCampaignContacts()
+})
 
 // Watch for filter changes
 watch([filterStatus, selectedRange], () => {
@@ -514,6 +715,48 @@ async function fetchAccounts() {
   } catch (error) {
     console.error('Failed to fetch accounts:', error)
     accounts.value = []
+  }
+}
+
+async function fetchCampaignContacts() {
+  if (!showAddRecipientsDialog.value || addRecipientsTab.value !== 'contacts') return
+  if (!canImportFromContacts.value) {
+    campaignContacts.value = []
+    return
+  }
+
+  isLoadingCampaignContacts.value = true
+  try {
+    const response = await contactsService.list({
+      search: contactSearchQuery.value.trim() || undefined,
+      page: 1,
+      limit: 50,
+    })
+    const data = response.data as any
+    const responseData = data.data || data
+    campaignContacts.value = responseData.contacts || []
+  } catch (error) {
+    console.error('Failed to fetch campaign contacts:', error)
+    campaignContacts.value = []
+  } finally {
+    isLoadingCampaignContacts.value = false
+  }
+}
+
+async function fetchContactGroups() {
+  if (!showAddRecipientsDialog.value || addRecipientsTab.value !== 'contacts') return
+
+  isLoadingContactGroups.value = true
+  try {
+    const response = await tagsService.list({ page: 1, limit: 100 })
+    const data = response.data as any
+    const responseData = data.data || data
+    availableContactGroups.value = responseData.tags || []
+  } catch (error) {
+    console.error('Failed to fetch contact groups:', error)
+    availableContactGroups.value = []
+  } finally {
+    isLoadingContactGroups.value = false
   }
 }
 
@@ -731,9 +974,28 @@ function getStatusClass(status: string): string {
   }
 }
 
+function formatStatusLabel(status: string): string {
+  return status
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase())
+}
+
+function getCampaignProcessedCount(campaign: Campaign): number {
+  return Math.min(campaign.total_recipients, campaign.sent_count + campaign.failed_count)
+}
+
+function getPercentage(value: number, total: number): number {
+  if (!total) return 0
+  return Math.round((value / total) * 1000) / 10
+}
+
+function formatPercentage(value: number): string {
+  return `${value.toFixed(1)}%`
+}
+
 function getProgressPercentage(campaign: Campaign): number {
   if (campaign.total_recipients === 0) return 0
-  return Math.round((campaign.sent_count / campaign.total_recipients) * 100)
+  return Math.round((getCampaignProcessedCount(campaign) / campaign.total_recipients) * 100)
 }
 
 // Standalone media upload from table action
@@ -823,20 +1085,62 @@ function openMediaPreview(campaign: Campaign) {
 // Recipients functions
 const deletingRecipientId = ref<string | null>(null)
 
-async function viewRecipients(campaign: Campaign) {
+function resetRecipientFilters() {
+  recipientSearchQuery.value = ''
+  recipientFilterStatus.value = 'all'
+}
+
+async function loadCampaignRecipients(campaign: Campaign, force = false) {
+  if (!force && lastLoadedRecipientsCampaignId.value === campaign.id) {
+    return
+  }
+
   selectedCampaign.value = campaign
-  showRecipientsDialog.value = true
   isLoadingRecipients.value = true
   try {
     const response = await campaignsService.getRecipients(campaign.id)
     recipients.value = response.data.data?.recipients || []
+    lastLoadedRecipientsCampaignId.value = campaign.id
   } catch (error) {
     console.error('Failed to fetch recipients:', error)
     toast.error(t('common.failedLoad', { resource: t('resources.recipients') }))
     recipients.value = []
+    lastLoadedRecipientsCampaignId.value = null
   } finally {
     isLoadingRecipients.value = false
   }
+}
+
+async function openCampaignReport(campaign: Campaign) {
+  selectedCampaign.value = campaign
+  resetRecipientFilters()
+  showCampaignReportDialog.value = true
+  await loadCampaignRecipients(campaign)
+}
+
+async function viewRecipients(campaign: Campaign) {
+  selectedCampaign.value = campaign
+  resetRecipientFilters()
+  showRecipientsDialog.value = true
+  await loadCampaignRecipients(campaign)
+}
+
+async function refreshSelectedCampaignData() {
+  if (!selectedCampaign.value) return
+
+  const activeCampaignId = selectedCampaign.value.id
+  await fetchCampaigns()
+  const refreshedCampaign = campaigns.value.find(campaign => campaign.id === activeCampaignId)
+  if (refreshedCampaign) {
+    selectedCampaign.value = refreshedCampaign
+    await loadCampaignRecipients(refreshedCampaign, true)
+  }
+}
+
+function openRecipientsFromReport() {
+  if (!selectedCampaign.value) return
+  showCampaignReportDialog.value = false
+  showRecipientsDialog.value = true
 }
 
 async function deleteRecipient(recipientId: string) {
@@ -846,6 +1150,7 @@ async function deleteRecipient(recipientId: string) {
   try {
     await campaignsService.deleteRecipient(selectedCampaign.value.id, recipientId)
     recipients.value = recipients.value.filter(r => r.id !== recipientId)
+    lastLoadedRecipientsCampaignId.value = selectedCampaign.value.id
     // Update recipient count in selectedCampaign
     selectedCampaign.value.total_recipients = recipients.value.length
     toast.success(t('common.deletedSuccess', { resource: t('resources.Recipient') }))
@@ -898,11 +1203,12 @@ async function addRecipients() {
 
   isAddingRecipients.value = true
   try {
-    const response = await campaignsService.addRecipients(selectedCampaign.value.id, recipientsList)
+    const response = await campaignsService.addRecipients(selectedCampaign.value.id, { recipients: recipientsList })
     const result = response.data.data
     toast.success(t('campaigns.addedRecipients', { count: result?.added_count || recipientsList.length }))
     showAddRecipientsDialog.value = false
     recipientsInput.value = ''
+    lastLoadedRecipientsCampaignId.value = null
     await fetchCampaigns()
   } catch (error: any) {
     toast.error(getErrorMessage(error, t('campaigns.addRecipientsFailed')))
@@ -915,12 +1221,86 @@ function getRecipientStatusClass(status: string): string {
   switch (status) {
     case 'sent':
     case 'delivered':
+    case 'read':
       return 'border-green-600 text-green-600'
+    case 'pending':
+    case 'queued':
+    case 'processing':
+      return 'border-amber-500 text-amber-600'
     case 'failed':
       return 'border-destructive text-destructive'
     default:
       return ''
   }
+}
+
+function isCampaignContactSelected(contactId: string) {
+  return selectedContactIds.value.includes(contactId)
+}
+
+function isCampaignContactGroupSelected(tagName: string) {
+  return selectedContactGroupNames.value.includes(tagName)
+}
+
+function toggleCampaignContact(contactId: string) {
+  if (isCampaignContactSelected(contactId)) {
+    selectedContactIds.value = selectedContactIds.value.filter(id => id !== contactId)
+    return
+  }
+  selectedContactIds.value = [...selectedContactIds.value, contactId]
+}
+
+function toggleCampaignContactGroup(tagName: string) {
+  if (isCampaignContactGroupSelected(tagName)) {
+    selectedContactGroupNames.value = selectedContactGroupNames.value.filter(name => name !== tagName)
+    return
+  }
+  selectedContactGroupNames.value = [...selectedContactGroupNames.value, tagName]
+}
+
+async function addRecipientsFromContacts() {
+  if (!selectedCampaign.value) return
+
+  if (!canImportFromContacts.value) {
+    toast.error('Contact and group import is available only for templates without variables.')
+    return
+  }
+
+  if (selectedContactIds.value.length === 0 && selectedContactGroupNames.value.length === 0) {
+    toast.error('Select at least one contact or contact group.')
+    return
+  }
+
+  isAddingRecipients.value = true
+  try {
+    const response = await campaignsService.addRecipients(selectedCampaign.value.id, {
+      contact_ids: selectedContactIds.value,
+      tag_names: selectedContactGroupNames.value,
+    })
+    const result = response.data.data
+    toast.success(`Added ${result?.added_count || 0} recipients from contacts and groups.`)
+    showAddRecipientsDialog.value = false
+    selectedContactIds.value = []
+    selectedContactGroupNames.value = []
+    contactSearchQuery.value = ''
+    lastLoadedRecipientsCampaignId.value = null
+    await fetchCampaigns()
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, t('campaigns.addRecipientsFailed')))
+  } finally {
+    isAddingRecipients.value = false
+  }
+}
+
+function getRecipientLastActivity(recipient: Recipient): string {
+  return recipient.read_at || recipient.delivered_at || recipient.sent_at || recipient.created_at || ''
+}
+
+function getRecipientActivityLabel(recipient: Recipient): string {
+  if (recipient.read_at) return 'Read'
+  if (recipient.delivered_at) return 'Delivered'
+  if (recipient.sent_at) return 'Sent'
+  return 'Updated'
 }
 
 // CSV functions
@@ -995,7 +1375,12 @@ async function openAddRecipientsDialog(campaign: Campaign) {
   recipientsInput.value = ''
   csvFile.value = null
   csvValidation.value = null
+  selectedTemplate.value = null
   addRecipientsTab.value = 'manual'
+  contactSearchQuery.value = ''
+  selectedContactIds.value = []
+  selectedContactGroupNames.value = []
+  campaignContacts.value = []
 
   // Fetch template details to get body_content
   if (campaign.template_id) {
@@ -1255,12 +1640,13 @@ async function addRecipientsFromCSV() {
 
   isAddingRecipients.value = true
   try {
-    const response = await campaignsService.addRecipients(selectedCampaign.value.id, recipientsList)
+    const response = await campaignsService.addRecipients(selectedCampaign.value.id, { recipients: recipientsList })
     const result = response.data.data
     toast.success(t('campaigns.addedFromCsv', { count: result?.added_count || recipientsList.length }))
     showAddRecipientsDialog.value = false
     csvFile.value = null
     csvValidation.value = null
+    lastLoadedRecipientsCampaignId.value = null
     await fetchCampaigns()
   } catch (error: any) {
     toast.error(getErrorMessage(error, t('campaigns.addRecipientsFailed')))
@@ -1423,10 +1809,52 @@ async function addRecipientsFromCSV() {
                       </div>
                     </PopoverContent>
                   </Popover>
+                  <Button variant="outline" size="sm" @click="fetchCampaigns" :disabled="isLoading">
+                    <RefreshCw :class="['h-4 w-4 mr-2', isLoading ? 'animate-spin' : '']" />
+                    {{ $t('common.refresh') }}
+                  </Button>
                 </div>
               </div>
             </CardHeader>
             <CardContent>
+              <div class="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+                <div class="rounded-xl border bg-muted/30 p-4">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground">Campaigns</p>
+                  <p class="mt-2 text-2xl font-semibold">{{ campaignOverview.totalCampaigns }}</p>
+                  <p class="mt-1 text-xs text-muted-foreground">Visible in the current range</p>
+                </div>
+                <div class="rounded-xl border bg-muted/30 p-4">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground">Active</p>
+                  <p class="mt-2 text-2xl font-semibold">{{ campaignOverview.activeCampaigns }}</p>
+                  <p class="mt-1 text-xs text-muted-foreground">Scheduled, queued, processing, running, or paused</p>
+                </div>
+                <div class="rounded-xl border bg-muted/30 p-4">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground">Recipients</p>
+                  <p class="mt-2 text-2xl font-semibold">{{ campaignOverview.totalRecipients }}</p>
+                  <p class="mt-1 text-xs text-muted-foreground">Across the campaigns on this page</p>
+                </div>
+                <div class="rounded-xl border bg-muted/30 p-4">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground">Processed</p>
+                  <p class="mt-2 text-2xl font-semibold">{{ campaignOverview.processedRecipients }}</p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {{ formatPercentage(getPercentage(campaignOverview.processedRecipients, campaignOverview.totalRecipients)) }} completion
+                  </p>
+                </div>
+                <div class="rounded-xl border bg-muted/30 p-4">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground">Delivered</p>
+                  <p class="mt-2 text-2xl font-semibold text-green-600">{{ campaignOverview.deliveredCount }}</p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {{ formatPercentage(getPercentage(campaignOverview.deliveredCount, campaignOverview.totalRecipients)) }} delivery rate
+                  </p>
+                </div>
+                <div class="rounded-xl border bg-muted/30 p-4">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground">Failed</p>
+                  <p class="mt-2 text-2xl font-semibold text-destructive">{{ campaignOverview.failedCount }}</p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {{ campaignOverview.pendingRecipients }} still pending
+                  </p>
+                </div>
+              </div>
               <DataTable
                 :items="campaigns"
                 :columns="columns"
@@ -1455,7 +1883,7 @@ async function addRecipientsFromCSV() {
                 <template #cell-status="{ item: campaign }">
                   <Badge variant="outline" :class="[getStatusClass(campaign.status), 'text-xs']">
                     <component :is="getStatusIcon(campaign.status)" class="h-3 w-3 mr-1" />
-                    {{ campaign.status }}
+                    {{ formatStatusLabel(campaign.status) }}
                   </Badge>
                 </template>
                 <template #cell-stats="{ item: campaign }">
@@ -1477,8 +1905,11 @@ async function addRecipientsFromCSV() {
                 </template>
                 <template #cell-actions="{ item: campaign }">
                   <div class="flex items-center justify-end gap-1">
-                    <Button variant="ghost" size="icon" class="h-8 w-8" @click="viewRecipients(campaign)" title="View Recipients">
+                    <Button variant="ghost" size="icon" class="h-8 w-8" @click="openCampaignReport(campaign)" title="View Report">
                       <Eye class="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" class="h-8 w-8" @click="viewRecipients(campaign)" title="View Recipients">
+                      <Users class="h-4 w-4" />
                     </Button>
                     <Button v-if="campaign.status === 'draft'" variant="ghost" size="icon" class="h-8 w-8" @click="openAddRecipientsDialog(campaign as any)" title="Add Recipients">
                       <UserPlus class="h-4 w-4" />
@@ -1577,16 +2008,242 @@ async function addRecipientsFromCSV() {
       </div>
     </ScrollArea>
 
+    <!-- Campaign Report Dialog -->
+    <Dialog v-model:open="showCampaignReportDialog">
+      <DialogContent class="sm:max-w-[960px] max-h-[88vh]">
+        <DialogHeader>
+          <DialogTitle>{{ selectedCampaign?.name || 'Campaign Report' }}</DialogTitle>
+          <DialogDescription>
+            {{ selectedCampaign?.template_name || $t('campaigns.noTemplate') }}
+            <span v-if="selectedCampaign?.whatsapp_account"> | {{ selectedCampaign.whatsapp_account }}</span>
+          </DialogDescription>
+        </DialogHeader>
+
+        <ScrollArea class="max-h-[70vh] pr-4">
+          <div v-if="selectedCampaign" class="space-y-6 py-2">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex items-center gap-2">
+                <Badge variant="outline" :class="[getStatusClass(selectedCampaign.status), 'text-xs']">
+                  <component :is="getStatusIcon(selectedCampaign.status)" class="mr-1 h-3 w-3" />
+                  {{ formatStatusLabel(selectedCampaign.status) }}
+                </Badge>
+                <span class="text-sm text-muted-foreground">
+                  Created {{ formatDate(selectedCampaign.created_at) }}
+                </span>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" @click="refreshSelectedCampaignData" :disabled="isLoading || isLoadingRecipients">
+                  <RefreshCw :class="['mr-2 h-4 w-4', isLoading || isLoadingRecipients ? 'animate-spin' : '']" />
+                  {{ $t('common.refresh') }}
+                </Button>
+                <Button variant="outline" size="sm" @click="openRecipientsFromReport">
+                  <Users class="mr-2 h-4 w-4" />
+                  {{ $t('campaigns.viewRecipients') }}
+                </Button>
+              </div>
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+              <div class="rounded-xl border bg-muted/30 p-4">
+                <p class="text-xs uppercase tracking-wide text-muted-foreground">Recipients</p>
+                <p class="mt-2 text-2xl font-semibold">{{ selectedCampaign.total_recipients }}</p>
+              </div>
+              <div class="rounded-xl border bg-muted/30 p-4">
+                <p class="text-xs uppercase tracking-wide text-muted-foreground">Processed</p>
+                <p class="mt-2 text-2xl font-semibold">{{ selectedCampaignMetrics?.processed || 0 }}</p>
+                <p class="mt-1 text-xs text-muted-foreground">{{ formatPercentage(selectedCampaignMetrics?.progressRate || 0) }}</p>
+              </div>
+              <div class="rounded-xl border bg-muted/30 p-4">
+                <p class="text-xs uppercase tracking-wide text-muted-foreground">Sent</p>
+                <p class="mt-2 text-2xl font-semibold">{{ selectedCampaign.sent_count }}</p>
+              </div>
+              <div class="rounded-xl border bg-muted/30 p-4">
+                <p class="text-xs uppercase tracking-wide text-muted-foreground">Delivered</p>
+                <p class="mt-2 text-2xl font-semibold text-green-600">{{ selectedCampaign.delivered_count }}</p>
+                <p class="mt-1 text-xs text-muted-foreground">{{ formatPercentage(selectedCampaignMetrics?.deliveryRate || 0) }}</p>
+              </div>
+              <div class="rounded-xl border bg-muted/30 p-4">
+                <p class="text-xs uppercase tracking-wide text-muted-foreground">Read</p>
+                <p class="mt-2 text-2xl font-semibold text-blue-600">{{ selectedCampaign.read_count }}</p>
+                <p class="mt-1 text-xs text-muted-foreground">{{ formatPercentage(selectedCampaignMetrics?.readRate || 0) }}</p>
+              </div>
+              <div class="rounded-xl border bg-muted/30 p-4">
+                <p class="text-xs uppercase tracking-wide text-muted-foreground">Failed</p>
+                <p class="mt-2 text-2xl font-semibold text-destructive">{{ selectedCampaign.failed_count }}</p>
+                <p class="mt-1 text-xs text-muted-foreground">{{ selectedCampaignMetrics?.pending || 0 }} pending</p>
+              </div>
+            </div>
+
+            <div class="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+              <div class="rounded-xl border p-4">
+                <div class="flex items-center justify-between gap-2">
+                  <h3 class="text-sm font-semibold">{{ $t('common.overview') }}</h3>
+                  <span class="text-xs text-muted-foreground">{{ recipients.length }} recipients loaded</span>
+                </div>
+                <div class="mt-4 space-y-4">
+                  <div>
+                    <div class="mb-1 flex items-center justify-between text-sm">
+                      <span class="text-muted-foreground">Processing progress</span>
+                      <span class="font-medium">{{ formatPercentage(selectedCampaignMetrics?.progressRate || 0) }}</span>
+                    </div>
+                    <Progress :model-value="selectedCampaignMetrics?.progressRate || 0" class="h-2" />
+                  </div>
+                  <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="rounded-lg bg-muted/40 p-3">
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Delivery rate</p>
+                      <p class="mt-1 text-lg font-semibold">{{ formatPercentage(selectedCampaignMetrics?.deliveryRate || 0) }}</p>
+                    </div>
+                    <div class="rounded-lg bg-muted/40 p-3">
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Read rate</p>
+                      <p class="mt-1 text-lg font-semibold">{{ formatPercentage(selectedCampaignMetrics?.readRate || 0) }}</p>
+                    </div>
+                    <div class="rounded-lg bg-muted/40 p-3">
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Failure rate</p>
+                      <p class="mt-1 text-lg font-semibold">{{ formatPercentage(selectedCampaignMetrics?.failureRate || 0) }}</p>
+                    </div>
+                    <div class="rounded-lg bg-muted/40 p-3">
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Pending recipients</p>
+                      <p class="mt-1 text-lg font-semibold">{{ selectedCampaignMetrics?.pending || 0 }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="rounded-xl border p-4">
+                <h3 class="text-sm font-semibold">Campaign details</h3>
+                <dl class="mt-4 space-y-3 text-sm">
+                  <div class="flex items-start justify-between gap-4">
+                    <dt class="text-muted-foreground">WhatsApp account</dt>
+                    <dd class="text-right">{{ selectedCampaign.whatsapp_account || '-' }}</dd>
+                  </div>
+                  <div class="flex items-start justify-between gap-4">
+                    <dt class="text-muted-foreground">Template</dt>
+                    <dd class="text-right">{{ selectedCampaign.template_name || $t('campaigns.noTemplate') }}</dd>
+                  </div>
+                  <div class="flex items-start justify-between gap-4">
+                    <dt class="text-muted-foreground">Scheduled</dt>
+                    <dd class="text-right">{{ selectedCampaign.scheduled_at ? formatDate(selectedCampaign.scheduled_at) : 'Not scheduled' }}</dd>
+                  </div>
+                  <div class="flex items-start justify-between gap-4">
+                    <dt class="text-muted-foreground">Started</dt>
+                    <dd class="text-right">{{ selectedCampaign.started_at ? formatDate(selectedCampaign.started_at) : '-' }}</dd>
+                  </div>
+                  <div class="flex items-start justify-between gap-4">
+                    <dt class="text-muted-foreground">Completed</dt>
+                    <dd class="text-right">{{ selectedCampaign.completed_at ? formatDate(selectedCampaign.completed_at) : '-' }}</dd>
+                  </div>
+                  <div class="flex items-start justify-between gap-4">
+                    <dt class="text-muted-foreground">Media</dt>
+                    <dd class="text-right">{{ selectedCampaign.header_media_filename || 'None' }}</dd>
+                  </div>
+                </dl>
+              </div>
+            </div>
+
+            <div class="rounded-xl border p-4">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="text-sm font-semibold">Top failure reasons</h3>
+                <span v-if="isLoadingRecipients" class="text-xs text-muted-foreground">Refreshing recipient details...</span>
+              </div>
+              <div v-if="recipientFailureSummary.length" class="mt-4 space-y-3">
+                <div
+                  v-for="failure in recipientFailureSummary"
+                  :key="failure.message"
+                  class="flex items-start justify-between gap-4 rounded-lg bg-muted/40 p-3"
+                >
+                  <p class="text-sm leading-6">{{ failure.message }}</p>
+                  <Badge variant="outline" class="shrink-0">{{ failure.count }}</Badge>
+                </div>
+              </div>
+              <div v-else class="mt-4 rounded-lg bg-muted/30 p-4 text-sm text-muted-foreground">
+                No failed recipients with error details yet.
+              </div>
+            </div>
+          </div>
+        </ScrollArea>
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" @click="showCampaignReportDialog = false">{{ $t('common.close') }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <!-- View Recipients Dialog -->
     <Dialog v-model:open="showRecipientsDialog">
-      <DialogContent class="sm:max-w-[700px] max-h-[80vh]">
+      <DialogContent class="sm:max-w-[960px] max-h-[88vh]">
         <DialogHeader>
           <DialogTitle>{{ $t('campaigns.campaignRecipients') }}</DialogTitle>
           <DialogDescription>
-            {{ selectedCampaign?.name }} - {{ $t('campaigns.recipientCount', { count: recipients.length }) }}
+            {{ selectedCampaign?.name }} | Showing {{ filteredRecipients.length }} of {{ recipients.length }} recipients
           </DialogDescription>
         </DialogHeader>
-        <div class="py-4">
+        <div class="space-y-4 py-4">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div class="grid gap-3 sm:grid-cols-2 lg:flex lg:flex-1">
+              <Input
+                v-model="recipientSearchQuery"
+                placeholder="Search phone, name, error, or params"
+                class="lg:max-w-sm"
+              />
+              <Select v-model="recipientFilterStatus">
+                <SelectTrigger class="w-full lg:w-[220px]">
+                  <SelectValue placeholder="All recipients" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="option in recipientStatusOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" @click="refreshSelectedCampaignData" :disabled="isLoadingRecipients || isLoading">
+                <RefreshCw :class="['mr-2 h-4 w-4', isLoadingRecipients || isLoading ? 'animate-spin' : '']" />
+                {{ $t('common.refresh') }}
+              </Button>
+              <Button
+                v-if="selectedCampaign?.status === 'draft'"
+                variant="outline"
+                size="sm"
+                @click="showRecipientsDialog = false; openAddRecipientsDialog(selectedCampaign as any)"
+              >
+                <UserPlus class="h-4 w-4 mr-2" />
+                {{ $t('campaigns.addMore') }}
+              </Button>
+            </div>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div class="rounded-xl border bg-muted/30 p-4">
+              <p class="text-xs uppercase tracking-wide text-muted-foreground">Total</p>
+              <p class="mt-2 text-2xl font-semibold">{{ recipientDashboard.total }}</p>
+            </div>
+            <div class="rounded-xl border bg-muted/30 p-4">
+              <p class="text-xs uppercase tracking-wide text-muted-foreground">Pending</p>
+              <p class="mt-2 text-2xl font-semibold text-amber-600">{{ recipientDashboard.pending }}</p>
+            </div>
+            <div class="rounded-xl border bg-muted/30 p-4">
+              <p class="text-xs uppercase tracking-wide text-muted-foreground">Sent</p>
+              <p class="mt-2 text-2xl font-semibold">{{ recipientDashboard.sent }}</p>
+            </div>
+            <div class="rounded-xl border bg-muted/30 p-4">
+              <p class="text-xs uppercase tracking-wide text-muted-foreground">Delivered</p>
+              <p class="mt-2 text-2xl font-semibold text-green-600">{{ recipientDashboard.delivered }}</p>
+            </div>
+            <div class="rounded-xl border bg-muted/30 p-4">
+              <p class="text-xs uppercase tracking-wide text-muted-foreground">Read</p>
+              <p class="mt-2 text-2xl font-semibold text-blue-600">{{ recipientDashboard.read }}</p>
+            </div>
+            <div class="rounded-xl border bg-muted/30 p-4">
+              <p class="text-xs uppercase tracking-wide text-muted-foreground">Failed</p>
+              <p class="mt-2 text-2xl font-semibold text-destructive">{{ recipientDashboard.failed }}</p>
+            </div>
+          </div>
+
           <div v-if="isLoadingRecipients" class="flex items-center justify-center py-8">
             <Loader2 class="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
@@ -1604,35 +2261,80 @@ async function addRecipientsFromCSV() {
               {{ $t('campaigns.addRecipients') }}
             </Button>
           </div>
-          <ScrollArea v-else class="h-[400px]">
-            <table class="w-full text-sm">
+          <div v-else-if="filteredRecipients.length === 0" class="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
+            No recipients match the current filters.
+          </div>
+          <ScrollArea v-else class="h-[420px]">
+            <div class="space-y-3 md:hidden">
+              <div
+                v-for="recipient in filteredRecipients"
+                :key="recipient.id"
+                class="rounded-xl border p-4"
+              >
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <p class="font-mono text-sm">{{ recipient.phone_number }}</p>
+                    <p class="mt-1 text-sm text-muted-foreground">{{ recipient.recipient_name || 'No name' }}</p>
+                  </div>
+                  <Badge variant="outline" :class="getRecipientStatusClass(recipient.status)">
+                    {{ formatStatusLabel(recipient.status) }}
+                  </Badge>
+                </div>
+                <div class="mt-3 grid gap-2 text-sm">
+                  <div class="flex items-start justify-between gap-4">
+                    <span class="text-muted-foreground">{{ getRecipientActivityLabel(recipient) }}</span>
+                    <span class="text-right">{{ getRecipientLastActivity(recipient) ? formatDate(getRecipientLastActivity(recipient)) : '-' }}</span>
+                  </div>
+                  <div v-if="recipient.error_message" class="rounded-lg bg-destructive/5 p-3 text-destructive">
+                    {{ recipient.error_message }}
+                  </div>
+                </div>
+                <div v-if="selectedCampaign?.status === 'draft'" class="mt-3 flex justify-end">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="h-7 w-7"
+                    @click="deleteRecipient(recipient.id)"
+                    :disabled="deletingRecipientId === recipient.id"
+                  >
+                    <Loader2 v-if="deletingRecipientId === recipient.id" class="h-4 w-4 animate-spin" />
+                    <Trash2 v-else class="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <table class="hidden w-full text-sm md:table">
               <thead class="sticky top-0 bg-background border-b">
                 <tr>
                   <th class="text-left py-2 px-2">{{ $t('campaigns.phoneNumber') }}</th>
                   <th class="text-left py-2 px-2">{{ $t('campaigns.name') }}</th>
                   <th class="text-left py-2 px-2">{{ $t('campaigns.status') }}</th>
-                  <th class="text-left py-2 px-2">{{ $t('campaigns.sentAt') }}</th>
+                  <th class="text-left py-2 px-2">Last activity</th>
+                  <th class="text-left py-2 px-2">Error</th>
                   <th v-if="selectedCampaign?.status === 'draft'" class="text-center py-2 px-2 w-16"></th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="recipient in recipients" :key="recipient.id" class="border-b">
-                  <td class="py-2 px-2 font-mono">{{ recipient.phone_number }}</td>
-                  <td class="py-2 px-2">{{ recipient.recipient_name || '-' }}</td>
-                  <td class="py-2 px-2">
-                    <div class="flex flex-col gap-1">
-                      <Badge variant="outline" :class="getRecipientStatusClass(recipient.status)">
-                        {{ recipient.status }}
-                      </Badge>
-                      <span v-if="recipient.status === 'failed' && recipient.error_message" class="text-xs text-destructive max-w-[200px] truncate" :title="recipient.error_message">
-                        {{ recipient.error_message }}
-                      </span>
-                    </div>
+                <tr v-for="recipient in filteredRecipients" :key="recipient.id" class="border-b align-top">
+                  <td class="py-3 px-2 font-mono">{{ recipient.phone_number }}</td>
+                  <td class="py-3 px-2">{{ recipient.recipient_name || '-' }}</td>
+                  <td class="py-3 px-2">
+                    <Badge variant="outline" :class="getRecipientStatusClass(recipient.status)">
+                      {{ formatStatusLabel(recipient.status) }}
+                    </Badge>
                   </td>
-                  <td class="py-2 px-2 text-muted-foreground">
-                    {{ recipient.sent_at ? formatDate(recipient.sent_at) : '-' }}
+                  <td class="py-3 px-2 text-muted-foreground">
+                    <div>{{ getRecipientActivityLabel(recipient) }}</div>
+                    <div>{{ getRecipientLastActivity(recipient) ? formatDate(getRecipientLastActivity(recipient)) : '-' }}</div>
                   </td>
-                  <td v-if="selectedCampaign?.status === 'draft'" class="py-2 px-2 text-center">
+                  <td class="py-3 px-2">
+                    <span v-if="recipient.error_message" class="block max-w-[280px] text-destructive">
+                      {{ recipient.error_message }}
+                    </span>
+                    <span v-else class="text-muted-foreground">-</span>
+                  </td>
+                  <td v-if="selectedCampaign?.status === 'draft'" class="py-3 px-2 text-center">
                     <Button
                       variant="ghost"
                       size="icon"
@@ -1650,15 +2352,6 @@ async function addRecipientsFromCSV() {
           </ScrollArea>
         </div>
         <DialogFooter>
-          <Button
-            v-if="selectedCampaign?.status === 'draft'"
-            variant="outline"
-            size="sm"
-            @click="showRecipientsDialog = false; openAddRecipientsDialog(selectedCampaign as any)"
-          >
-            <UserPlus class="h-4 w-4 mr-2" />
-            {{ $t('campaigns.addMore') }}
-          </Button>
           <Button variant="outline" size="sm" @click="showRecipientsDialog = false">{{ $t('common.close') }}</Button>
         </DialogFooter>
       </DialogContent>
@@ -1687,7 +2380,7 @@ async function addRecipientsFromCSV() {
         </div>
 
         <Tabs v-model="addRecipientsTab" class="w-full">
-          <TabsList class="grid w-full grid-cols-2">
+          <TabsList class="grid w-full grid-cols-3">
             <TabsTrigger value="manual">
               <UserPlus class="h-4 w-4 mr-2" />
               {{ $t('campaigns.manualEntry') }}
@@ -1695,6 +2388,10 @@ async function addRecipientsFromCSV() {
             <TabsTrigger value="csv">
               <FileSpreadsheet class="h-4 w-4 mr-2" />
               {{ $t('campaigns.uploadCsv') }}
+            </TabsTrigger>
+            <TabsTrigger value="contacts">
+              <Users class="h-4 w-4 mr-2" />
+              Contacts & Groups
             </TabsTrigger>
           </TabsList>
 
@@ -1828,7 +2525,7 @@ async function addRecipientsFromCSV() {
                       class="text-xs bg-background border rounded px-2 py-1"
                     >
                       <span class="text-muted-foreground">{{ mapping.csvColumn }}</span>
-                      <span class="mx-1">→</span>
+                      <span class="mx-1">-></span>
                       <span class="font-mono text-primary">{{ formatParamName(mapping.paramName) }}</span>
                     </div>
                   </div>
@@ -1916,6 +2613,122 @@ async function addRecipientsFromCSV() {
               <div v-else class="text-center py-8 text-muted-foreground">
                 <FileSpreadsheet class="h-12 w-12 mx-auto mb-2 opacity-50" />
                 <p>{{ $t('campaigns.selectCsvToPreview') }}</p>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="contacts" class="mt-4">
+            <div class="space-y-4">
+              <div class="rounded-lg border bg-muted/50 p-3 text-sm">
+                <p class="font-medium">Import from contacts or contact groups</p>
+                <p class="mt-1 text-muted-foreground">
+                  Contact groups use contact tags. Matching contacts are deduplicated automatically before recipients are created.
+                </p>
+                <p v-if="!canImportFromContacts" class="mt-2 text-destructive">
+                  This template has variables, so contacts and groups cannot be imported directly yet. Use manual entry or CSV with parameter values.
+                </p>
+              </div>
+
+              <div class="grid gap-3 sm:grid-cols-3">
+                <div class="rounded-lg border p-3">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground">Selected Contacts</p>
+                  <p class="mt-1 text-2xl font-semibold">{{ selectedContactCount }}</p>
+                </div>
+                <div class="rounded-lg border p-3">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground">Selected Groups</p>
+                  <p class="mt-1 text-2xl font-semibold">{{ selectedContactGroupCount }}</p>
+                </div>
+                <div class="rounded-lg border p-3">
+                  <p class="text-xs uppercase tracking-wide text-muted-foreground">Loaded Contacts</p>
+                  <p class="mt-1 text-2xl font-semibold">{{ campaignContacts.length }}</p>
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <Label>Contact Groups</Label>
+                  <span class="text-xs text-muted-foreground">Tag-based groups</span>
+                </div>
+                <div v-if="isLoadingContactGroups" class="flex items-center gap-2 rounded-lg border p-3 text-sm text-muted-foreground">
+                  <Loader2 class="h-4 w-4 animate-spin" />
+                  Loading contact groups...
+                </div>
+                <div v-else-if="availableContactGroups.length === 0" class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                  No contact groups found.
+                </div>
+                <div v-else class="flex flex-wrap gap-2">
+                  <Button
+                    v-for="group in availableContactGroups"
+                    :key="group.name"
+                    type="button"
+                    size="sm"
+                    :variant="isCampaignContactGroupSelected(group.name) ? 'default' : 'outline'"
+                    @click="toggleCampaignContactGroup(group.name)"
+                  >
+                    <span class="mr-2 inline-block h-2.5 w-2.5 rounded-full" :style="{ backgroundColor: group.color || '#94a3b8' }"></span>
+                    {{ group.name }}
+                  </Button>
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <Label for="campaign-contact-search">Contacts</Label>
+                  <span class="text-xs text-muted-foreground">Showing up to 50 matches</span>
+                </div>
+                <Input
+                  id="campaign-contact-search"
+                  v-model="contactSearchQuery"
+                  placeholder="Search by contact name or phone number"
+                  :disabled="!canImportFromContacts || isLoadingCampaignContacts || isAddingRecipients"
+                />
+                <div v-if="isLoadingCampaignContacts" class="flex items-center gap-2 rounded-lg border p-3 text-sm text-muted-foreground">
+                  <Loader2 class="h-4 w-4 animate-spin" />
+                  Loading contacts...
+                </div>
+                <div v-else-if="campaignContacts.length === 0" class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                  No contacts found for the current search.
+                </div>
+                <div v-else class="max-h-[280px] space-y-2 overflow-y-auto pr-1">
+                  <button
+                    v-for="contact in campaignContacts"
+                    :key="contact.id"
+                    type="button"
+                    class="flex w-full items-start justify-between gap-3 rounded-lg border p-3 text-left transition-colors"
+                    :class="isCampaignContactSelected(contact.id) ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'"
+                    @click="toggleCampaignContact(contact.id)"
+                  >
+                    <div class="min-w-0 space-y-1">
+                      <div class="font-medium">
+                        {{ contact.profile_name || contact.name || contact.phone_number }}
+                      </div>
+                      <div class="font-mono text-xs text-muted-foreground">
+                        {{ contact.phone_number }}
+                      </div>
+                      <div v-if="contact.tags && contact.tags.length" class="flex flex-wrap gap-1">
+                        <Badge v-for="tag in contact.tags" :key="`${contact.id}-${tag}`" variant="secondary" class="text-[10px]">
+                          {{ tag }}
+                        </Badge>
+                      </div>
+                    </div>
+                    <CheckCircle v-if="isCampaignContactSelected(contact.id)" class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <Users v-else class="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  </button>
+                </div>
+              </div>
+
+              <div class="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <p class="text-sm text-muted-foreground">
+                  Selected {{ selectedContactCount }} contacts and {{ selectedContactGroupCount }} groups.
+                </p>
+                <Button
+                  @click="addRecipientsFromContacts"
+                  :disabled="isAddingRecipients || !canImportFromContacts || (selectedContactCount === 0 && selectedContactGroupCount === 0)"
+                >
+                  <Loader2 v-if="isAddingRecipients" class="h-4 w-4 mr-2 animate-spin" />
+                  <Upload v-else class="h-4 w-4 mr-2" />
+                  Add from Contacts
+                </Button>
               </div>
             </div>
           </TabsContent>

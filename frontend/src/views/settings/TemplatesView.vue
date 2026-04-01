@@ -59,6 +59,7 @@ const isLoading = ref(true)
 const isSyncing = ref(false)
 const searchQuery = ref('')
 const selectedAccount = ref<string>(localStorage.getItem('templates_selected_account') || 'all')
+const selectedStatus = ref<string>(localStorage.getItem('templates_selected_status') || 'all')
 
 // Dialog state
 const isDialogOpen = ref(false)
@@ -107,6 +108,18 @@ const columns = computed<Column<Template>[]>(() => [
 
 const sortKey = ref('name')
 const sortDirection = ref<'asc' | 'desc'>('asc')
+
+const statusOptions = [
+  'APPROVED',
+  'PENDING',
+  'REJECTED',
+  'DRAFT',
+  'DISABLED',
+  'PENDING_DELETION',
+  'DELETED',
+  'REINSTATED',
+  'FLAGGED',
+]
 
 const languages = [
   { code: 'af', name: 'Afrikaans' },
@@ -234,11 +247,19 @@ function onAccountChange(value: string | number | bigint | Record<string, any> |
   fetchTemplates()
 }
 
+function onStatusChange(value: string | number | bigint | Record<string, any> | null) {
+  if (typeof value !== 'string') return
+  localStorage.setItem('templates_selected_status', value)
+  currentPage.value = 1
+  fetchTemplates()
+}
+
 async function fetchTemplates() {
   isLoading.value = true
   try {
     const response = await templatesService.list({
       account: selectedAccount.value !== 'all' ? selectedAccount.value : undefined,
+      status: selectedStatus.value !== 'all' ? selectedStatus.value : undefined,
       search: searchQuery.value || undefined,
       page: currentPage.value,
       limit: pageSize
@@ -420,8 +441,17 @@ function getStatusBadgeClass(status: string) {
       return 'bg-yellow-900 text-yellow-300 light:bg-yellow-100 light:text-yellow-800'
     case 'REJECTED':
       return 'bg-red-900 text-red-300 light:bg-red-100 light:text-red-800'
+    case 'FLAGGED':
+      return 'bg-red-950 text-red-200 light:bg-red-100 light:text-red-900'
     case 'DRAFT':
       return 'bg-gray-800 text-gray-300 light:bg-gray-100 light:text-gray-800'
+    case 'DISABLED':
+    case 'DELETED':
+      return 'bg-slate-800 text-slate-300 light:bg-slate-100 light:text-slate-800'
+    case 'PENDING_DELETION':
+      return 'bg-orange-900 text-orange-300 light:bg-orange-100 light:text-orange-800'
+    case 'REINSTATED':
+      return 'bg-emerald-900 text-emerald-300 light:bg-emerald-100 light:text-emerald-800'
     default:
       return 'bg-gray-800 text-gray-300 light:bg-gray-100 light:text-gray-800'
   }
@@ -626,11 +656,11 @@ function formatPreview(text: string, samples: any[]): string {
                   <CardTitle>{{ $t('templates.yourTemplates') }}</CardTitle>
                   <CardDescription>{{ $t('templates.yourTemplatesDesc') }}</CardDescription>
                 </div>
-                <div class="flex items-center gap-4 flex-wrap">
+                <div class="flex w-full flex-col gap-4 md:w-auto md:flex-row md:items-center">
                   <div class="flex items-center gap-2">
                     <Label class="text-sm text-muted-foreground">{{ $t('templates.account') }}:</Label>
                     <Select v-model="selectedAccount" @update:model-value="onAccountChange">
-                      <SelectTrigger class="w-[180px]">
+                      <SelectTrigger class="w-full sm:w-[180px]">
                         <SelectValue :placeholder="$t('templates.allAccounts')" />
                       </SelectTrigger>
                       <SelectContent>
@@ -641,7 +671,21 @@ function formatPreview(text: string, samples: any[]): string {
                       </SelectContent>
                     </Select>
                   </div>
-                  <SearchInput v-model="searchQuery" :placeholder="$t('templates.searchTemplates') + '...'" class="w-64" />
+                  <div class="flex items-center gap-2">
+                    <Label class="text-sm text-muted-foreground">{{ $t('templates.status') }}:</Label>
+                    <Select v-model="selectedStatus" @update:model-value="onStatusChange">
+                      <SelectTrigger class="w-full sm:w-[180px]">
+                        <SelectValue :placeholder="$t('templates.status')" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All</SelectItem>
+                        <SelectItem v-for="status in statusOptions" :key="status" :value="status">
+                          {{ status }}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <SearchInput v-model="searchQuery" :placeholder="$t('templates.searchTemplates') + '...'" class="w-full md:w-64" />
                 </div>
               </div>
             </CardHeader>
