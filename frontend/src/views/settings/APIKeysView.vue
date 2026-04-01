@@ -9,13 +9,14 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { PageHeader, DataTable, SearchInput, CrudFormDialog, DeleteConfirmDialog, type Column } from '@/components/shared'
+import { PageHeader, DataTable, SearchInput, CrudFormDialog, DeleteConfirmDialog, RefreshButton, type Column } from '@/components/shared'
 import { toast } from 'vue-sonner'
 import { Plus, Trash2, Copy, Key, AlertTriangle } from 'lucide-vue-next'
 import { useCrudState } from '@/composables/useCrudState'
 import { getErrorMessage } from '@/lib/api-utils'
 import { formatDate } from '@/lib/utils'
 import { useDebounceFn } from '@vueuse/core'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 
 const { t } = useI18n()
 
@@ -91,6 +92,8 @@ async function fetchItems() {
   }
 }
 
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchItems)
+
 // Debounced search
 const debouncedSearch = useDebounceFn(() => {
   currentPage.value = 1
@@ -138,6 +141,7 @@ onMounted(() => fetchItems())
   <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <PageHeader :title="$t('apiKeys.title')" :subtitle="$t('apiKeys.subtitle')" :icon="Key" icon-gradient="bg-gradient-to-br from-amber-500 to-orange-600 shadow-amber-500/20">
       <template #actions>
+        <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
         <Button variant="outline" size="sm" @click="openCreateDialogBase"><Plus class="h-4 w-4 mr-2" />{{ $t('apiKeys.createApiKey') }}</Button>
       </template>
     </PageHeader>

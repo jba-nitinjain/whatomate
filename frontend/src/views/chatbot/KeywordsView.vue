@@ -27,10 +27,11 @@ import {
 import { chatbotService } from '@/services/api'
 import { useCrudState } from '@/composables/useCrudState'
 import { toast } from 'vue-sonner'
-import { PageHeader, SearchInput, DataTable, DeleteConfirmDialog, type Column } from '@/components/shared'
+import { PageHeader, SearchInput, DataTable, DeleteConfirmDialog, RefreshButton, type Column } from '@/components/shared'
 import { getErrorMessage } from '@/lib/api-utils'
 import { Plus, Pencil, Trash2, Key } from 'lucide-vue-next'
 import { useDebounceFn } from '@vueuse/core'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 
 const { t } = useI18n()
 
@@ -125,6 +126,8 @@ async function fetchRules() {
     isLoading.value = false
   }
 }
+
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchRules)
 
 // Debounced search to avoid too many API calls
 const debouncedSearch = useDebounceFn(() => {
@@ -246,6 +249,7 @@ const emptyDescription = computed(() => {
       :breadcrumbs="[{ label: $t('keywords.backToChatbot'), href: '/chatbot' }, { label: $t('nav.keywords') }]"
     >
       <template #actions>
+        <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
         <Button variant="outline" size="sm" @click="openCreateDialog">
           <Plus class="h-4 w-4 mr-2" />
           {{ $t('keywords.addRule') }}

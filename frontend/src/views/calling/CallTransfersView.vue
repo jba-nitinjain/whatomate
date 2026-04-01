@@ -11,6 +11,7 @@ import { Phone, PhoneOff, PhoneForwarded, RefreshCw, Clock } from 'lucide-vue-ne
 import { toast } from 'vue-sonner'
 import DataTable from '@/components/shared/DataTable.vue'
 import type { Column } from '@/components/shared/types'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 
 const { t } = useI18n()
 const store = useCallingStore()
@@ -51,6 +52,15 @@ async function fetchHistory() {
     historyLoading.value = false
   }
 }
+
+async function refreshTransfersView() {
+  await Promise.allSettled([
+    store.fetchWaitingTransfers(),
+    fetchHistory()
+  ])
+}
+
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(refreshTransfersView, { intervalMs: 60000 })
 
 function handleHistoryPageChange(page: number) {
   historyPage.value = page
@@ -99,18 +109,18 @@ onMounted(() => {
 
 <template>
   <div class="p-6 space-y-6">
-    <div class="flex items-center justify-between">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h1 class="text-2xl font-bold">{{ t('callTransfers.title') }}</h1>
       </div>
-      <Button variant="outline" size="sm" @click="store.fetchWaitingTransfers(); fetchHistory()">
-        <RefreshCw class="h-4 w-4 mr-2" />
+      <Button variant="outline" size="sm" :disabled="isRefreshingView" @click="refreshNow(true)">
+        <RefreshCw :class="['h-4 w-4 mr-2', isRefreshingView && 'animate-spin']" />
         {{ t('common.refresh') }}
       </Button>
     </div>
 
     <Tabs v-model="activeTab">
-      <TabsList>
+      <TabsList class="w-full justify-start overflow-x-auto">
         <TabsTrigger value="waiting">
           {{ t('callTransfers.waiting') }}
           <Badge v-if="store.waitingTransfers.length > 0" variant="destructive" class="ml-2 h-5 min-w-[20px]">

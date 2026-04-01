@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { PageHeader, DeleteConfirmDialog, DataTable, SearchInput, type Column } from '@/components/shared'
+import { PageHeader, DeleteConfirmDialog, DataTable, SearchInput, RefreshButton, type Column } from '@/components/shared'
 import FlowBuilder from '@/components/flow-builder/FlowBuilder.vue'
 import { flowsService, accountsService } from '@/services/api'
 import { toast } from 'vue-sonner'
@@ -17,6 +17,7 @@ import { Plus, Pencil, Trash2, Workflow, Play, ExternalLink, Loader2, Archive, R
 import { getErrorMessage } from '@/lib/api-utils'
 import { formatDate } from '@/lib/utils'
 import { useDebounceFn } from '@vueuse/core'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 
 const { t } = useI18n()
 
@@ -106,6 +107,8 @@ async function fetchFlows() {
   } catch { flows.value = [] }
   finally { isLoading.value = false }
 }
+
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchFlows)
 
 // Debounced search
 const debouncedSearch = useDebounceFn(() => {
@@ -212,6 +215,7 @@ function sanitizeScreensForMeta(screens: any[]): any[] {
   <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <PageHeader :title="$t('flows.title')" :subtitle="$t('flows.subtitle')" :icon="Workflow" icon-gradient="bg-gradient-to-br from-violet-500 to-purple-600 shadow-violet-500/20">
       <template #actions>
+        <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
         <Button variant="outline" size="sm" @click="syncFlows" :disabled="isSyncing || !selectedAccount || selectedAccount === 'all'"><RefreshCw :class="['h-4 w-4 mr-2', isSyncing && 'animate-spin']" />{{ $t('flows.syncFromMeta') }}</Button>
         <Button variant="outline" size="sm" @click="openCreateDialog"><Plus class="h-4 w-4 mr-2" />{{ $t('flows.createFlow') }}</Button>
       </template>

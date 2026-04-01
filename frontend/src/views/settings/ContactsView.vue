@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { TagBadge } from '@/components/ui/tag-badge'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
-import { PageHeader, SearchInput, DataTable, CrudFormDialog, DeleteConfirmDialog, CreateContactDialog, ImportExportDialog, type Column } from '@/components/shared'
+import { PageHeader, SearchInput, DataTable, CrudFormDialog, DeleteConfirmDialog, CreateContactDialog, ImportExportDialog, RefreshButton, type Column } from '@/components/shared'
 import { contactsService, accountsService, type Tag, type ImportResult } from '@/services/api'
 import { useTagsStore } from '@/stores/tags'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -22,6 +22,7 @@ import { getTagColorClass } from '@/lib/constants'
 import { useDebounceFn } from '@vueuse/core'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -152,6 +153,8 @@ async function fetchContacts() {
   }
 }
 
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchContacts)
+
 async function fetchTags() {
   try {
     const response = await tagsStore.fetchTags({ limit: 100 })
@@ -256,10 +259,14 @@ function getDisplayName(contact: Contact): string {
   <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <PageHeader :title="$t('contacts.title')" :subtitle="$t('contacts.subtitle')" :icon="Users" icon-gradient="bg-gradient-to-br from-blue-500 to-cyan-600 shadow-blue-500/20">
       <template v-if="canWriteContacts || canImportContacts || canExportContacts" #actions>
+        <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
         <Button v-if="canImportContacts || canExportContacts" variant="outline" size="sm" @click="isImportExportOpen = true">
           <Download class="h-4 w-4 mr-2" />{{ $t('common.import') }}/{{ $t('common.export') }}
         </Button>
         <Button v-if="canWriteContacts" variant="outline" size="sm" @click="openCreateDialog"><Plus class="h-4 w-4 mr-2" />{{ $t('contacts.addContact') }}</Button>
+      </template>
+      <template v-else #actions>
+        <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
       </template>
     </PageHeader>
 

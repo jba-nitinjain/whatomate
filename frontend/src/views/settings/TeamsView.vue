@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { PageHeader, SearchInput, DataTable, CrudFormDialog, DeleteConfirmDialog, type Column } from '@/components/shared'
+import { PageHeader, SearchInput, DataTable, CrudFormDialog, DeleteConfirmDialog, RefreshButton, type Column } from '@/components/shared'
 import { useTeamsStore } from '@/stores/teams'
 import { useUsersStore, type User } from '@/stores/users'
 import { useAuthStore } from '@/stores/auth'
@@ -20,6 +20,7 @@ import { useOrganizationsStore } from '@/stores/organizations'
 import { type Team, type TeamMember } from '@/services/api'
 import { toast } from 'vue-sonner'
 import { Plus, Pencil, Trash2, Loader2, Users, UserPlus, UserMinus, RotateCcw, Scale, Hand } from 'lucide-vue-next'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 import { useCrudState } from '@/composables/useCrudState'
 import { getErrorMessage } from '@/lib/api-utils'
 import { formatDate } from '@/lib/utils'
@@ -118,6 +119,8 @@ async function fetchTeams() {
   finally { isLoading.value = false }
 }
 
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchTeams)
+
 async function saveTeam() {
   if (!formData.value.name.trim()) { toast.error(t('teams.enterTeamName')); return }
   isSubmitting.value = true
@@ -176,6 +179,7 @@ function getStrategyIcon(strategy: string) { return { round_robin: RotateCcw, lo
   <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <PageHeader :title="$t('teams.title')" :icon="Users" icon-gradient="bg-gradient-to-br from-cyan-500 to-blue-600 shadow-cyan-500/20" back-link="/settings" :breadcrumbs="breadcrumbs">
       <template #actions>
+        <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
         <Button v-if="canWriteTeams" variant="outline" size="sm" @click="openCreateDialog"><Plus class="h-4 w-4 mr-2" />{{ $t('teams.addTeam') }}</Button>
       </template>
     </PageHeader>

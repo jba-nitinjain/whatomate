@@ -145,83 +145,130 @@ function getRowKey(item: T, index: number): string {
 </script>
 
 <template>
-  <div :class="maxHeight ? 'overflow-auto' : ''" :style="maxHeight ? { maxHeight } : {}">
-  <Table>
-    <TableHeader>
-      <TableRow>
-        <TableHead
-          v-for="col in columns"
-          :key="col.key"
-          :class="[
-            col.width,
-            col.align === 'right' && 'text-right',
-            col.align === 'center' && 'text-center',
-            col.sortable && 'cursor-pointer select-none hover:text-foreground transition-colors',
-          ]"
-          @click="handleSort(col)"
-        >
-          <div
-            :class="[
-              'flex items-center gap-1',
-              col.align === 'right' && 'justify-end',
-              col.align === 'center' && 'justify-center',
-            ]"
-          >
-            {{ col.label }}
-            <template v-if="col.sortable">
-              <ArrowUp
-                v-if="sortKey === (col.sortKey || col.key) && sortDirection === 'asc'"
-                class="h-3 w-3"
-              />
-              <ArrowDown
-                v-else-if="sortKey === (col.sortKey || col.key) && sortDirection === 'desc'"
-                class="h-3 w-3"
-              />
-              <ArrowUpDown v-else class="h-3 w-3 opacity-30" />
-            </template>
+  <div class="space-y-4">
+    <div class="md:hidden">
+      <div v-if="isLoading" class="flex h-24 items-center justify-center rounded-xl border border-border/70 bg-card/60">
+        <Loader2 class="h-6 w-6 animate-spin" />
+      </div>
+
+      <div v-else-if="displayItems.length === 0" class="rounded-xl border border-border/70 bg-card/60 px-4 py-8 text-center text-muted-foreground">
+        <slot name="empty">
+          <component v-if="emptyIcon" :is="emptyIcon" class="mx-auto mb-2 h-8 w-8 opacity-50" />
+          <p v-if="emptyTitle">{{ emptyTitle }}</p>
+          <p v-if="emptyDescription" class="text-sm">{{ emptyDescription }}</p>
+          <div class="mt-3">
+            <slot name="empty-action" />
           </div>
-        </TableHead>
-      </TableRow>
-    </TableHeader>
-    <TableBody>
-      <!-- Loading State -->
-      <TableRow v-if="isLoading">
-        <TableCell :colspan="columns.length" class="h-24 text-center">
-          <Loader2 class="h-6 w-6 animate-spin mx-auto" />
-        </TableCell>
-      </TableRow>
+        </slot>
+      </div>
 
-      <!-- Empty State -->
-      <TableRow v-else-if="sortedItems.length === 0">
-        <TableCell :colspan="columns.length" class="h-24 text-center text-muted-foreground">
-          <slot name="empty">
-            <component v-if="emptyIcon" :is="emptyIcon" class="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p v-if="emptyTitle">{{ emptyTitle }}</p>
-            <p v-if="emptyDescription" class="text-sm">{{ emptyDescription }}</p>
-            <div class="mt-3">
-              <slot name="empty-action" />
-            </div>
-          </slot>
-        </TableCell>
-      </TableRow>
-
-      <!-- Data Rows -->
-      <TableRow v-else v-for="(item, index) in displayItems" :key="getRowKey(item, index)">
-        <TableCell
-          v-for="col in columns"
-          :key="col.key"
-          :class="[
-            col.align === 'right' && 'text-right',
-            col.align === 'center' && 'text-center',
-          ]"
+      <div v-else class="space-y-3">
+        <div
+          v-for="(item, index) in displayItems"
+          :key="getRowKey(item, index)"
+          class="rounded-xl border border-border/70 bg-card/60 p-4 shadow-sm"
         >
-          <slot :name="`cell-${col.key}`" :item="item" :index="index">
-            {{ (item as any)[col.key] }}
-          </slot>
-        </TableCell>
-      </TableRow>
-    </TableBody>
-  </Table>
+          <div class="space-y-3">
+            <div
+              v-for="col in columns"
+              :key="col.key"
+              class="flex items-start justify-between gap-3"
+            >
+              <span class="min-w-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {{ col.label }}
+              </span>
+              <div
+                :class="[
+                  'min-w-0 flex-1 text-sm',
+                  col.align === 'right' && 'text-right',
+                  col.align === 'center' && 'text-center',
+                ]"
+              >
+                <slot :name="`cell-${col.key}`" :item="item" :index="index">
+                  {{ getNestedValue(item, col.key) }}
+                </slot>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hidden md:block" :class="maxHeight ? 'overflow-auto' : ''" :style="maxHeight ? { maxHeight } : {}">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead
+              v-for="col in columns"
+              :key="col.key"
+              :class="[
+                col.width,
+                col.align === 'right' && 'text-right',
+                col.align === 'center' && 'text-center',
+                col.sortable && 'cursor-pointer select-none hover:text-foreground transition-colors',
+              ]"
+              @click="handleSort(col)"
+            >
+              <div
+                :class="[
+                  'flex items-center gap-1',
+                  col.align === 'right' && 'justify-end',
+                  col.align === 'center' && 'justify-center',
+                ]"
+              >
+                {{ col.label }}
+                <template v-if="col.sortable">
+                  <ArrowUp
+                    v-if="sortKey === (col.sortKey || col.key) && sortDirection === 'asc'"
+                    class="h-3 w-3"
+                  />
+                  <ArrowDown
+                    v-else-if="sortKey === (col.sortKey || col.key) && sortDirection === 'desc'"
+                    class="h-3 w-3"
+                  />
+                  <ArrowUpDown v-else class="h-3 w-3 opacity-30" />
+                </template>
+              </div>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow v-if="isLoading">
+            <TableCell :colspan="columns.length" class="h-24 text-center">
+              <Loader2 class="mx-auto h-6 w-6 animate-spin" />
+            </TableCell>
+          </TableRow>
+
+          <TableRow v-else-if="displayItems.length === 0">
+            <TableCell :colspan="columns.length" class="h-24 text-center text-muted-foreground">
+              <slot name="empty">
+                <component v-if="emptyIcon" :is="emptyIcon" class="mx-auto mb-2 h-8 w-8 opacity-50" />
+                <p v-if="emptyTitle">{{ emptyTitle }}</p>
+                <p v-if="emptyDescription" class="text-sm">{{ emptyDescription }}</p>
+                <div class="mt-3">
+                  <slot name="empty-action" />
+                </div>
+              </slot>
+            </TableCell>
+          </TableRow>
+
+          <TableRow v-else v-for="(item, index) in displayItems" :key="getRowKey(item, index)">
+            <TableCell
+              v-for="col in columns"
+              :key="col.key"
+              :class="[
+                col.align === 'right' && 'text-right',
+                col.align === 'center' && 'text-center',
+              ]"
+            >
+              <slot :name="`cell-${col.key}`" :item="item" :index="index">
+                {{ getNestedValue(item, col.key) }}
+              </slot>
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+    </div>
   </div>
 
   <!-- Server-side Pagination -->

@@ -36,15 +36,15 @@ function goToPage(page: number | '...') {
 </script>
 
 <template>
-  <div class="flex items-center justify-between">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <p class="text-sm text-muted-foreground">
       Showing {{ paginationInfo.start }} to {{ paginationInfo.end }} of {{ totalItems }} {{ itemName || 'items' }}
     </p>
-    <div class="flex items-center gap-1">
+    <div class="flex flex-wrap items-center gap-2 sm:justify-end">
       <Button
         variant="outline"
         size="icon"
-        class="h-8 w-8"
+        class="hidden h-8 w-8 sm:inline-flex"
         :disabled="currentPage === 1"
         @click="goToPage(1)"
       >
@@ -59,7 +59,10 @@ function goToPage(page: number | '...') {
       >
         <ChevronLeft class="h-4 w-4" />
       </Button>
-      <div class="flex items-center gap-1 mx-2">
+      <span class="px-2 text-xs text-muted-foreground sm:hidden">
+        Page {{ currentPage }} of {{ totalPages }}
+      </span>
+      <div class="mx-2 hidden items-center gap-1 sm:flex">
         <template v-for="(page, index) in pageNumbers" :key="index">
           <Button
             v-if="page !== '...'"

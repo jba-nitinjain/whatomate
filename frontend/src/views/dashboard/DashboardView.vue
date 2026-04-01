@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GridLayout, GridItem } from 'grid-layout-plus'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -38,6 +38,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { widgetsService, type DashboardWidget, type WidgetData, type LayoutItem } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { RefreshButton } from '@/components/shared'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 import {
   MessageSquare,
   Users,
@@ -450,6 +452,14 @@ const GRID_MARGIN: [number, number] = [16, 16]
 
 const isDragMode = ref(false)
 const gridLayout = ref<Array<{ i: string; x: number; y: number; w: number; h: number }>>([])
+const isMobileViewport = ref(false)
+let mobileViewportMediaQuery: MediaQueryList | null = null
+const handleMobileViewportChange = (event: MediaQueryListEvent) => {
+  isMobileViewport.value = event.matches
+  if (event.matches) {
+    isDragMode.value = false
+  }
+}
 
 const isChartWidget = (widget: DashboardWidget) => widget.display_type === 'chart'
 const isTableWidget = (widget: DashboardWidget) => widget.display_type === 'table'
@@ -458,6 +468,16 @@ const isNumberWidget = (widget: DashboardWidget) => !isChartWidget(widget) && !i
 
 const getWidgetById = (id: string): DashboardWidget | undefined => {
   return widgets.value.find(w => w.id === id)
+}
+
+const getMobileWidgetHeight = (widgetId: string) => {
+  const widget = getWidgetById(widgetId)
+  if (!widget) return 4
+  if (isNumberWidget(widget)) return 3
+  if (isChartWidget(widget)) return 8
+  if (isTableWidget(widget)) return 9
+  if (isShortcutsWidget(widget)) return 7
+  return 4
 }
 
 const computeGridLayout = (widgetList: DashboardWidget[]) => {
@@ -527,6 +547,26 @@ const computeGridLayout = (widgetList: DashboardWidget[]) => {
 watch(widgets, (val) => {
   gridLayout.value = computeGridLayout(val)
 }, { immediate: true })
+
+const displayGridLayout = computed(() => {
+  if (!isMobileViewport.value) return gridLayout.value
+
+  const sorted = [...gridLayout.value].sort((a, b) => a.y - b.y || a.x - b.x)
+  let nextY = 0
+
+  return sorted.map((item) => {
+    const mobileHeight = getMobileWidgetHeight(item.i)
+    const mobileItem = {
+      ...item,
+      x: 0,
+      y: nextY,
+      w: 1,
+      h: mobileHeight
+    }
+    nextY += mobileHeight
+    return mobileItem
+  })
+})
 
 // Debounced layout save
 let layoutSaveTimer: ReturnType<typeof setTimeout> | null = null
@@ -627,6 +667,8 @@ const fetchDashboardData = async () => {
     isLoading.value = false
   }
 }
+
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchDashboardData, { intervalMs: 60000 })
 
 const applyCustomRange = () => {
   if (customDateRange.value.start && customDateRange.value.end) {
@@ -816,7 +858,14 @@ watch(() => widgetForm.value.display_type, (newVal) => {
 })
 
 onMounted(() => {
+  mobileViewportMediaQuery = window.matchMedia('(max-width: 767px)')
+  isMobileViewport.value = mobileViewportMediaQuery.matches
+  mobileViewportMediaQuery.addEventListener('change', handleMobileViewportChange)
   fetchDashboardData()
+})
+
+onBeforeUnmount(() => {
+  mobileViewportMediaQuery?.removeEventListener('change', handleMobileViewportChange)
 })
 </script>
 
@@ -824,24 +873,28 @@ onMounted(() => {
   <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <!-- Header -->
     <header class="border-b border-white/[0.08] light:border-gray-200 bg-[#0a0a0b]/95 light:bg-white/95 backdrop-blur">
-      <div class="flex h-16 items-center px-6">
-        <div class="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center mr-3 shadow-lg shadow-emerald-500/20">
-          <LayoutDashboard class="h-4 w-4 text-white" />
-        </div>
-        <div class="flex-1">
-          <h1 class="text-xl font-semibold text-white light:text-gray-900">{{ $t('dashboard.title') }}</h1>
-          <p class="text-sm text-white/50 light:text-gray-500">{{ $t('dashboard.subtitle') }}</p>
-        </div>
+      <div class="px-4 py-4 sm:px-6">
+        <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div class="flex min-w-0 items-start gap-3">
+            <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-green-600 shadow-lg shadow-emerald-500/20">
+              <LayoutDashboard class="h-4 w-4 text-white" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <h1 class="text-lg font-semibold text-white light:text-gray-900 sm:text-xl">{{ $t('dashboard.title') }}</h1>
+              <p class="mt-1 text-sm text-white/50 light:text-gray-500">{{ $t('dashboard.subtitle') }}</p>
+            </div>
+          </div>
 
-        <!-- Time Range Filter -->
-        <div class="flex items-center gap-2">
+          <!-- Time Range Filter -->
+          <div class="flex flex-wrap items-center gap-2 xl:justify-end">
+          <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
           <Button v-if="canCreateWidget" variant="outline" size="sm" @click="openAddWidgetDialog" class="bg-white/[0.04] border-white/[0.1] text-white/70 hover:bg-white/[0.08] hover:text-white light:bg-white light:border-gray-200 light:text-gray-700">
             <Plus class="h-4 w-4 mr-2" />
             {{ $t('dashboard.addWidget') }}
           </Button>
 
           <Button
-            v-if="canEditWidget && widgets.length > 1"
+            v-if="canEditWidget && widgets.length > 1 && !isMobileViewport"
             variant="outline"
             size="sm"
             @click="isDragMode = !isDragMode"
@@ -856,7 +909,7 @@ onMounted(() => {
           </Button>
 
           <Select v-model="selectedRange">
-            <SelectTrigger class="w-[180px] bg-white/[0.04] border-white/[0.1] text-white/70 hover:bg-white/[0.08] light:bg-white light:border-gray-200 light:text-gray-700">
+            <SelectTrigger class="w-full min-w-[180px] bg-white/[0.04] border-white/[0.1] text-white/70 hover:bg-white/[0.08] light:bg-white light:border-gray-200 light:text-gray-700 sm:w-[180px]">
               <SelectValue :placeholder="$t('dashboard.selectRange')" />
             </SelectTrigger>
             <SelectContent class="bg-[#141414] border-white/[0.08] light:bg-white light:border-gray-200">
@@ -870,20 +923,21 @@ onMounted(() => {
 
           <Popover v-if="selectedRange === 'custom'" v-model:open="isDatePickerOpen">
             <PopoverTrigger as-child>
-              <Button variant="outline" class="w-auto bg-white/[0.04] border-white/[0.1] text-white/70 hover:bg-white/[0.08] hover:text-white light:bg-white light:border-gray-200 light:text-gray-700 light:hover:bg-gray-50">
+              <Button variant="outline" class="w-full bg-white/[0.04] border-white/[0.1] text-white/70 hover:bg-white/[0.08] hover:text-white light:bg-white light:border-gray-200 light:text-gray-700 light:hover:bg-gray-50 sm:w-auto">
                 <CalendarIcon class="h-4 w-4 mr-2" />
                 {{ formatDateRange || $t('dashboard.selectDates') }}
               </Button>
             </PopoverTrigger>
             <PopoverContent class="w-auto p-4 bg-[#141414] border-white/[0.08] light:bg-white light:border-gray-200" align="end">
               <div class="space-y-4">
-                <RangeCalendar v-model="customDateRange" :number-of-months="2" />
+                <RangeCalendar v-model="customDateRange" :number-of-months="isMobileViewport ? 1 : 2" />
                 <Button class="w-full" @click="applyCustomRange" :disabled="!customDateRange.start || !customDateRange.end">
                   {{ $t('dashboard.applyRange') }}
                 </Button>
               </div>
             </PopoverContent>
-          </Popover>
+            </Popover>
+          </div>
         </div>
       </div>
     </header>
@@ -908,25 +962,25 @@ onMounted(() => {
         <!-- Widget Grid Layout -->
         <GridLayout
           v-if="!isLoading && gridLayout.length > 0"
-          :layout="gridLayout"
-          :col-num="GRID_COLS"
+          :layout="displayGridLayout"
+          :col-num="isMobileViewport ? 1 : GRID_COLS"
           :row-height="GRID_ROW_HEIGHT"
           :margin="GRID_MARGIN"
-          :is-draggable="isDragMode"
-          :is-resizable="isDragMode"
+          :is-draggable="isDragMode && !isMobileViewport"
+          :is-resizable="isDragMode && !isMobileViewport"
           :vertical-compact="true"
           :use-css-transforms="true"
           @layout-updated="onLayoutUpdate"
         >
           <GridItem
-            v-for="item in gridLayout"
+            v-for="item in displayGridLayout"
             :key="item.i"
             :i="item.i"
             :x="item.x"
             :y="item.y"
             :w="item.w"
             :h="item.h"
-            :min-w="2"
+            :min-w="isMobileViewport ? 1 : 2"
             :min-h="2"
             drag-allow-from=".widget-drag-handle"
           >
@@ -948,7 +1002,7 @@ onMounted(() => {
                 </div>
                 <div class="flex items-center gap-2">
                   <!-- Actions - hidden in drag mode -->
-                  <div v-if="!isDragMode && (canEditWidget || canDeleteWidget)" class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div v-if="!isDragMode && (canEditWidget || canDeleteWidget)" class="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                     <Button
                       v-if="canEditWidget"
                       variant="ghost"
@@ -1018,7 +1072,7 @@ onMounted(() => {
                   <p v-if="getWidgetById(item.i)!.description" class="text-xs text-white/30 light:text-gray-400 mt-0.5">{{ getWidgetById(item.i)!.description }}</p>
                 </div>
                 <div class="flex items-center gap-2">
-                  <div v-if="!isDragMode && (canEditWidget || canDeleteWidget)" class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div v-if="!isDragMode && (canEditWidget || canDeleteWidget)" class="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                     <Button
                       v-if="canEditWidget"
                       variant="ghost"
@@ -1078,7 +1132,7 @@ onMounted(() => {
                   <p v-if="getWidgetById(item.i)!.description" class="text-xs text-white/30 light:text-gray-400 mt-0.5">{{ getWidgetById(item.i)!.description }}</p>
                 </div>
                 <div class="flex items-center gap-2">
-                  <div v-if="!isDragMode && (canEditWidget || canDeleteWidget)" class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div v-if="!isDragMode && (canEditWidget || canDeleteWidget)" class="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                     <Button v-if="canEditWidget" variant="ghost" size="icon" class="h-6 w-6 text-white/20 hover:text-white hover:bg-white/[0.1] light:text-gray-300 light:hover:text-gray-700 light:hover:bg-gray-100" @click.stop="openEditWidgetDialog(getWidgetById(item.i)!)" :title="$t('dashboard.editWidgetTooltip')">
                       <Pencil class="h-3 w-3" />
                     </Button>
@@ -1186,7 +1240,7 @@ onMounted(() => {
                   <p v-if="getWidgetById(item.i)!.description" class="text-xs text-white/30 light:text-gray-400 mt-0.5">{{ getWidgetById(item.i)!.description }}</p>
                 </div>
                 <div class="flex items-center gap-2">
-                  <div v-if="!isDragMode && (canEditWidget || canDeleteWidget)" class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div v-if="!isDragMode && (canEditWidget || canDeleteWidget)" class="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                     <Button v-if="canEditWidget" variant="ghost" size="icon" class="h-6 w-6 text-white/20 hover:text-white hover:bg-white/[0.1] light:text-gray-300 light:hover:text-gray-700 light:hover:bg-gray-100" @click.stop="openEditWidgetDialog(getWidgetById(item.i)!)" :title="$t('dashboard.editWidgetTooltip')">
                       <Pencil class="h-3 w-3" />
                     </Button>

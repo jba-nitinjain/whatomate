@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Plus, Pencil, Trash2, Phone, RefreshCw } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -132,6 +133,8 @@ async function toggleCallStart(flow: IVRFlow) {
   }
 }
 
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(() => store.fetchIVRFlows())
+
 onMounted(async () => {
   store.fetchIVRFlows()
   try {
@@ -146,14 +149,14 @@ onMounted(async () => {
 
 <template>
   <div class="p-6 space-y-6">
-    <div class="flex items-center justify-between">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h1 class="text-2xl font-bold">{{ t('calling.ivrFlows') }}</h1>
         <p class="text-muted-foreground">{{ t('calling.ivrFlowsDesc') }}</p>
       </div>
-      <div class="flex gap-2">
-        <Button variant="outline" size="sm" @click="store.fetchIVRFlows()">
-          <RefreshCw class="h-4 w-4 mr-2" />
+      <div class="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" :disabled="isRefreshingView" @click="refreshNow(true)">
+          <RefreshCw :class="['h-4 w-4 mr-2', isRefreshingView && 'animate-spin']" />
           {{ t('common.refresh') }}
         </Button>
         <Button @click="openCreate">

@@ -7,7 +7,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { chatbotService } from '@/services/api'
 import { toast } from 'vue-sonner'
-import { PageHeader } from '@/components/shared'
+import { PageHeader, RefreshButton } from '@/components/shared'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 import { getErrorMessage } from '@/lib/api-utils'
 import {
   Bot,
@@ -67,7 +68,7 @@ const stats = ref<Stats>({
 const isLoading = ref(true)
 const isToggling = ref(false)
 
-onMounted(async () => {
+async function loadChatbotOverview() {
   try {
     const response = await chatbotService.getSettings()
     // API response is wrapped in { status: "success", data: { settings: {...}, stats: {...} } }
@@ -80,6 +81,12 @@ onMounted(async () => {
   } finally {
     isLoading.value = false
   }
+}
+
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(loadChatbotOverview, { intervalMs: 60000 })
+
+onMounted(async () => {
+  await loadChatbotOverview()
 })
 
 async function toggleChatbot() {
@@ -113,7 +120,8 @@ const statCards = computed(() => [
       icon-gradient="bg-gradient-to-br from-purple-500 to-pink-600 shadow-purple-500/20"
     >
       <template #actions>
-        <div class="flex items-center gap-3">
+        <div class="flex w-full flex-wrap items-center gap-3 sm:w-auto sm:justify-end">
+          <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
           <Badge
             :class="settings.enabled ? 'bg-emerald-500/20 text-emerald-400 light:bg-emerald-100 light:text-emerald-700' : 'bg-white/[0.08] text-white/50 light:bg-gray-100 light:text-gray-500'"
           >
@@ -124,7 +132,7 @@ const statCards = computed(() => [
             size="sm"
             @click="toggleChatbot"
             :disabled="isToggling"
-            :class="settings.enabled ? 'border-red-500/50 text-red-400 hover:bg-red-500/10' : 'border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10'"
+            :class="settings.enabled ? 'w-full border-red-500/50 text-red-400 hover:bg-red-500/10 sm:w-auto' : 'w-full border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10 sm:w-auto'"
           >
             <Power class="h-4 w-4 mr-2" />
             {{ settings.enabled ? $t('chatbot.disable') : $t('chatbot.enable') }}
@@ -243,7 +251,7 @@ const statCards = computed(() => [
         <!-- Current Settings -->
         <div class="rounded-xl border border-white/[0.08] bg-white/[0.02] light:bg-white light:border-gray-200">
           <div class="p-6">
-            <div class="flex items-center justify-between">
+            <div class="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 class="text-lg font-semibold text-white light:text-gray-900">{{ $t('chatbot.currentConfiguration') }}</h3>
                 <p class="text-sm text-white/40 light:text-gray-500">{{ $t('chatbot.configOverview') }}</p>

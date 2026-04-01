@@ -13,6 +13,7 @@ import DataTable from '@/components/shared/DataTable.vue'
 import type { Column } from '@/components/shared/types'
 import SearchInput from '@/components/shared/SearchInput.vue'
 import IVRPathTree from '@/components/calling/IVRPathTree.vue'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 
 const { t } = useI18n()
 const store = useCallingStore()
@@ -71,6 +72,8 @@ function fetchLogs() {
     limit: pageSize
   })
 }
+
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchLogs, { intervalMs: 60000 })
 
 function handlePageChange(page: number) {
   currentPage.value = page
@@ -211,13 +214,13 @@ watch(phoneSearch, () => {
 
 <template>
   <div class="p-6 space-y-6">
-    <div class="flex items-center justify-between">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h1 class="text-2xl font-bold">{{ t('calling.callLogs') }}</h1>
         <p class="text-muted-foreground">{{ t('calling.callLogsDesc') }}</p>
       </div>
-      <Button variant="outline" size="sm" @click="fetchLogs">
-        <RefreshCw class="h-4 w-4 mr-2" />
+      <Button variant="outline" size="sm" :disabled="isRefreshingView" @click="refreshNow(true)">
+        <RefreshCw :class="['h-4 w-4 mr-2', isRefreshingView && 'animate-spin']" />
         {{ t('common.refresh') }}
       </Button>
     </div>
@@ -225,10 +228,10 @@ watch(phoneSearch, () => {
     <!-- Filters -->
     <Card>
       <CardContent class="pt-6">
-        <div class="flex gap-4 flex-wrap items-center">
-          <SearchInput v-model="phoneSearch" :placeholder="t('calling.searchByPhone')" class="w-48" />
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SearchInput v-model="phoneSearch" :placeholder="t('calling.searchByPhone')" class="w-full" />
           <Select v-model="statusFilter">
-            <SelectTrigger class="w-48">
+            <SelectTrigger class="w-full">
               <SelectValue :placeholder="t('calling.filterByStatus')" />
             </SelectTrigger>
             <SelectContent>
@@ -239,7 +242,7 @@ watch(phoneSearch, () => {
           </Select>
 
           <Select v-model="directionFilter">
-            <SelectTrigger class="w-48">
+            <SelectTrigger class="w-full">
               <SelectValue :placeholder="t('calling.filterByDirection')" />
             </SelectTrigger>
             <SelectContent>
@@ -250,7 +253,7 @@ watch(phoneSearch, () => {
           </Select>
 
           <Select v-model="ivrFlowFilter">
-            <SelectTrigger class="w-48">
+            <SelectTrigger class="w-full">
               <SelectValue :placeholder="t('calling.filterByIVRFlow')" />
             </SelectTrigger>
             <SelectContent>
@@ -262,7 +265,7 @@ watch(phoneSearch, () => {
           </Select>
 
           <Select v-model="accountFilter">
-            <SelectTrigger class="w-48">
+            <SelectTrigger class="w-full">
               <SelectValue :placeholder="t('calling.filterByAccount')" />
             </SelectTrigger>
             <SelectContent>

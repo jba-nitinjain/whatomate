@@ -18,8 +18,9 @@ import {
 import { api } from '@/services/api'
 import { useOrganizationsStore } from '@/stores/organizations'
 import { toast } from 'vue-sonner'
-import { PageHeader, CrudFormDialog, DeleteConfirmDialog } from '@/components/shared'
+import { PageHeader, CrudFormDialog, DeleteConfirmDialog, RefreshButton } from '@/components/shared'
 import { getErrorMessage } from '@/lib/api-utils'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 import {
   Plus,
   Pencil,
@@ -134,6 +135,8 @@ async function fetchAccounts() {
     isLoading.value = false
   }
 }
+
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchAccounts)
 
 function openCreateDialog() {
   editingAccount.value = null
@@ -298,6 +301,7 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
       :breadcrumbs="[{ label: $t('settings.title'), href: '/settings' }, { label: $t('settings.accounts') }]"
     >
       <template #actions>
+        <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
         <Button variant="outline" size="sm" @click="openCreateDialog">
           <Plus class="h-4 w-4 mr-2" />
           {{ $t('accounts.addAccount') }}

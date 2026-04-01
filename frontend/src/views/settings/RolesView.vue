@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { PageHeader, SearchInput, DataTable, DeleteConfirmDialog, type Column } from '@/components/shared'
+import { PageHeader, SearchInput, DataTable, DeleteConfirmDialog, RefreshButton, type Column } from '@/components/shared'
 import { useRolesStore, type CreateRoleData, type UpdateRoleData } from '@/stores/roles'
 import { useOrganizationsStore } from '@/stores/organizations'
 import { useAuthStore } from '@/stores/auth'
@@ -20,6 +20,7 @@ import PermissionMatrix from '@/components/roles/PermissionMatrix.vue'
 import { toast } from 'vue-sonner'
 import { Plus, Pencil, Trash2, Loader2, Shield, Users, Lock, Star } from 'lucide-vue-next'
 import { useCrudState } from '@/composables/useCrudState'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 import { getErrorMessage } from '@/lib/api-utils'
 import { formatDate } from '@/lib/utils'
 import { useDebounceFn } from '@vueuse/core'
@@ -106,6 +107,8 @@ async function fetchRoles() {
   finally { isLoading.value = false }
 }
 
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchRoles)
+
 async function saveRole() {
   if (!formData.value.name.trim()) { toast.error(t('roles.roleNameRequired')); return }
   isSubmitting.value = true
@@ -136,6 +139,7 @@ async function confirmDelete() {
   <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <PageHeader :title="$t('roles.title')" :subtitle="$t('roles.subtitle')" :icon="Shield" icon-gradient="bg-gradient-to-br from-purple-500 to-indigo-600 shadow-purple-500/20" back-link="/settings">
       <template #actions>
+        <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
         <Button variant="outline" size="sm" @click="openCreateDialog"><Plus class="h-4 w-4 mr-2" />{{ $t('roles.addRole') }}</Button>
       </template>
     </PageHeader>

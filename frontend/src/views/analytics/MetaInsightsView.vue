@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -30,7 +30,8 @@ import {
   type MetaTemplateDataPoint,
   type MetaCallDataPoint
 } from '@/services/api'
-import { PageHeader } from '@/components/shared'
+import { PageHeader, RefreshButton } from '@/components/shared'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 import {
   Command,
   CommandEmpty,
@@ -76,6 +77,11 @@ const accountComboboxOpen = ref(false)
 const activeTab = ref<MetaAnalyticsType>('analytics')
 const analyticsData = ref<MetaAnalyticsResponse[]>([])
 const isCached = ref(false)
+const isMobileViewport = ref(false)
+let mobileViewportMediaQuery: MediaQueryList | null = null
+const handleMobileViewportChange = (event: MediaQueryListEvent) => {
+  isMobileViewport.value = event.matches
+}
 
 // Granularity
 const selectedGranularity = ref<MetaGranularity>('DAY')
@@ -270,6 +276,8 @@ const fetchAnalytics = async () => {
   }
 }
 
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchAnalytics, { intervalMs: 60000 })
+
 const refreshCache = async () => {
   isRefreshing.value = true
   try {
@@ -315,8 +323,15 @@ watch(activeTab, () => {
 })
 
 onMounted(() => {
+  mobileViewportMediaQuery = window.matchMedia('(max-width: 767px)')
+  isMobileViewport.value = mobileViewportMediaQuery.matches
+  mobileViewportMediaQuery.addEventListener('change', handleMobileViewportChange)
   fetchAccounts()
   fetchAnalytics()
+})
+
+onBeforeUnmount(() => {
+  mobileViewportMediaQuery?.removeEventListener('change', handleMobileViewportChange)
 })
 
 // Aggregate data across accounts
@@ -748,15 +763,15 @@ const chartOptions = {
     >
       <template #actions>
         <!-- Account Filter -->
-        <div class="flex items-center gap-2">
+        <div class="w-full sm:w-auto">
           <Popover v-model:open="accountComboboxOpen">
             <PopoverTrigger as-child>
-              <Button variant="outline" role="combobox" :aria-expanded="accountComboboxOpen" class="w-[180px] justify-between">
+              <Button variant="outline" role="combobox" :aria-expanded="accountComboboxOpen" class="w-full justify-between sm:w-[180px]">
                 <span class="truncate">{{ selectedAccountName }}</span>
                 <ChevronsUpDown class="ml-2 h-4 w-4 shrink-0 opacity-50" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent class="w-[180px] p-0">
+            <PopoverContent class="w-[min(20rem,calc(100vw-2rem))] p-0 sm:w-[180px]">
               <Command>
                 <CommandInput :placeholder="$t('metaInsights.searchAccount')" />
                 <CommandList>
@@ -787,7 +802,7 @@ const chartOptions = {
 
         <!-- Granularity Filter -->
         <Select v-model="selectedGranularity">
-          <SelectTrigger class="w-[130px]">
+          <SelectTrigger class="w-full sm:w-[130px]">
             <SelectValue :placeholder="$t('metaInsights.granularity')" />
           </SelectTrigger>
           <SelectContent>
@@ -799,7 +814,7 @@ const chartOptions = {
 
         <!-- Time Range Filter -->
         <Select v-model="selectedRange">
-          <SelectTrigger class="w-[150px]">
+          <SelectTrigger class="w-full sm:w-[150px]">
             <SelectValue :placeholder="$t('metaInsights.selectRange')" />
           </SelectTrigger>
           <SelectContent>
@@ -813,14 +828,14 @@ const chartOptions = {
 
         <Popover v-if="selectedRange === 'custom'" v-model:open="isDatePickerOpen">
           <PopoverTrigger as-child>
-            <Button variant="outline" class="w-auto">
+            <Button variant="outline" class="w-full sm:w-auto">
               <CalendarIcon class="h-4 w-4 mr-2" />
               {{ formatDateRange || $t('metaInsights.selectDates') }}
             </Button>
           </PopoverTrigger>
-          <PopoverContent class="w-auto p-4" align="end">
+          <PopoverContent class="w-auto max-w-[calc(100vw-2rem)] p-4" align="end">
             <div class="space-y-4">
-              <RangeCalendar v-model="customDateRange" :number-of-months="2" />
+              <RangeCalendar v-model="customDateRange" :number-of-months="isMobileViewport ? 1 : 2" />
               <Button class="w-full" @click="applyCustomRange" :disabled="!customDateRange.start || !customDateRange.end">
                 {{ $t('metaInsights.applyRange') }}
               </Button>
@@ -828,13 +843,15 @@ const chartOptions = {
           </PopoverContent>
         </Popover>
 
+        <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
+
         <!-- Refresh Button -->
         <Button variant="outline" size="icon" @click="refreshCache" :disabled="isRefreshing">
           <RefreshCw :class="['h-4 w-4', isRefreshing && 'animate-spin']" />
         </Button>
 
         <!-- Cache indicator -->
-        <Badge v-if="isCached" variant="secondary" class="ml-2">
+        <Badge v-if="isCached" variant="secondary">
           {{ $t('metaInsights.cached') }}
         </Badge>
       </template>
@@ -845,22 +862,22 @@ const chartOptions = {
       <div class="p-6 space-y-6">
         <!-- Analytics Type Tabs -->
         <Tabs v-model="activeTab" class="w-full">
-          <TabsList class="grid w-full grid-cols-4 lg:w-auto lg:inline-flex">
+          <TabsList class="grid w-full grid-cols-2 sm:grid-cols-4 lg:w-auto lg:inline-flex">
             <TabsTrigger value="analytics">
-              <MessageSquare class="h-4 w-4 lg:mr-2" />
-              <span class="hidden lg:inline">{{ $t('metaInsights.messaging') }}</span>
+              <MessageSquare class="h-4 w-4 sm:mr-2" />
+              <span class="hidden sm:inline">{{ $t('metaInsights.messaging') }}</span>
             </TabsTrigger>
             <TabsTrigger value="pricing_analytics">
-              <DollarSign class="h-4 w-4 lg:mr-2" />
-              <span class="hidden lg:inline">{{ $t('metaInsights.pricing') }}</span>
+              <DollarSign class="h-4 w-4 sm:mr-2" />
+              <span class="hidden sm:inline">{{ $t('metaInsights.pricing') }}</span>
             </TabsTrigger>
             <TabsTrigger value="template_analytics">
-              <FileText class="h-4 w-4 lg:mr-2" />
-              <span class="hidden lg:inline">{{ $t('metaInsights.templates') }}</span>
+              <FileText class="h-4 w-4 sm:mr-2" />
+              <span class="hidden sm:inline">{{ $t('metaInsights.templates') }}</span>
             </TabsTrigger>
             <TabsTrigger value="call_analytics">
-              <Phone class="h-4 w-4 lg:mr-2" />
-              <span class="hidden lg:inline">{{ $t('metaInsights.calls') }}</span>
+              <Phone class="h-4 w-4 sm:mr-2" />
+              <span class="hidden sm:inline">{{ $t('metaInsights.calls') }}</span>
             </TabsTrigger>
           </TabsList>
 

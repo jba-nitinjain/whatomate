@@ -17,7 +17,8 @@ import {
 import { agentAnalyticsService } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useUsersStore } from '@/stores/users'
-import { PageHeader } from '@/components/shared'
+import { PageHeader, RefreshButton } from '@/components/shared'
+import { useViewRefresh } from '@/composables/useViewRefresh'
 import {
   Command,
   CommandEmpty,
@@ -253,6 +254,8 @@ const fetchAnalytics = async () => {
   }
 }
 
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchAnalytics, { intervalMs: 60000 })
+
 const applyCustomRange = () => {
   if (customDateRange.value.start && customDateRange.value.end) {
     isDatePickerOpen.value = false
@@ -420,8 +423,9 @@ void _displayStats.value // Suppress unused warning
       icon-gradient="bg-gradient-to-br from-blue-500 to-indigo-600 shadow-blue-500/20"
     >
       <template #actions>
+        <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
         <!-- Agent Filter (Admin/Manager only) -->
-        <div v-if="isAdminOrManager" class="flex items-center gap-2 mr-4">
+        <div v-if="isAdminOrManager" class="flex items-center gap-2">
           <Popover v-model:open="agentComboboxOpen">
             <PopoverTrigger as-child>
               <Button variant="outline" role="combobox" :aria-expanded="agentComboboxOpen" class="w-[200px] justify-between">
