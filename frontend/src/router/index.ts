@@ -260,6 +260,7 @@ const router = createRouter({
 // Used to find the first accessible route for a user
 const navigationOrder = [
   { path: '/', permission: 'analytics' },
+  { path: '/settings/contacts', permission: 'contacts' },
   { path: '/chat', permission: 'chat' },
   { path: '/chatbot', permission: 'settings.chatbot', childPaths: [
     { path: '/chatbot', permission: 'settings.chatbot' },
@@ -283,7 +284,6 @@ const navigationOrder = [
     { path: '/settings/chatbot', permission: 'settings.chatbot' },
     { path: '/settings/accounts', permission: 'accounts' },
     { path: '/settings/canned-responses', permission: 'canned_responses' },
-    { path: '/settings/contacts', permission: 'contacts' },
     { path: '/settings/tags', permission: 'tags' },
     { path: '/settings/teams', permission: 'teams' },
     { path: '/settings/users', permission: 'users' },

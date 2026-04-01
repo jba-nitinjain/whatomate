@@ -42,6 +42,12 @@ export const navigationItems: NavItem[] = [
     permission: 'analytics'
   },
   {
+    name: 'nav.contacts',
+    path: '/settings/contacts',
+    icon: Contact,
+    permission: 'contacts'
+  },
+  {
     name: 'nav.chat',
     path: '/chat',
     icon: MessageSquare,
@@ -118,7 +124,6 @@ export const navigationItems: NavItem[] = [
       { name: 'nav.general', path: '/settings', icon: Settings, permission: 'settings.general' },
       { name: 'nav.chatbot', path: '/settings/chatbot', icon: Bot, permission: 'settings.chatbot' },
       { name: 'nav.accounts', path: '/settings/accounts', icon: Users, permission: 'accounts' },
-      { name: 'nav.contacts', path: '/settings/contacts', icon: Contact, permission: 'contacts' },
       { name: 'nav.cannedResponses', path: '/settings/canned-responses', icon: MessageSquareText, permission: 'canned_responses' },
       { name: 'nav.tags', path: '/settings/tags', icon: Tags, permission: 'tags' },
       { name: 'nav.teams', path: '/settings/teams', icon: Users, permission: 'teams' },
