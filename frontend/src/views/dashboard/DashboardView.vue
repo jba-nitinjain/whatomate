@@ -454,6 +454,31 @@ const isDragMode = ref(false)
 const gridLayout = ref<Array<{ i: string; x: number; y: number; w: number; h: number }>>([])
 const isMobileViewport = ref(false)
 let mobileViewportMediaQuery: MediaQueryList | null = null
+
+const addMediaQueryChangeListener = (
+  mediaQuery: MediaQueryList,
+  listener: (event: MediaQueryListEvent) => void
+) => {
+  if (typeof mediaQuery.addEventListener === 'function') {
+    mediaQuery.addEventListener('change', listener)
+    return
+  }
+
+  mediaQuery.addListener(listener)
+}
+
+const removeMediaQueryChangeListener = (
+  mediaQuery: MediaQueryList,
+  listener: (event: MediaQueryListEvent) => void
+) => {
+  if (typeof mediaQuery.removeEventListener === 'function') {
+    mediaQuery.removeEventListener('change', listener)
+    return
+  }
+
+  mediaQuery.removeListener(listener)
+}
+
 const handleMobileViewportChange = (event: MediaQueryListEvent) => {
   isMobileViewport.value = event.matches
   if (event.matches) {
@@ -860,12 +885,14 @@ watch(() => widgetForm.value.display_type, (newVal) => {
 onMounted(() => {
   mobileViewportMediaQuery = window.matchMedia('(max-width: 767px)')
   isMobileViewport.value = mobileViewportMediaQuery.matches
-  mobileViewportMediaQuery.addEventListener('change', handleMobileViewportChange)
+  addMediaQueryChangeListener(mobileViewportMediaQuery, handleMobileViewportChange)
   fetchDashboardData()
 })
 
 onBeforeUnmount(() => {
-  mobileViewportMediaQuery?.removeEventListener('change', handleMobileViewportChange)
+  if (mobileViewportMediaQuery) {
+    removeMediaQueryChangeListener(mobileViewportMediaQuery, handleMobileViewportChange)
+  }
 })
 </script>
 

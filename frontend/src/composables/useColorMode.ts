@@ -26,6 +26,18 @@ function updateTheme() {
   }
 }
 
+function addSystemThemeListener(
+  mediaQuery: MediaQueryList,
+  listener: (event: MediaQueryListEvent) => void
+) {
+  if (typeof mediaQuery.addEventListener === 'function') {
+    mediaQuery.addEventListener('change', listener)
+    return
+  }
+
+  mediaQuery.addListener(listener)
+}
+
 export function useColorMode() {
   onMounted(() => {
     // Load saved preference
@@ -36,7 +48,8 @@ export function useColorMode() {
     updateTheme()
 
     // Listen for system theme changes
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    addSystemThemeListener(mediaQuery, () => {
       if (colorMode.value === 'system') {
         updateTheme()
       }
