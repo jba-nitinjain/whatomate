@@ -65,6 +65,7 @@ const isSyncing = ref(false)
 const searchQuery = ref('')
 const selectedAccount = ref<string>(localStorage.getItem('templates_selected_account') || 'all')
 const selectedStatus = ref<string>(localStorage.getItem('templates_selected_status') || 'all')
+const selectedCategory = ref<string>(localStorage.getItem('templates_selected_category') || 'all')
 const canCreateCampaign = computed(() => authStore.hasPermission('campaigns', 'write'))
 
 // Dialog state
@@ -103,6 +104,7 @@ const currentPage = ref(1)
 const totalItems = ref(0)
 const pageSize = 20
 const templateStatusCounts = ref<Record<string, number>>({ all: 0 })
+const templateCategoryCounts = ref<Record<string, number>>({ all: 0 })
 
 const columns = computed<Column<Template>[]>(() => [
   { key: 'name', label: t('templates.name'), sortable: true },
@@ -216,6 +218,8 @@ const categories = [
   { value: 'AUTHENTICATION', label: 'Authentication', description: 'OTP, verification codes' },
 ]
 
+const categoryTabs = computed(() => ['all', ...categories.map(category => category.value)])
+
 const headerTypes = [
   { value: 'NONE', label: 'None' },
   { value: 'TEXT', label: 'Text' },
@@ -262,17 +266,36 @@ function onStatusChange(value: string | number | bigint | Record<string, any> | 
   selectedStatus.value = value
   localStorage.setItem('templates_selected_status', value)
   currentPage.value = 1
-  fetchTemplates()
+  refreshTemplatesData()
 }
 
-function buildTemplateListParams(statusOverride?: string) {
-  const resolvedStatus = statusOverride ?? selectedStatus.value
+function onCategoryChange(value: string | number | bigint | Record<string, any> | null) {
+  if (typeof value !== 'string') return
+  selectedCategory.value = value
+  localStorage.setItem('templates_selected_category', value)
+  currentPage.value = 1
+  refreshTemplatesData()
+}
+
+function buildTemplateListParams(options?: {
+  statusOverride?: string
+  categoryOverride?: string
+  includeStatus?: boolean
+  includeCategory?: boolean
+  page?: number
+  limit?: number
+}) {
+  const resolvedStatus = options?.statusOverride ?? selectedStatus.value
+  const resolvedCategory = options?.categoryOverride ?? selectedCategory.value
+  const includeStatus = options?.includeStatus ?? true
+  const includeCategory = options?.includeCategory ?? true
   return {
     account: selectedAccount.value !== 'all' ? selectedAccount.value : undefined,
-    status: resolvedStatus !== 'all' ? resolvedStatus : undefined,
+    status: includeStatus && resolvedStatus !== 'all' ? resolvedStatus : undefined,
+    category: includeCategory && resolvedCategory !== 'all' ? resolvedCategory : undefined,
     search: searchQuery.value || undefined,
-    page: currentPage.value,
-    limit: pageSize,
+    page: options?.page ?? currentPage.value,
+    limit: options?.limit ?? pageSize,
   }
 }
 
@@ -296,11 +319,15 @@ async function fetchTemplateStatusCounts() {
   const statusesToFetch = statusTabs
   const results = await Promise.allSettled(
     statusesToFetch.map(async (status) => {
-      const response = await templatesService.list({
-        ...buildTemplateListParams(status),
-        page: 1,
-        limit: 1,
-      })
+      const response = await templatesService.list(
+        buildTemplateListParams({
+          statusOverride: status,
+          includeStatus: true,
+          includeCategory: true,
+          page: 1,
+          limit: 1,
+        })
+      )
       const data = (response.data as any).data || response.data
       return {
         status,
@@ -321,8 +348,45 @@ async function fetchTemplateStatusCounts() {
   templateStatusCounts.value = nextCounts
 }
 
+async function fetchTemplateCategoryCounts() {
+  const categoriesToFetch = categoryTabs.value
+  const results = await Promise.allSettled(
+    categoriesToFetch.map(async (category) => {
+      const response = await templatesService.list(
+        buildTemplateListParams({
+          categoryOverride: category,
+          includeStatus: true,
+          includeCategory: true,
+          page: 1,
+          limit: 1,
+        })
+      )
+      const data = (response.data as any).data || response.data
+      return {
+        category,
+        total: typeof data.total === 'number' ? data.total : 0,
+      }
+    })
+  )
+
+  const nextCounts: Record<string, number> = { all: 0 }
+  results.forEach((result, index) => {
+    const category = categoriesToFetch[index]
+    if (result.status === 'fulfilled') {
+      nextCounts[result.value.category] = result.value.total
+    } else {
+      nextCounts[category] = templateCategoryCounts.value[category] ?? 0
+    }
+  })
+  templateCategoryCounts.value = nextCounts
+}
+
 async function refreshTemplatesData() {
-  await Promise.all([fetchTemplates(), fetchTemplateStatusCounts()])
+  await Promise.all([
+    fetchTemplates(),
+    fetchTemplateStatusCounts(),
+    fetchTemplateCategoryCounts(),
+  ])
 }
 
 const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(refreshTemplatesData)
@@ -547,6 +611,15 @@ function getStatusCount(status: string) {
   return templateStatusCounts.value[status] ?? 0
 }
 
+function formatCategoryLabel(category: string) {
+  if (category === 'all') return 'All'
+  return categories.find(item => item.value === category)?.label || category
+}
+
+function getCategoryCount(category: string) {
+  return templateCategoryCounts.value[category] ?? 0
+}
+
 function getHeaderIcon(type: string) {
   switch (type) {
     case 'IMAGE':
@@ -765,6 +838,24 @@ function formatPreview(text: string, samples: any[]): string {
                         <span>{{ formatStatusLabel(status) }}</span>
                         <span class="rounded-full bg-black/20 px-2 py-0.5 text-[11px] light:bg-white">
                           {{ getStatusCount(status) }}
+                        </span>
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+                <div>
+                  <Label class="mb-2 block text-sm text-muted-foreground">{{ $t('templates.category') }}:</Label>
+                  <Tabs :model-value="selectedCategory" @update:model-value="onCategoryChange" class="w-full">
+                    <TabsList class="h-auto w-full justify-start overflow-x-auto rounded-lg border border-white/[0.08] bg-white/[0.03] p-1 light:border-gray-200 light:bg-gray-100">
+                      <TabsTrigger
+                        v-for="category in categoryTabs"
+                        :key="category"
+                        :value="category"
+                        class="h-auto min-w-fit gap-2 px-3 py-2 text-xs whitespace-nowrap"
+                      >
+                        <span>{{ formatCategoryLabel(category) }}</span>
+                        <span class="rounded-full bg-black/20 px-2 py-0.5 text-[11px] light:bg-white">
+                          {{ getCategoryCount(category) }}
                         </span>
                       </TabsTrigger>
                     </TabsList>

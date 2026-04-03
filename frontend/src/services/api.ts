@@ -437,6 +437,7 @@ export interface MetaPricingDataPoint {
   end: number
   volume: number
   cost: number
+  currency?: string             // Currency code when provided by Meta
   country?: string              // Country code (IN, US, etc.)
   pricing_type?: string         // FREE_CUSTOMER_SERVICE, FREE_ENTRY_POINT, REGULAR
   pricing_category?: string     // MARKETING, UTILITY, AUTHENTICATION, SERVICE, etc.
@@ -446,6 +447,7 @@ export interface MetaPricingDataPoint {
 interface MetaTemplateCostItem {
   type: string    // amount_spent, cost_per_delivered, cost_per_url_button_click
   value?: number  // The cost value
+  currency?: string // Currency code when provided by Meta
 }
 
 interface MetaTemplateClickItem {
@@ -471,6 +473,7 @@ export interface MetaCallDataPoint {
   end: number
   count: number
   cost: number
+  currency?: string // Currency code when provided by Meta
   average_duration: number
   direction?: string // USER_INITIATED or BUSINESS_INITIATED
 }
@@ -487,14 +490,17 @@ interface MetaAnalyticsData {
   }
   pricing_analytics?: {
     granularity: string
+    currency?: string
     data_points: MetaPricingDataPoint[]
   }
   template_analytics?: {
     granularity: string
+    currency?: string
     data_points: MetaTemplateDataPoint[]
   }
   call_analytics?: {
     granularity: string
+    currency?: string
     data_points: MetaCallDataPoint[]
   }
 }

@@ -412,6 +412,53 @@ const aggregatedData = computed(() => {
   return null
 })
 
+function isSupportedCurrency(currency: string | undefined | null): currency is string {
+  if (!currency) return false
+  try {
+    new Intl.NumberFormat('en-US', { style: 'currency', currency })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function getCurrencyCandidatesFromAccount(account: MetaAnalyticsResponse): string[] {
+  const candidates: Array<string | undefined> = [
+    account.data?.pricing_analytics?.currency,
+    account.data?.template_analytics?.currency,
+    account.data?.call_analytics?.currency,
+  ]
+
+  account.data?.pricing_analytics?.data_points?.forEach((point) => {
+    candidates.push(point.currency)
+  })
+
+  account.data?.template_analytics?.data_points?.forEach((point) => {
+    point.cost?.forEach((costItem) => {
+      candidates.push(costItem.currency)
+    })
+  })
+
+  account.data?.call_analytics?.data_points?.forEach((point) => {
+    candidates.push(point.currency)
+  })
+
+  return candidates
+    .map(currency => currency?.trim().toUpperCase())
+    .filter(isSupportedCurrency)
+}
+
+const analyticsCurrency = computed(() => {
+  for (const account of analyticsData.value) {
+    const currency = getCurrencyCandidatesFromAccount(account)[0]
+    if (currency) {
+      return currency
+    }
+  }
+
+  return 'INR'
+})
+
 // Aggregation functions
 function aggregateMessagingData(points: MetaMessagingDataPoint[]) {
   const byTime = new Map<number, { sent: number; delivered: number }>()
@@ -749,7 +796,10 @@ function formatCategory(category: string): string {
 }
 
 function formatCurrency(value: number): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: analyticsCurrency.value
+  }).format(value)
 }
 
 function formatDuration(seconds: number): string {

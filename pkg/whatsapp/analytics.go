@@ -63,6 +63,7 @@ type PricingAnalyticsDataPoint struct {
 	End             int64   `json:"end"`
 	Volume          int64   `json:"volume"`                      // Message count
 	Cost            float64 `json:"cost"`                        // Cost in account currency
+	Currency        string  `json:"currency,omitempty"`          // Currency code when provided by Meta
 	Country         string  `json:"country,omitempty"`           // Country code (IN, US, etc.)
 	PricingType     string  `json:"pricing_type,omitempty"`      // FREE_CUSTOMER_SERVICE, FREE_ENTRY_POINT, REGULAR
 	PricingCategory string  `json:"pricing_category,omitempty"`  // MARKETING, UTILITY, AUTHENTICATION, SERVICE, etc.
@@ -86,6 +87,7 @@ type PricingAnalyticsRaw struct {
 // PricingAnalytics represents pricing analytics response (flattened)
 type PricingAnalytics struct {
 	Granularity string                      `json:"granularity"`
+	Currency    string                      `json:"currency,omitempty"`
 	DataPoints  []PricingAnalyticsDataPoint `json:"data_points"`
 }
 
@@ -93,6 +95,7 @@ type PricingAnalytics struct {
 type TemplateCostItem struct {
 	Type  string  `json:"type"`            // amount_spent, cost_per_delivered, cost_per_url_button_click
 	Value float64 `json:"value,omitempty"` // The cost value
+	Currency string `json:"currency,omitempty"` // Currency code when provided by Meta
 }
 
 // TemplateClickItem represents a click item in template analytics
@@ -131,6 +134,7 @@ type TemplateAnalyticsRaw struct {
 // TemplateAnalytics represents template analytics response (flattened for easier consumption)
 type TemplateAnalytics struct {
 	Granularity string                       `json:"granularity"`
+	Currency    string                       `json:"currency,omitempty"`
 	DataPoints  []TemplateAnalyticsDataPoint `json:"data_points"`
 }
 
@@ -140,6 +144,7 @@ type CallAnalyticsDataPoint struct {
 	End             int64   `json:"end"`
 	Count           int64   `json:"count"`
 	Cost            float64 `json:"cost"`
+	Currency        string  `json:"currency,omitempty"` // Currency code when provided by Meta
 	AverageDuration int64   `json:"average_duration"` // Average duration in seconds
 	Direction       string  `json:"direction,omitempty"` // USER_INITIATED or BUSINESS_INITIATED (from dimensions)
 }
@@ -161,6 +166,7 @@ type CallAnalyticsRaw struct {
 // CallAnalytics represents call analytics response (flattened)
 type CallAnalytics struct {
 	Granularity string                   `json:"granularity"`
+	Currency    string                   `json:"currency,omitempty"`
 	DataPoints  []CallAnalyticsDataPoint `json:"data_points"`
 }
 
