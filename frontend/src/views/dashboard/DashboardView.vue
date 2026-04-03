@@ -593,6 +593,13 @@ const displayGridLayout = computed(() => {
   })
 })
 
+const mobileOrderedWidgets = computed(() => {
+  const orderedItems = [...displayGridLayout.value].sort((a, b) => a.y - b.y || a.x - b.x)
+  return orderedItems
+    .map((item) => getWidgetById(item.i))
+    .filter((widget): widget is DashboardWidget => Boolean(widget))
+})
+
 // Debounced layout save
 let layoutSaveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -987,8 +994,240 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- Widget Grid Layout -->
+        <div v-if="!isLoading && isMobileViewport && mobileOrderedWidgets.length > 0" class="space-y-4">
+          <div
+            v-for="widget in mobileOrderedWidgets"
+            :key="widget.id"
+            :class="[
+              'rounded-xl border border-white/[0.08] bg-white/[0.04] light:bg-white light:border-gray-200 overflow-hidden',
+              isNumberWidget(widget) ? 'p-6' : 'p-5',
+              isChartWidget(widget) ? 'min-h-[320px]' : '',
+              isTableWidget(widget) ? 'min-h-[360px]' : '',
+              isShortcutsWidget(widget) ? 'min-h-[260px]' : ''
+            ]"
+          >
+            <div v-if="isNumberWidget(widget)" class="group relative h-full card-depth">
+              <div class="flex flex-row items-start justify-between space-y-0 pb-2">
+                <div class="flex-1">
+                  <span class="text-sm font-medium text-white/50 light:text-gray-500">
+                    {{ widget.name }}
+                  </span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <div v-if="canEditWidget || canDeleteWidget" class="flex items-center gap-1">
+                    <Button
+                      v-if="canEditWidget"
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8 text-white/40 hover:text-white hover:bg-white/[0.1] light:text-gray-400 light:hover:text-gray-700 light:hover:bg-gray-100"
+                      @click.stop="openEditWidgetDialog(widget)"
+                      :title="$t('dashboard.editWidgetTooltip')"
+                    >
+                      <Pencil class="h-4 w-4" />
+                    </Button>
+                    <Button
+                      v-if="canDeleteWidget"
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8 text-white/40 hover:text-red-400 hover:bg-red-500/10 light:text-gray-400 light:hover:text-red-600 light:hover:bg-red-50"
+                      @click.stop="openDeleteDialog(widget)"
+                      :title="$t('dashboard.deleteWidgetTooltip')"
+                    >
+                      <Trash2 class="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div :class="['h-10 w-10 rounded-lg flex items-center justify-center', getWidgetColor(widget.color).bg]">
+                    <component :is="getWidgetIcon(widget.data_source)" :class="['h-5 w-5', getWidgetColor(widget.color).text]" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="pt-2">
+                <div class="text-3xl font-bold text-white light:text-gray-900">
+                  <template v-if="isWidgetDataLoading">
+                    <Skeleton class="h-8 w-20 bg-white/[0.08] light:bg-gray-200" />
+                  </template>
+                  <template v-else>
+                    {{ formatNumber(widgetData[widget.id]?.value || 0) }}
+                  </template>
+                </div>
+                <div v-if="widget.show_change && widgetData[widget.id]" class="flex items-center text-xs text-white/40 light:text-gray-500 mt-1">
+                  <component
+                    :is="widgetData[widget.id]?.change > 0 ? TrendingUp : widgetData[widget.id]?.change < 0 ? TrendingDown : Minus"
+                    :class="[
+                      'h-3 w-3 mr-1',
+                      widgetData[widget.id]?.change > 0 ? 'text-emerald-400' : widgetData[widget.id]?.change < 0 ? 'text-red-400' : 'text-white/30'
+                    ]"
+                  />
+                  <span :class="widgetData[widget.id]?.change > 0 ? 'text-emerald-400' : widgetData[widget.id]?.change < 0 ? 'text-red-400' : 'text-white/30 light:text-gray-400'">
+                    {{ Math.abs(widgetData[widget.id]?.change || 0).toFixed(1) }}%
+                  </span>
+                  <span class="ml-1">{{ comparisonPeriodLabel }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div v-else-if="isChartWidget(widget)" class="group relative h-full flex flex-col">
+              <div class="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <span class="text-sm font-medium text-white/50 light:text-gray-500">{{ widget.name }}</span>
+                  <p v-if="widget.description" class="text-xs text-white/30 light:text-gray-400 mt-0.5">{{ widget.description }}</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <div v-if="canEditWidget || canDeleteWidget" class="flex items-center gap-1">
+                    <Button
+                      v-if="canEditWidget"
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8 text-white/40 hover:text-white hover:bg-white/[0.1] light:text-gray-400 light:hover:text-gray-700 light:hover:bg-gray-100"
+                      @click.stop="openEditWidgetDialog(widget)"
+                      :title="$t('dashboard.editWidgetTooltip')"
+                    >
+                      <Pencil class="h-4 w-4" />
+                    </Button>
+                    <Button
+                      v-if="canDeleteWidget"
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8 text-white/40 hover:text-red-400 hover:bg-red-500/10 light:text-gray-400 light:hover:text-red-600 light:hover:bg-red-50"
+                      @click.stop="openDeleteDialog(widget)"
+                      :title="$t('dashboard.deleteWidgetTooltip')"
+                    >
+                      <Trash2 class="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div :class="['h-10 w-10 rounded-lg flex items-center justify-center', getWidgetColor(widget.color).bg]">
+                    <component :is="getWidgetIcon(widget.data_source)" :class="['h-5 w-5', getWidgetColor(widget.color).text]" />
+                  </div>
+                </div>
+              </div>
+              <div class="flex-1 min-h-[240px] pt-2">
+                <template v-if="isWidgetDataLoading">
+                  <Skeleton class="h-full w-full bg-white/[0.08] light:bg-gray-200" />
+                </template>
+                <template v-else-if="(widgetData[widget.id]?.chart_data?.length || 0) > 0 || (widgetData[widget.id]?.data_points?.length || 0) > 0 || (widgetData[widget.id]?.grouped_series?.datasets?.length || 0) > 0">
+                  <Line v-if="widget.chart_type === 'line'" :data="getChartComponentData(widget)" :options="lineBarChartOptions" />
+                  <Bar v-else-if="widget.chart_type === 'bar'" :data="getChartComponentData(widget)" :options="lineBarChartOptions" />
+                  <Pie v-else-if="widget.chart_type === 'pie'" :data="getChartComponentData(widget)" :options="pieChartOptions" />
+                </template>
+                <template v-else>
+                  <div class="h-full flex items-center justify-center text-white/40 light:text-gray-400">
+                    {{ $t('common.noData') }}
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div v-else-if="isTableWidget(widget)" class="group relative h-full flex flex-col">
+              <div class="pb-3 flex flex-row items-center justify-between">
+                <div>
+                  <span class="text-sm font-medium text-white/50 light:text-gray-500">{{ widget.name }}</span>
+                  <p v-if="widget.description" class="text-xs text-white/30 light:text-gray-400 mt-0.5">{{ widget.description }}</p>
+                </div>
+                <div class="flex items-center gap-1">
+                  <Button v-if="canEditWidget" variant="ghost" size="icon" class="h-8 w-8 text-white/40 hover:text-white hover:bg-white/[0.1] light:text-gray-400 light:hover:text-gray-700 light:hover:bg-gray-100" @click.stop="openEditWidgetDialog(widget)" :title="$t('dashboard.editWidgetTooltip')">
+                    <Pencil class="h-4 w-4" />
+                  </Button>
+                  <Button v-if="canDeleteWidget" variant="ghost" size="icon" class="h-8 w-8 text-white/40 hover:text-red-400 hover:bg-red-500/10 light:text-gray-400 light:hover:text-red-600 light:hover:bg-red-50" @click.stop="openDeleteDialog(widget)" :title="$t('dashboard.deleteWidgetTooltip')">
+                    <Trash2 class="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div class="flex-1 min-h-0 overflow-auto pb-1">
+                <template v-if="isWidgetDataLoading">
+                  <Skeleton class="h-full w-full bg-white/[0.08] light:bg-gray-200" />
+                </template>
+                <template v-else-if="widget.group_by_field && widgetData[widget.id]?.data_points?.length">
+                  <table class="w-full">
+                    <thead>
+                      <tr class="border-b border-white/[0.08] light:border-gray-200">
+                        <th class="text-left py-2 text-xs font-medium text-white/40 light:text-gray-500 uppercase">{{ widget.group_by_field }}</th>
+                        <th class="text-right py-2 text-xs font-medium text-white/40 light:text-gray-500 uppercase">{{ $t('dashboard.count') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="dp in widgetData[widget.id]?.data_points" :key="dp.label" class="border-b border-white/[0.04] light:border-gray-100">
+                        <td class="py-2 text-sm text-white/70 light:text-gray-700">{{ dp.label }}</td>
+                        <td class="py-2 text-sm text-right text-white light:text-gray-900 font-medium">{{ dp.value }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </template>
+                <template v-else-if="widgetData[widget.id]?.table_rows?.length">
+                  <div class="space-y-3">
+                    <div
+                      v-for="row in widgetData[widget.id]?.table_rows"
+                      :key="row.id"
+                      class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.04] light:hover:bg-gray-50 transition-colors"
+                    >
+                      <div
+                        :class="[
+                          'h-10 w-10 rounded-lg flex items-center justify-center text-sm font-medium shrink-0',
+                          row.direction === 'incoming' ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white' : 'bg-gradient-to-br from-blue-500 to-cyan-600 text-white'
+                        ]"
+                      >
+                        {{ row.label.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() }}
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center justify-between gap-3">
+                          <p class="text-sm font-medium truncate text-white light:text-gray-900">{{ row.label }}</p>
+                          <span class="text-xs text-white/40 light:text-gray-500 flex items-center gap-1 shrink-0">
+                            <Clock class="h-3 w-3" />
+                            {{ formatTime(row.created_at) }}
+                          </span>
+                        </div>
+                        <p class="text-sm text-white/50 light:text-gray-600 truncate">{{ row.sub_label }}</p>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="h-full flex items-center justify-center text-white/40 light:text-gray-400">
+                    {{ $t('common.noData') }}
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div v-else-if="isShortcutsWidget(widget)" class="group relative h-full flex flex-col">
+              <div class="pb-3 flex flex-row items-center justify-between">
+                <div>
+                  <span class="text-sm font-medium text-white/50 light:text-gray-500">{{ widget.name }}</span>
+                  <p v-if="widget.description" class="text-xs text-white/30 light:text-gray-400 mt-0.5">{{ widget.description }}</p>
+                </div>
+                <div class="flex items-center gap-1">
+                  <Button v-if="canEditWidget" variant="ghost" size="icon" class="h-8 w-8 text-white/40 hover:text-white hover:bg-white/[0.1] light:text-gray-400 light:hover:text-gray-700 light:hover:bg-gray-100" @click.stop="openEditWidgetDialog(widget)" :title="$t('dashboard.editWidgetTooltip')">
+                    <Pencil class="h-4 w-4" />
+                  </Button>
+                  <Button v-if="canDeleteWidget" variant="ghost" size="icon" class="h-8 w-8 text-white/40 hover:text-red-400 hover:bg-red-500/10 light:text-gray-400 light:hover:text-red-600 light:hover:bg-red-50" @click.stop="openDeleteDialog(widget)" :title="$t('dashboard.deleteWidgetTooltip')">
+                    <Trash2 class="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div class="flex-1 min-h-0 overflow-y-auto pb-1">
+                <div class="grid grid-cols-2 gap-3 pt-1">
+                  <template v-for="key in (widget.config?.shortcuts || [])" :key="key">
+                    <RouterLink
+                      v-if="SHORTCUT_REGISTRY[key as keyof typeof SHORTCUT_REGISTRY]"
+                      :to="SHORTCUT_REGISTRY[key as keyof typeof SHORTCUT_REGISTRY].to"
+                      class="card-interactive flex flex-col items-center justify-center p-4 rounded-xl border border-white/[0.08] bg-white/[0.02] light:bg-gray-50 light:border-gray-200"
+                    >
+                      <div :class="['h-12 w-12 rounded-lg bg-gradient-to-br flex items-center justify-center mb-2 shadow-lg', SHORTCUT_REGISTRY[key as keyof typeof SHORTCUT_REGISTRY].gradient, 'shadow-' + (key as string) + '-500/20']">
+                        <component :is="SHORTCUT_REGISTRY[key as keyof typeof SHORTCUT_REGISTRY].icon" class="h-6 w-6 text-white" />
+                      </div>
+                      <span class="text-sm font-medium text-white light:text-gray-900 text-center">{{ SHORTCUT_REGISTRY[key as keyof typeof SHORTCUT_REGISTRY].label }}</span>
+                    </RouterLink>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <GridLayout
-          v-if="!isLoading && gridLayout.length > 0"
+          v-else-if="!isLoading && gridLayout.length > 0"
           :layout="displayGridLayout"
           :col-num="isMobileViewport ? 1 : GRID_COLS"
           :row-height="GRID_ROW_HEIGHT"

@@ -14,6 +14,7 @@ import { Separator } from '@/components/ui/separator'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { PageHeader, SearchInput, DataTable, DeleteConfirmDialog, RefreshButton, type Column } from '@/components/shared'
@@ -101,6 +102,7 @@ const formData = ref({
 const currentPage = ref(1)
 const totalItems = ref(0)
 const pageSize = 20
+const templateStatusCounts = ref<Record<string, number>>({ all: 0 })
 
 const columns = computed<Column<Template>[]>(() => [
   { key: 'name', label: t('templates.name'), sortable: true },
@@ -125,6 +127,8 @@ const statusOptions = [
   'REINSTATED',
   'FLAGGED',
 ]
+
+const statusTabs = ['all', ...statusOptions]
 
 const languages = [
   { code: 'af', name: 'Afrikaans' },
@@ -223,12 +227,12 @@ const headerTypes = [
 // Refetch data when organization changes
 watch(() => organizationsStore.selectedOrgId, async () => {
   await fetchAccounts()
-  await fetchTemplates()
+  await refreshTemplatesData()
 })
 
 onMounted(async () => {
   await fetchAccounts()
-  await fetchTemplates()
+  await refreshTemplatesData()
 })
 
 async function fetchAccounts() {
@@ -247,28 +251,35 @@ async function fetchAccounts() {
 
 function onAccountChange(value: string | number | bigint | Record<string, any> | null) {
   if (typeof value !== 'string') return
+  selectedAccount.value = value
   localStorage.setItem('templates_selected_account', value)
   currentPage.value = 1
-  fetchTemplates()
+  refreshTemplatesData()
 }
 
 function onStatusChange(value: string | number | bigint | Record<string, any> | null) {
   if (typeof value !== 'string') return
+  selectedStatus.value = value
   localStorage.setItem('templates_selected_status', value)
   currentPage.value = 1
   fetchTemplates()
 }
 
+function buildTemplateListParams(statusOverride?: string) {
+  const resolvedStatus = statusOverride ?? selectedStatus.value
+  return {
+    account: selectedAccount.value !== 'all' ? selectedAccount.value : undefined,
+    status: resolvedStatus !== 'all' ? resolvedStatus : undefined,
+    search: searchQuery.value || undefined,
+    page: currentPage.value,
+    limit: pageSize,
+  }
+}
+
 async function fetchTemplates() {
   isLoading.value = true
   try {
-    const response = await templatesService.list({
-      account: selectedAccount.value !== 'all' ? selectedAccount.value : undefined,
-      status: selectedStatus.value !== 'all' ? selectedStatus.value : undefined,
-      search: searchQuery.value || undefined,
-      page: currentPage.value,
-      limit: pageSize
-    })
+    const response = await templatesService.list(buildTemplateListParams())
     const data = (response.data as any).data || response.data
     templates.value = data.templates || []
     totalItems.value = data.total ?? templates.value.length
@@ -281,12 +292,45 @@ async function fetchTemplates() {
   }
 }
 
-const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchTemplates)
+async function fetchTemplateStatusCounts() {
+  const statusesToFetch = statusTabs
+  const results = await Promise.allSettled(
+    statusesToFetch.map(async (status) => {
+      const response = await templatesService.list({
+        ...buildTemplateListParams(status),
+        page: 1,
+        limit: 1,
+      })
+      const data = (response.data as any).data || response.data
+      return {
+        status,
+        total: typeof data.total === 'number' ? data.total : 0,
+      }
+    })
+  )
+
+  const nextCounts: Record<string, number> = { all: 0 }
+  results.forEach((result, index) => {
+    const status = statusesToFetch[index]
+    if (result.status === 'fulfilled') {
+      nextCounts[result.value.status] = result.value.total
+    } else {
+      nextCounts[status] = templateStatusCounts.value[status] ?? 0
+    }
+  })
+  templateStatusCounts.value = nextCounts
+}
+
+async function refreshTemplatesData() {
+  await Promise.all([fetchTemplates(), fetchTemplateStatusCounts()])
+}
+
+const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(refreshTemplatesData)
 
 // Debounced search
 const debouncedSearch = useDebounceFn(() => {
   currentPage.value = 1
-  fetchTemplates()
+  refreshTemplatesData()
 }, 300)
 
 watch(searchQuery, () => debouncedSearch())
@@ -308,7 +352,7 @@ async function syncTemplates() {
       whatsapp_account: selectedAccount.value
     })
     toast.success(response.data.data.message || t('templates.syncSuccess'))
-    await fetchTemplates()
+    await refreshTemplatesData()
   } catch (error) {
     toast.error(getErrorMessage(error, t('templates.syncFailed')))
   } finally {
@@ -401,7 +445,7 @@ async function saveTemplate() {
       toast.success(t('common.createdSuccess', { resource: t('resources.Template') }))
     }
     isDialogOpen.value = false
-    await fetchTemplates()
+    await refreshTemplatesData()
   } catch (error) {
     toast.error(getErrorMessage(error, t('common.failedSave', { resource: t('resources.template') })))
   } finally {
@@ -422,7 +466,7 @@ async function confirmDeleteTemplate() {
     toast.success(t('common.deletedSuccess', { resource: t('resources.Template') }))
     deleteDialogOpen.value = false
     templateToDelete.value = null
-    await fetchTemplates()
+    await refreshTemplatesData()
   } catch (error) {
     toast.error(getErrorMessage(error, t('common.failedDelete', { resource: t('resources.template') })))
   }
@@ -444,7 +488,7 @@ async function confirmPublishTemplate() {
     toast.success(response.data.data?.message || t('templates.publishSuccess'))
     publishDialogOpen.value = false
     templateToPublish.value = null
-    await fetchTemplates()
+    await refreshTemplatesData()
   } catch (error) {
     toast.error(getErrorMessage(error, t('templates.publishFailed')), { duration: 8000 })
   } finally {
@@ -488,6 +532,19 @@ function getCategoryBadgeClass(category: string) {
     default:
       return 'bg-gray-800 text-gray-300 light:bg-gray-100 light:text-gray-800'
   }
+}
+
+function formatStatusLabel(status: string) {
+  if (status === 'all') return 'All'
+  return status
+    .toLowerCase()
+    .split('_')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function getStatusCount(status: string) {
+  return templateStatusCounts.value[status] ?? 0
 }
 
 function getHeaderIcon(type: string) {
@@ -671,41 +728,47 @@ function formatPreview(text: string, samples: any[]): string {
         <div class="max-w-6xl mx-auto">
           <Card>
             <CardHeader>
-              <div class="flex items-center justify-between flex-wrap gap-4">
-                <div>
-                  <CardTitle>{{ $t('templates.yourTemplates') }}</CardTitle>
-                  <CardDescription>{{ $t('templates.yourTemplatesDesc') }}</CardDescription>
+              <div class="flex flex-col gap-4">
+                <div class="flex items-center justify-between flex-wrap gap-4">
+                  <div>
+                    <CardTitle>{{ $t('templates.yourTemplates') }}</CardTitle>
+                    <CardDescription>{{ $t('templates.yourTemplatesDesc') }}</CardDescription>
+                  </div>
+                  <div class="flex w-full flex-col gap-4 md:w-auto md:flex-row md:items-center">
+                    <div class="flex items-center gap-2">
+                      <Label class="text-sm text-muted-foreground">{{ $t('templates.account') }}:</Label>
+                      <Select v-model="selectedAccount" @update:model-value="onAccountChange">
+                        <SelectTrigger class="w-full sm:w-[180px]">
+                          <SelectValue :placeholder="$t('templates.allAccounts')" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">{{ $t('templates.allAccounts') }}</SelectItem>
+                          <SelectItem v-for="account in accounts" :key="account.id" :value="account.name">
+                            {{ account.name }}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <SearchInput v-model="searchQuery" :placeholder="$t('templates.searchTemplates') + '...'" class="w-full md:w-64" />
+                  </div>
                 </div>
-                <div class="flex w-full flex-col gap-4 md:w-auto md:flex-row md:items-center">
-                  <div class="flex items-center gap-2">
-                    <Label class="text-sm text-muted-foreground">{{ $t('templates.account') }}:</Label>
-                    <Select v-model="selectedAccount" @update:model-value="onAccountChange">
-                      <SelectTrigger class="w-full sm:w-[180px]">
-                        <SelectValue :placeholder="$t('templates.allAccounts')" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">{{ $t('templates.allAccounts') }}</SelectItem>
-                        <SelectItem v-for="account in accounts" :key="account.id" :value="account.name">
-                          {{ account.name }}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <Label class="text-sm text-muted-foreground">{{ $t('templates.status') }}:</Label>
-                    <Select v-model="selectedStatus" @update:model-value="onStatusChange">
-                      <SelectTrigger class="w-full sm:w-[180px]">
-                        <SelectValue :placeholder="$t('templates.status')" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All</SelectItem>
-                        <SelectItem v-for="status in statusOptions" :key="status" :value="status">
-                          {{ status }}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <SearchInput v-model="searchQuery" :placeholder="$t('templates.searchTemplates') + '...'" class="w-full md:w-64" />
+                <div>
+                  <Label class="mb-2 block text-sm text-muted-foreground">{{ $t('templates.status') }}:</Label>
+                  <Tabs :model-value="selectedStatus" @update:model-value="onStatusChange" class="w-full">
+                    <TabsList class="h-auto w-full justify-start overflow-x-auto rounded-lg border border-white/[0.08] bg-white/[0.03] p-1 light:border-gray-200 light:bg-gray-100">
+                      <TabsTrigger
+                        v-for="status in statusTabs"
+                        :key="status"
+                        :value="status"
+                        class="h-auto min-w-fit gap-2 px-3 py-2 text-xs whitespace-nowrap"
+                      >
+                        <span>{{ formatStatusLabel(status) }}</span>
+                        <span class="rounded-full bg-black/20 px-2 py-0.5 text-[11px] light:bg-white">
+                          {{ getStatusCount(status) }}
+                        </span>
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
                 </div>
               </div>
             </CardHeader>
