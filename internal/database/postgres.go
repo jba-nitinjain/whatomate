@@ -293,14 +293,24 @@ func CreateIndexes(db *gorm.DB) error {
 	return nil
 }
 
-// CreateDefaultAdmin creates a default admin user if no users exist
-// This should only be called once during initial setup
+// CreateDefaultAdmin creates a default super admin user when one does not already exist.
+// This keeps startup idempotent across repeated local, Docker, and production boots.
 func CreateDefaultAdmin(db *gorm.DB, cfg *config.DefaultAdminConfig) error {
+	// If any super admin already exists, bootstrap is complete.
+	var existingSuperAdmin models.User
+	if err := db.Where("is_super_admin = ?", true).First(&existingSuperAdmin).Error; err == nil {
+		return nil
+	} else if err != nil && err != gorm.ErrRecordNotFound {
+		return fmt.Errorf("failed to check existing super admins: %w", err)
+	}
+
 	// Check if admin already exists (using email from config)
 	var existingAdmin models.User
 	if err := db.Where("email = ?", cfg.Email).First(&existingAdmin).Error; err == nil {
 		// Admin already exists, skip
 		return nil
+	} else if err != nil && err != gorm.ErrRecordNotFound {
+		return fmt.Errorf("failed to check existing admin email: %w", err)
 	}
 
 	// Find any existing organization, or create "Default Organization" if none exist

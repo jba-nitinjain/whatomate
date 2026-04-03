@@ -218,6 +218,47 @@ func TestCreateDefaultAdmin_Idempotent(t *testing.T) {
 	assert.Equal(t, int64(1), count, "should not create duplicate admin")
 }
 
+func TestCreateDefaultAdmin_SkipsWhenSuperAdminAlreadyExists(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cleanAll(t, db)
+
+	existingOrg := models.Organization{
+		BaseModel: models.BaseModel{ID: uuid.New()},
+		Name:      "Existing Org",
+		Settings:  models.JSONB{},
+	}
+	require.NoError(t, db.Create(&existingOrg).Error)
+
+	existingSuperAdmin := models.User{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: existingOrg.ID,
+		Email:          "existing-super-admin@example.com",
+		PasswordHash:   "already-hashed",
+		FullName:       "Existing Super Admin",
+		IsActive:       true,
+		IsAvailable:    true,
+		IsSuperAdmin:   true,
+		Settings:       models.JSONB{},
+	}
+	require.NoError(t, db.Create(&existingSuperAdmin).Error)
+
+	cfg := &config.DefaultAdminConfig{
+		Email:    "new-default-admin@example.com",
+		Password: "pass123",
+		FullName: "New Default Admin",
+	}
+
+	require.NoError(t, database.CreateDefaultAdmin(db, cfg))
+
+	var totalUsers int64
+	db.Model(&models.User{}).Count(&totalUsers)
+	assert.Equal(t, int64(1), totalUsers, "should not create another user when a super admin already exists")
+
+	var newAdminCount int64
+	db.Model(&models.User{}).Where("email = ?", cfg.Email).Count(&newAdminCount)
+	assert.Equal(t, int64(0), newAdminCount, "should not create configured default admin when a super admin already exists")
+}
+
 func TestCreateDefaultAdmin_UsesExistingOrg(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cleanAll(t, db)
