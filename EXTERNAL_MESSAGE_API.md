@@ -4,6 +4,9 @@
 
 `POST /api/messages/external` inserts an outbound message directly into Whatomate without sending it to the WhatsApp Cloud API.
 
+If you want Whatomate itself to send a template message from an external client, use `POST /api/messages/template` instead.
+That endpoint supports a simple request with `phone_number`, `phone_number_id`, `template_name`, optional `template_params`, and optional header media fields.
+
 Use this when another system has already sent the message and you only want Whatomate to:
 
 - store the message in the conversation timeline
@@ -48,6 +51,25 @@ The caller must have:
 - `chat:write`
 - `contacts:read` when using `contact_id`
 - `contacts:write` when using `phone_number` and allowing the API to create a contact
+
+### Super admin API keys
+
+A super admin API key can be reused across organizations by sending the target tenant in the `X-Organization-ID` header.
+
+Notes:
+
+- the API key must belong to a user with `is_super_admin = true`
+- `X-Organization-ID` must be the target organization's UUID
+- the request still targets one organization per call
+- inside that organization, choose the WhatsApp account with `phone_number_id` or `whatsapp_account`
+
+Example:
+
+```http
+X-API-Key: whm_your_super_admin_key
+X-Organization-ID: 7d35e1f1-7b90-4b6c-8e70-6ef6a0e1c123
+Content-Type: application/json
+```
 
 ## Endpoint
 
@@ -135,6 +157,68 @@ If `type = "template"`:
   - or `[Template]` if no name is present
 
 This means template messages can still be inserted even if the local template record is missing.
+
+#### How to insert a template message from an external sender
+
+Use this flow when your external system has already sent a WhatsApp template message and you only want Whatomate to record it.
+
+1. Authenticate with a normal API key or a super admin API key.
+2. Target the correct organization.
+   If using a super admin API key, send `X-Organization-ID`.
+3. Pick the WhatsApp account.
+   Prefer `phone_number_id` when you know the exact Meta phone number ID.
+   Otherwise send `whatsapp_account`.
+4. Set `type` to `template`.
+5. Send `template_name`.
+   If the same template exists in Whatomate, the chat bubble text is rendered from the stored template body.
+6. Send `template_params` as a flat JSON object.
+   Example: `{ "name": "Nitin", "order_id": "A-42" }`
+7. Send the real `whatsapp_message_id` returned by Meta if you want the timeline to match WhatsApp accurately.
+8. If the template used media in the header, send `header_media_url`, `header_media_mime_type`, and `header_media_filename` so the media can render in chat.
+
+Minimal payload:
+
+```json
+{
+  "contact_id": "9d7cb4e2-6e85-4f46-95bd-3ea4132c8123",
+  "phone_number_id": "116800811516809",
+  "type": "template",
+  "template_name": "credentials_v1",
+  "template_params": {
+    "name": "Nitin Jain",
+    "portal": "Income Tax"
+  },
+  "whatsapp_message_id": "wamid.external-template-123"
+}
+```
+
+Example with header media:
+
+```json
+{
+  "contact_id": "9d7cb4e2-6e85-4f46-95bd-3ea4132c8123",
+  "phone_number_id": "116800811516809",
+  "type": "template",
+  "template_name": "credentials_v1",
+  "template_params": {
+    "name": "Nitin Jain",
+    "portal": "Income Tax"
+  },
+  "header_media_url": "https://cdn.example.com/template-header.jpg",
+  "header_media_mime_type": "image/jpeg",
+  "header_media_filename": "template-header.jpg",
+  "whatsapp_message_id": "wamid.external-template-123",
+  "external_message_id": "crm-template-123",
+  "sent_at": "2026-03-27T10:30:00Z"
+}
+```
+
+Template-specific behavior:
+
+- if Whatomate finds the local template, it renders and stores the final body text
+- if the local template is missing, the message is still stored with fallback content like `[Template: credentials_v1]`
+- if the local template has buttons and you do not send `interactive_data`, Whatomate generates the button metadata automatically
+- header media fields override generic `media_url` fields for template rendering
 
 ### Metadata handling
 

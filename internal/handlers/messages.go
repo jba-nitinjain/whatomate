@@ -546,6 +546,7 @@ func (a *App) getMessagePreview(req OutgoingMessageRequest) string {
 type SendTemplateMessageRequest struct {
 	ContactID      string            `json:"contact_id"`
 	PhoneNumber    string            `json:"phone_number"`    // Alternative to contact_id - send to phone directly
+	PhoneNumberID  string            `json:"phone_number_id"` // Optional: resolve WhatsApp account from Meta phone number ID
 	TemplateName   string            `json:"template_name"`   // Template name
 	TemplateID     string            `json:"template_id"`     // Alternative: template UUID
 	TemplateParams map[string]string `json:"template_params"` // Named or positional params
@@ -584,6 +585,9 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		}
 		if v := form.Value["phone_number"]; len(v) > 0 {
 			req.PhoneNumber = v[0]
+		}
+		if v := form.Value["phone_number_id"]; len(v) > 0 {
+			req.PhoneNumberID = v[0]
 		}
 		if v := form.Value["template_name"]; len(v) > 0 {
 			req.TemplateName = v[0]
@@ -690,16 +694,21 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		contact = &c
 	}
 
-	// Determine which WhatsApp account to use (explicit > template > contact > default)
-	accountName := req.AccountName
-	if accountName == "" {
-		accountName = template.WhatsAppAccount
+	// Determine which WhatsApp account to use.
+	// Priority: phone_number_id > account_name > template account > contact account > default.
+	var account *models.WhatsAppAccount
+	if req.PhoneNumberID != "" {
+		account, err = a.resolveWhatsAppAccountByPhoneNumberID(orgID, req.PhoneNumberID)
+	} else {
+		accountName := req.AccountName
+		if accountName == "" {
+			accountName = template.WhatsAppAccount
+		}
+		if accountName == "" && contact != nil {
+			accountName = contact.WhatsAppAccount
+		}
+		account, err = a.resolveWhatsAppAccount(orgID, accountName)
 	}
-	if accountName == "" && contact != nil {
-		accountName = contact.WhatsAppAccount
-	}
-
-	account, err := a.resolveWhatsAppAccount(orgID, accountName)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
@@ -1159,12 +1168,7 @@ func externalTemplateFallback(templateName string) string {
 
 func (a *App) resolveExternalMessageWhatsAppAccount(orgID uuid.UUID, contact *models.Contact, req CreateExternalMessageRequest) (*models.WhatsAppAccount, error) {
 	if req.PhoneNumberID != "" {
-		var account models.WhatsAppAccount
-		if err := a.DB.Where("organization_id = ? AND phone_id = ?", orgID, req.PhoneNumberID).First(&account).Error; err != nil {
-			return nil, fmt.Errorf("WhatsApp account not found for phone_number_id")
-		}
-		a.decryptAccountSecrets(&account)
-		return &account, nil
+		return a.resolveWhatsAppAccountByPhoneNumberID(orgID, req.PhoneNumberID)
 	}
 
 	accountName := req.WhatsAppAccount
@@ -1172,6 +1176,15 @@ func (a *App) resolveExternalMessageWhatsAppAccount(orgID uuid.UUID, contact *mo
 		accountName = contact.WhatsAppAccount
 	}
 	return a.resolveWhatsAppAccount(orgID, accountName)
+}
+
+func (a *App) resolveWhatsAppAccountByPhoneNumberID(orgID uuid.UUID, phoneNumberID string) (*models.WhatsAppAccount, error) {
+	var account models.WhatsAppAccount
+	if err := a.DB.Where("organization_id = ? AND phone_id = ?", orgID, phoneNumberID).First(&account).Error; err != nil {
+		return nil, fmt.Errorf("WhatsApp account not found for phone_number_id")
+	}
+	a.decryptAccountSecrets(&account)
+	return &account, nil
 }
 
 func resolveExternalTemplateMedia(req CreateExternalMessageRequest, template *models.Template, mediaURL, mediaMimeType, mediaFilename string) (string, string, string) {

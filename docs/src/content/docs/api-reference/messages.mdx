@@ -114,6 +114,8 @@ POST /api/messages/external
 - If `phone_number` is used, the contact is created automatically if needed
 - The message is stored with status `sent`
 - This endpoint does not call the WhatsApp API
+- A super admin API key can target another organization by adding `X-Organization-ID: <org-uuid>`
+- To record a template sent by another system, set `type` to `template`, send `template_name`, and optionally send `template_params`, `phone_number_id`, and template header media fields
 
 ### Response
 
@@ -134,6 +136,28 @@ POST /api/messages/external
 }
 ```
 
+### External Template Example
+
+```bash
+curl -X POST "http://your-server:8080/api/messages/external" \
+  -H "X-API-Key: whm_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contact_id": "9d7cb4e2-6e85-4f46-95bd-3ea4132c8123",
+    "phone_number_id": "116800811516809",
+    "type": "template",
+    "template_name": "credentials_v1",
+    "template_params": {
+      "name": "Nitin Jain",
+      "portal": "Income Tax"
+    },
+    "header_media_url": "https://cdn.example.com/template-header.jpg",
+    "header_media_mime_type": "image/jpeg",
+    "header_media_filename": "template-header.jpg",
+    "whatsapp_message_id": "wamid.external-template-123"
+  }'
+```
+
 ## Send Template Message
 
 Send a pre-approved template message.
@@ -148,6 +172,7 @@ POST /api/messages/template
 |-------|------|----------|-------------|
 | `contact_id` | string | One of contact_id or phone_number | UUID of existing contact |
 | `phone_number` | string | One of contact_id or phone_number | Phone number (creates contact if not exists) |
+| `phone_number_id` | string | No | Meta phone number ID used to resolve the WhatsApp account directly |
 | `template_name` | string | One of template_name or template_id | Name of the template |
 | `template_id` | string | One of template_name or template_id | UUID of the template |
 | `template_params` | object | No | Named or positional parameters |
@@ -172,6 +197,50 @@ curl -X POST "http://your-server:8080/api/messages/template" \
   "phone_number": "919876543210",
   "template_name": "hello_world"
 }
+```
+
+**External system minimal payload:**
+
+If an external system wants Whatomate to send the template directly, this is the simplest contract:
+
+```bash
+curl -X POST "http://your-server:8080/api/messages/template" \
+  -H "X-API-Key: whm_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phone_number": "919876543210",
+    "phone_number_id": "116800811516809",
+    "template_name": "credentials_v1",
+    "template_params": {
+      "name": "Nitin Jain",
+      "portal": "Income Tax"
+    }
+  }'
+```
+
+Notes:
+
+- `phone_number` is the recipient
+- `phone_number_id` tells Whatomate which WhatsApp account should send the template
+- `template_params` is optional and should contain the dynamic field values expected by the template
+- if the contact does not exist yet, Whatomate creates it automatically
+
+**With template header media URL:**
+
+```bash
+curl -X POST "http://your-server:8080/api/messages/template" \
+  -H "X-API-Key: whm_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phone_number": "919876543210",
+    "phone_number_id": "116800811516809",
+    "template_name": "credentials_v1",
+    "template_params": {
+      "name": "Nitin Jain",
+      "portal": "Income Tax"
+    },
+    "header_media_url": "https://cdn.example.com/template-header.jpg"
+  }'
 ```
 
 **With named parameters:**

@@ -210,6 +210,50 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		assert.Equal(t, account.Name, resp.Data.WhatsAppAccount)
 	})
 
+	t.Run("success with phone_number and phone_number_id", func(t *testing.T) {
+		t.Parallel()
+		mockServer := newMockWhatsAppServer()
+		defer mockServer.close()
+
+		app := newMsgTestApp(t, mockServer)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		account := createTestAccount(t, app, org.ID)
+		tpl := createTestTemplate(t, app, org.ID, account.Name)
+
+		req := testutil.NewJSONRequest(t, map[string]interface{}{
+			"phone_number":    "919876543210",
+			"phone_number_id": account.PhoneID,
+			"template_name":   tpl.Name,
+			"template_params": map[string]string{
+				"name":     "Diana",
+				"order_id": "ORD-55",
+			},
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+
+		err := app.SendTemplateMessage(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		var resp struct {
+			Data handlers.MessageResponse `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+		assert.Equal(t, account.Name, resp.Data.WhatsAppAccount)
+
+		var contact models.Contact
+		require.NoError(t, app.DB.Where("organization_id = ? AND phone_number = ?", org.ID, "919876543210").First(&contact).Error)
+		assert.Equal(t, account.Name, contact.WhatsAppAccount)
+
+		app.WaitForBackgroundTasks()
+
+		require.Len(t, mockServer.sentMessages, 1)
+		sentMsg := mockServer.sentMessages[0]
+		assert.Equal(t, "919876543210", sentMsg["to"])
+	})
+
 	t.Run("missing contact_id and phone_number", func(t *testing.T) {
 		t.Parallel()
 		app := newTestApp(t)
