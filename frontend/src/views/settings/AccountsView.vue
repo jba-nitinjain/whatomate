@@ -53,6 +53,8 @@ interface WhatsAppAccount {
   is_default_incoming: boolean
   is_default_outgoing: boolean
   auto_read_receipt: boolean
+  marketing_messages_lite_onboarded: boolean
+  marketing_messages_lite_enabled: boolean
   status: string
   has_access_token: boolean
   has_app_secret: boolean
@@ -110,7 +112,9 @@ const formData = ref({
   api_version: 'v21.0',
   is_default_incoming: false,
   is_default_outgoing: false,
-  auto_read_receipt: false
+  auto_read_receipt: false,
+  marketing_messages_lite_onboarded: false,
+  marketing_messages_lite_enabled: false
 })
 
 // Refetch data when organization changes
@@ -151,7 +155,9 @@ function openCreateDialog() {
     api_version: 'v21.0',
     is_default_incoming: false,
     is_default_outgoing: false,
-    auto_read_receipt: false
+    auto_read_receipt: false,
+    marketing_messages_lite_onboarded: false,
+    marketing_messages_lite_enabled: false
   }
   isDialogOpen.value = true
 }
@@ -169,7 +175,9 @@ function openEditDialog(account: WhatsAppAccount) {
     api_version: account.api_version,
     is_default_incoming: account.is_default_incoming,
     is_default_outgoing: account.is_default_outgoing,
-    auto_read_receipt: account.auto_read_receipt
+    auto_read_receipt: account.auto_read_receipt,
+    marketing_messages_lite_onboarded: account.marketing_messages_lite_onboarded,
+    marketing_messages_lite_enabled: account.marketing_messages_lite_enabled
   }
   isDialogOpen.value = true
 }
@@ -458,6 +466,14 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
                       <Check class="h-3 w-3 mr-1" />
                       {{ $t('accounts.autoReadReceipt') }}
                     </Badge>
+                    <Badge v-if="account.marketing_messages_lite_onboarded" variant="outline">
+                      <Check class="h-3 w-3 mr-1" />
+                      MM Lite onboarded
+                    </Badge>
+                    <Badge v-if="account.marketing_messages_lite_enabled" variant="outline">
+                      <Check class="h-3 w-3 mr-1" />
+                      MM Lite routing enabled
+                    </Badge>
                   </div>
 
                   <!-- Webhook Verify Token -->
@@ -720,6 +736,39 @@ const webhookUrl = window.location.origin + basePath + '/api/webhook'
                 :checked="formData.auto_read_receipt"
                 @update:checked="formData.auto_read_receipt = $event"
             />
+          </div>
+          <Separator />
+          <div class="rounded-lg border p-4 space-y-3">
+            <div>
+              <p class="text-sm font-medium">Marketing Messages Lite</p>
+              <p class="text-xs text-muted-foreground mt-1">
+                Use this only after Meta has approved and onboarded this WhatsApp Business Account for Marketing Messages Lite. It only applies to MARKETING templates.
+              </p>
+            </div>
+            <div class="flex items-center justify-between gap-4">
+              <Label for="marketing_messages_lite_onboarded" class="font-normal cursor-pointer">
+                I have completed Meta onboarding requirements
+              </Label>
+              <Switch
+                id="marketing_messages_lite_onboarded"
+                :checked="formData.marketing_messages_lite_onboarded"
+                @update:checked="formData.marketing_messages_lite_onboarded = $event; if (!$event) formData.marketing_messages_lite_enabled = false"
+              />
+            </div>
+            <div class="flex items-center justify-between gap-4">
+              <Label for="marketing_messages_lite_enabled" class="font-normal cursor-pointer">
+                Route MARKETING templates through MM Lite
+              </Label>
+              <Switch
+                id="marketing_messages_lite_enabled"
+                :checked="formData.marketing_messages_lite_enabled"
+                :disabled="!formData.marketing_messages_lite_onboarded"
+                @update:checked="formData.marketing_messages_lite_enabled = $event"
+              />
+            </div>
+            <p class="text-xs text-muted-foreground">
+              Other message categories continue to use the standard Cloud API template flow.
+            </p>
           </div>
         </div>
       </div>

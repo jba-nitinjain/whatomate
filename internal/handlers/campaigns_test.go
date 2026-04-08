@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
+	"github.com/xuri/excelize/v2"
 )
 
 // createTestCampaign creates a test campaign in the database.
@@ -726,6 +728,68 @@ func TestApp_CancelCampaign_AlreadyFinished(t *testing.T) {
 
 // --- ImportRecipients Tests ---
 
+func TestApp_ExportCampaignReport_Success(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	require.NoError(t, app.DB.Model(org).Update("settings", models.JSONB{"timezone": "Asia/Kolkata"}).Error)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("campaign-report")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("campaign-report-account"))
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusCompleted)
+
+	recipientOne := createTestRecipient(t, app, campaign.ID, "+1234567890", models.MessageStatusDelivered)
+	messageID := uuid.New()
+	sentAt := time.Date(2026, time.January, 2, 15, 4, 5, 0, time.UTC)
+	deliveredAt := sentAt.Add(2 * time.Minute)
+	require.NoError(t, app.DB.Model(recipientOne).Updates(map[string]interface{}{
+		"template_params":      models.JSONB{"name": "Alice"},
+		"sent_at":              sentAt,
+		"delivered_at":         deliveredAt,
+		"whats_app_message_id": "wamid.test-1",
+		"message_id":           messageID,
+	}).Error)
+	createTestRecipient(t, app, campaign.ID, "+1987654321", models.MessageStatusFailed)
+
+	req := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+
+	err := app.ExportCampaignReport(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	assert.Equal(t, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", string(req.RequestCtx.Response.Header.ContentType()))
+	assert.Contains(t, string(req.RequestCtx.Response.Header.Peek("Content-Disposition")), ".xlsx")
+
+	workbook, err := excelize.OpenReader(bytes.NewReader(testutil.GetResponseBody(req)))
+	require.NoError(t, err)
+	defer func() {
+		_ = workbook.Close()
+	}()
+
+	assert.ElementsMatch(t, []string{"Summary", "Recipients"}, workbook.GetSheetList())
+
+	nameCell, err := workbook.GetCellValue("Summary", "B3")
+	require.NoError(t, err)
+	assert.Equal(t, campaign.Name, nameCell)
+
+	phoneCell, err := workbook.GetCellValue("Recipients", "A2")
+	require.NoError(t, err)
+	assert.Equal(t, "+1234567890", phoneCell)
+
+	timezoneCell, err := workbook.GetCellValue("Summary", "B13")
+	require.NoError(t, err)
+	assert.Equal(t, "Asia/Kolkata", timezoneCell)
+
+	sentAtCell, err := workbook.GetCellValue("Recipients", "D2")
+	require.NoError(t, err)
+	assert.Equal(t, "2026-01-02 20:34:05", sentAtCell)
+
+	paramsCell, err := workbook.GetCellValue("Recipients", "J2")
+	require.NoError(t, err)
+	assert.Contains(t, paramsCell, "Alice")
+}
+
 func TestApp_ImportRecipients_Success(t *testing.T) {
 	mockQueue := testutil.NewMockQueue()
 	app := newTestApp(t, withQueue(mockQueue))
@@ -792,14 +856,110 @@ func TestApp_ImportRecipients_WithTemplateParams(t *testing.T) {
 	assert.NotNil(t, recipient.TemplateParams)
 }
 
-func TestApp_ImportRecipients_NotDraft(t *testing.T) {
+func TestApp_ImportRecipients_ProcessingCampaignQueuesNewRecipients(t *testing.T) {
 	mockQueue := testutil.NewMockQueue()
 	app := newTestApp(t, withQueue(mockQueue))
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("import-not-draft")), testutil.WithPassword("password"))
-	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("import-not-draft-account"))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("import-processing")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("import-processing-account"))
 	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
 	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusProcessing)
+
+	req := testutil.NewJSONRequest(t, map[string]interface{}{
+		"recipients": []map[string]interface{}{
+			{"phone_number": "+1234567890", "recipient_name": "Queued Recipient"},
+		},
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+
+	err := app.ImportRecipients(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	assert.Equal(t, 1, mockQueue.JobCount())
+
+	var resp struct {
+		Data struct {
+			SendStarted bool `json:"send_started"`
+			QueuedCount int  `json:"queued_count"`
+		} `json:"data"`
+	}
+	err = json.Unmarshal(testutil.GetResponseBody(req), &resp)
+	require.NoError(t, err)
+	assert.True(t, resp.Data.SendStarted)
+	assert.Equal(t, 1, resp.Data.QueuedCount)
+}
+
+func TestApp_ImportRecipients_PausedCampaignKeepsRecipientsPending(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("import-paused")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("import-paused-account"))
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusPaused)
+
+	req := testutil.NewJSONRequest(t, map[string]interface{}{
+		"recipients": []map[string]interface{}{
+			{"phone_number": "+1234567890"},
+		},
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+
+	err := app.ImportRecipients(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	assert.Equal(t, 0, mockQueue.JobCount())
+
+	var recipient models.BulkMessageRecipient
+	require.NoError(t, app.DB.Where("campaign_id = ?", campaign.ID).First(&recipient).Error)
+	assert.Equal(t, models.MessageStatusPending, recipient.Status)
+}
+
+func TestApp_ImportRecipients_CompletedCampaignRestartsSending(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("import-completed")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("import-completed-account"))
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusCompleted)
+	startedAt := time.Now().UTC().Add(-2 * time.Hour)
+	completedAt := time.Now().UTC().Add(-1 * time.Hour)
+	require.NoError(t, app.DB.Model(campaign).Updates(map[string]interface{}{
+		"started_at":   startedAt,
+		"completed_at": completedAt,
+	}).Error)
+
+	req := testutil.NewJSONRequest(t, map[string]interface{}{
+		"recipients": []map[string]interface{}{
+			{"phone_number": "+1234567890", "recipient_name": "Restart Recipient"},
+		},
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+
+	err := app.ImportRecipients(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	assert.Equal(t, 1, mockQueue.JobCount())
+
+	var updated models.BulkMessageCampaign
+	require.NoError(t, app.DB.First(&updated, "id = ?", campaign.ID).Error)
+	assert.Equal(t, models.CampaignStatusProcessing, updated.Status)
+	assert.Nil(t, updated.CompletedAt)
+	assert.NotNil(t, updated.StartedAt)
+}
+
+func TestApp_ImportRecipients_CancelledCampaignRejected(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("import-cancelled")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("import-cancelled-account"))
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusCancelled)
 
 	req := testutil.NewJSONRequest(t, map[string]interface{}{
 		"recipients": []map[string]interface{}{

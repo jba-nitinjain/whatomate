@@ -92,6 +92,7 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 	pg := parsePagination(r)
 	search := string(r.RequestCtx.QueryArgs().Peek("search"))
 	tagsParam := string(r.RequestCtx.QueryArgs().Peek("tags"))
+	unreadOnly := parseTruthyQueryArg(string(r.RequestCtx.QueryArgs().Peek("unread_only")))
 
 	var contacts []models.Contact
 	query := a.ScopeToOrg(a.DB, userID, orgID)
@@ -130,6 +131,20 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 		if len(conditions) > 0 {
 			query = query.Where("("+strings.Join(conditions, " OR ")+")", args...)
 		}
+	}
+
+	if unreadOnly {
+		query = query.Where(
+			`EXISTS (
+				SELECT 1
+				FROM messages
+				WHERE messages.contact_id = contacts.id
+				  AND messages.direction = ?
+				  AND messages.status != ?
+			)`,
+			models.DirectionIncoming,
+			models.MessageStatusRead,
+		)
 	}
 
 	// Order by last message time (most recent first)
@@ -199,6 +214,15 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 		"page":     pg.Page,
 		"limit":    pg.Limit,
 	})
+}
+
+func parseTruthyQueryArg(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // GetContact returns a single contact
@@ -519,11 +543,11 @@ type SendMessageRequest struct {
 
 // InteractiveContent holds interactive message data
 type InteractiveContent struct {
-	Type       string           `json:"type"`                  // "button", "list", "cta_url"
-	Body       string           `json:"body"`                  // Body text
-	Buttons    []ButtonContent  `json:"buttons,omitempty"`     // For button type
-	ButtonText string           `json:"button_text,omitempty"` // For cta_url type
-	URL        string           `json:"url,omitempty"`         // For cta_url type
+	Type       string          `json:"type"`                  // "button", "list", "cta_url"
+	Body       string          `json:"body"`                  // Body text
+	Buttons    []ButtonContent `json:"buttons,omitempty"`     // For button type
+	ButtonText string          `json:"button_text,omitempty"` // For cta_url type
+	URL        string          `json:"url,omitempty"`         // For cta_url type
 }
 
 // ButtonContent represents a button in interactive messages

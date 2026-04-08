@@ -33,25 +33,25 @@ type CampaignRequest struct {
 
 // CampaignResponse represents campaign in API responses
 type CampaignResponse struct {
-	ID                    uuid.UUID             `json:"id"`
-	Name                  string                `json:"name"`
-	WhatsAppAccount       string                `json:"whatsapp_account"`
-	TemplateID            uuid.UUID             `json:"template_id"`
-	TemplateName          string                `json:"template_name,omitempty"`
-	HeaderMediaID         string                `json:"header_media_id,omitempty"`
-	HeaderMediaFilename   string                `json:"header_media_filename,omitempty"`
-	HeaderMediaMimeType   string                `json:"header_media_mime_type,omitempty"`
-	Status                models.CampaignStatus `json:"status"`
-	TotalRecipients int                  `json:"total_recipients"`
-	SentCount       int                  `json:"sent_count"`
-	DeliveredCount  int                  `json:"delivered_count"`
-	ReadCount       int                  `json:"read_count"`
-	FailedCount     int                  `json:"failed_count"`
-	ScheduledAt     *time.Time           `json:"scheduled_at,omitempty"`
-	StartedAt       *time.Time           `json:"started_at,omitempty"`
-	CompletedAt     *time.Time           `json:"completed_at,omitempty"`
-	CreatedAt       time.Time            `json:"created_at"`
-	UpdatedAt       time.Time            `json:"updated_at"`
+	ID                  uuid.UUID             `json:"id"`
+	Name                string                `json:"name"`
+	WhatsAppAccount     string                `json:"whatsapp_account"`
+	TemplateID          uuid.UUID             `json:"template_id"`
+	TemplateName        string                `json:"template_name,omitempty"`
+	HeaderMediaID       string                `json:"header_media_id,omitempty"`
+	HeaderMediaFilename string                `json:"header_media_filename,omitempty"`
+	HeaderMediaMimeType string                `json:"header_media_mime_type,omitempty"`
+	Status              models.CampaignStatus `json:"status"`
+	TotalRecipients     int                   `json:"total_recipients"`
+	SentCount           int                   `json:"sent_count"`
+	DeliveredCount      int                   `json:"delivered_count"`
+	ReadCount           int                   `json:"read_count"`
+	FailedCount         int                   `json:"failed_count"`
+	ScheduledAt         *time.Time            `json:"scheduled_at,omitempty"`
+	StartedAt           *time.Time            `json:"started_at,omitempty"`
+	CompletedAt         *time.Time            `json:"completed_at,omitempty"`
+	CreatedAt           time.Time             `json:"created_at"`
+	UpdatedAt           time.Time             `json:"updated_at"`
 }
 
 // RecipientRequest represents recipient import request
@@ -182,7 +182,7 @@ func (a *App) CreateCampaign(r *fastglue.Request) error {
 		WhatsAppAccount: req.WhatsAppAccount,
 		Name:            req.Name,
 		TemplateID:      templateID,
-		HeaderMediaID:  req.HeaderMediaID,
+		HeaderMediaID:   req.HeaderMediaID,
 		Status:          models.CampaignStatusDraft,
 		ScheduledAt:     req.ScheduledAt,
 		CreatedBy:       userID,
@@ -685,8 +685,15 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 		return nil
 	}
 
-	if campaign.Status != models.CampaignStatusDraft {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Can only add recipients to draft campaigns", nil, "")
+	if !canImportRecipientsToCampaign(campaign.Status) {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot add recipients to campaign in current state", nil, "")
+	}
+
+	autoQueueRecipients := shouldAutoQueueImportedRecipients(campaign.Status)
+	if autoQueueRecipients {
+		if err := a.validateCampaignReadyForStart(campaign); err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+		}
 	}
 
 	var req CampaignRecipientImportRequest
@@ -777,12 +784,23 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 	a.DB.Model(&models.BulkMessageRecipient{}).Where("campaign_id = ?", id).Count(&totalCount)
 	a.DB.Model(campaign).Update("total_recipients", totalCount)
 
+	queuedCount := 0
+	if autoQueueRecipients {
+		if err := a.enqueueImportedCampaignRecipients(r.RequestCtx, campaign, recipients, time.Now()); err != nil {
+			a.Log.Error("Failed to queue imported recipients", "error", err, "campaign_id", id)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to queue recipients", nil, "")
+		}
+		queuedCount = len(recipients)
+	}
+
 	a.Log.Info("Recipients added to campaign", "campaign_id", id, "count", len(recipients))
 
 	return r.SendEnvelope(map[string]interface{}{
 		"message":          "Recipients added successfully",
 		"added_count":      len(recipients),
 		"total_recipients": totalCount,
+		"queued_count":     queuedCount,
+		"send_started":     autoQueueRecipients,
 	})
 }
 
@@ -827,6 +845,88 @@ func normalizeCampaignRecipientPhone(phone string) string {
 	phone = strings.TrimSpace(phone)
 	phone = strings.TrimPrefix(phone, "+")
 	return phone
+}
+
+func canImportRecipientsToCampaign(status models.CampaignStatus) bool {
+	switch status {
+	case models.CampaignStatusDraft,
+		models.CampaignStatusScheduled,
+		models.CampaignStatusQueued,
+		models.CampaignStatusProcessing,
+		models.CampaignStatusPaused,
+		models.CampaignStatusCompleted,
+		models.CampaignStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldAutoQueueImportedRecipients(status models.CampaignStatus) bool {
+	switch status {
+	case models.CampaignStatusQueued,
+		models.CampaignStatusProcessing,
+		models.CampaignStatusCompleted,
+		models.CampaignStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) enqueueImportedCampaignRecipients(ctx context.Context, campaign *models.BulkMessageCampaign, recipients []models.BulkMessageRecipient, now time.Time) error {
+	originalStatus := campaign.Status
+	updates := map[string]interface{}{
+		"status": models.CampaignStatusProcessing,
+	}
+	if originalStatus == models.CampaignStatusCompleted || originalStatus == models.CampaignStatusFailed {
+		updates["started_at"] = now
+		updates["completed_at"] = nil
+	} else if campaign.StartedAt == nil {
+		updates["started_at"] = now
+	}
+
+	if err := a.DB.Model(campaign).Updates(updates).Error; err != nil {
+		return err
+	}
+
+	jobs := make([]*queue.RecipientJob, len(recipients))
+	for i, recipient := range recipients {
+		jobs[i] = &queue.RecipientJob{
+			CampaignID:     campaign.ID,
+			RecipientID:    recipient.ID,
+			OrganizationID: campaign.OrganizationID,
+			PhoneNumber:    recipient.PhoneNumber,
+			RecipientName:  recipient.RecipientName,
+			TemplateParams: recipient.TemplateParams,
+		}
+	}
+
+	if err := a.Queue.EnqueueRecipients(ctx, jobs); err != nil {
+		revert := map[string]interface{}{
+			"status": originalStatus,
+		}
+		if campaign.StartedAt != nil {
+			revert["started_at"] = *campaign.StartedAt
+		} else {
+			revert["started_at"] = nil
+		}
+		if campaign.CompletedAt != nil {
+			revert["completed_at"] = *campaign.CompletedAt
+		} else {
+			revert["completed_at"] = nil
+		}
+		a.DB.Model(campaign).Updates(revert)
+		return err
+	}
+
+	campaign.Status = models.CampaignStatusProcessing
+	if originalStatus == models.CampaignStatusCompleted || originalStatus == models.CampaignStatusFailed || campaign.StartedAt == nil {
+		startedAt := now
+		campaign.StartedAt = &startedAt
+	}
+	campaign.CompletedAt = nil
+	return nil
 }
 
 func (a *App) loadCampaignImportContacts(orgID uuid.UUID, contactIDs []string, tagNames []string) ([]models.Contact, error) {
@@ -1016,7 +1116,7 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 		"video/mp4": true, "video/3gpp": true,
 		"audio/aac": true, "audio/mp4": true, "audio/mpeg": true, "audio/ogg": true,
 		"application/pdf": true, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true,
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   true,
 		"application/vnd.openxmlformats-officedocument.presentationml.presentation": true,
 	}
 	if !allowedMIME[mimeType] {
@@ -1285,4 +1385,3 @@ func sanitizeFilename(name string) string {
 	}
 	return name
 }
-

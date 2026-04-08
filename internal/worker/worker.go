@@ -51,7 +51,6 @@ func New(cfg *config.Config, db *gorm.DB, rdb *redis.Client, log logf.Logger) (*
 	}, nil
 }
 
-
 // Run starts the worker and processes jobs until context is cancelled
 func (w *Worker) Run(ctx context.Context) error {
 	w.Log.Info("Worker starting")
@@ -124,6 +123,7 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 		},
 	}
 	if campaign.Template != nil {
+		message.Metadata["delivery_route"] = string(models.ResolveTemplateDeliveryRoute(&account, campaign.Template))
 		message.TemplateName = campaign.Template.Name
 		content := templateutil.ReplaceWithJSONBParams(campaign.Template.BodyContent, campaign.Template.BodyContent, job.TemplateParams)
 		message.Content = content
@@ -253,6 +253,11 @@ func (w *Worker) sendTemplateMessage(ctx context.Context, account *models.WhatsA
 	// Use the shared component builder (same as chat template sending)
 	components := whatsapp.BuildTemplateComponents(bodyParams, buttonParams, template.Buttons, template.HeaderType, campaignHeaderMediaID)
 
+	route := models.ResolveTemplateDeliveryRoute(account, template)
+	if route == models.TemplateDeliveryRouteMarketingMessagesLite {
+		return w.WhatsApp.SendMarketingTemplateMessage(ctx, waAccount, recipient.PhoneNumber, template.Name, template.Language, components)
+	}
+
 	return w.WhatsApp.SendTemplateMessage(ctx, waAccount, recipient.PhoneNumber, template.Name, template.Language, components)
 }
 
@@ -272,4 +277,3 @@ func (w *Worker) Close() error {
 	}
 	return nil
 }
-

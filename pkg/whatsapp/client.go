@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/zerodha/logf"
@@ -365,6 +366,9 @@ func (c *Client) SendImageMessage(ctx context.Context, account *Account, phoneNu
 
 // SendDocumentMessage sends a document message using a media ID
 func (c *Client) SendDocumentMessage(ctx context.Context, account *Account, phoneNumber, mediaID, filename, caption string) (string, error) {
+	if strings.TrimSpace(filename) == "" {
+		filename = "document"
+	}
 	return c.sendMediaMessage(ctx, account, phoneNumber, "document", map[string]interface{}{
 		"id": mediaID, "filename": filename, "caption": caption,
 	})

@@ -18,38 +18,42 @@ import (
 
 // AccountRequest represents the request body for creating/updating an account
 type AccountRequest struct {
-	Name               string `json:"name" validate:"required"`
-	AppID              string `json:"app_id"`
-	PhoneID            string `json:"phone_id" validate:"required"`
-	BusinessID         string `json:"business_id" validate:"required"`
-	AccessToken        string `json:"access_token" validate:"required"`
-	AppSecret          string `json:"app_secret"` // Meta App Secret for webhook signature verification
-	WebhookVerifyToken string `json:"webhook_verify_token"`
-	APIVersion         string `json:"api_version"`
-	IsDefaultIncoming  bool   `json:"is_default_incoming"`
-	IsDefaultOutgoing  bool   `json:"is_default_outgoing"`
-	AutoReadReceipt    bool   `json:"auto_read_receipt"`
+	Name                           string `json:"name" validate:"required"`
+	AppID                          string `json:"app_id"`
+	PhoneID                        string `json:"phone_id" validate:"required"`
+	BusinessID                     string `json:"business_id" validate:"required"`
+	AccessToken                    string `json:"access_token" validate:"required"`
+	AppSecret                      string `json:"app_secret"` // Meta App Secret for webhook signature verification
+	WebhookVerifyToken             string `json:"webhook_verify_token"`
+	APIVersion                     string `json:"api_version"`
+	IsDefaultIncoming              bool   `json:"is_default_incoming"`
+	IsDefaultOutgoing              bool   `json:"is_default_outgoing"`
+	AutoReadReceipt                bool   `json:"auto_read_receipt"`
+	MarketingMessagesLiteOnboarded bool   `json:"marketing_messages_lite_onboarded"`
+	MarketingMessagesLiteEnabled   bool   `json:"marketing_messages_lite_enabled"`
 }
 
 // AccountResponse represents the response for an account (without sensitive data)
 type AccountResponse struct {
-	ID                 uuid.UUID `json:"id"`
-	Name               string    `json:"name"`
-	AppID              string    `json:"app_id"`
-	PhoneID            string    `json:"phone_id"`
-	BusinessID         string    `json:"business_id"`
-	WebhookVerifyToken string    `json:"webhook_verify_token"`
-	APIVersion         string    `json:"api_version"`
-	IsDefaultIncoming  bool      `json:"is_default_incoming"`
-	IsDefaultOutgoing  bool      `json:"is_default_outgoing"`
-	AutoReadReceipt    bool      `json:"auto_read_receipt"`
-	Status             string    `json:"status"`
-	HasAccessToken     bool      `json:"has_access_token"`
-	HasAppSecret       bool      `json:"has_app_secret"`
-	PhoneNumber        string    `json:"phone_number,omitempty"`
-	DisplayName        string    `json:"display_name,omitempty"`
-	CreatedAt          string    `json:"created_at"`
-	UpdatedAt          string    `json:"updated_at"`
+	ID                             uuid.UUID `json:"id"`
+	Name                           string    `json:"name"`
+	AppID                          string    `json:"app_id"`
+	PhoneID                        string    `json:"phone_id"`
+	BusinessID                     string    `json:"business_id"`
+	WebhookVerifyToken             string    `json:"webhook_verify_token"`
+	APIVersion                     string    `json:"api_version"`
+	IsDefaultIncoming              bool      `json:"is_default_incoming"`
+	IsDefaultOutgoing              bool      `json:"is_default_outgoing"`
+	AutoReadReceipt                bool      `json:"auto_read_receipt"`
+	MarketingMessagesLiteOnboarded bool      `json:"marketing_messages_lite_onboarded"`
+	MarketingMessagesLiteEnabled   bool      `json:"marketing_messages_lite_enabled"`
+	Status                         string    `json:"status"`
+	HasAccessToken                 bool      `json:"has_access_token"`
+	HasAppSecret                   bool      `json:"has_app_secret"`
+	PhoneNumber                    string    `json:"phone_number,omitempty"`
+	DisplayName                    string    `json:"display_name,omitempty"`
+	CreatedAt                      string    `json:"created_at"`
+	UpdatedAt                      string    `json:"updated_at"`
 }
 
 // ListAccounts returns all WhatsApp accounts for the organization
@@ -92,6 +96,9 @@ func (a *App) CreateAccount(r *fastglue.Request) error {
 	if req.Name == "" || req.PhoneID == "" || req.BusinessID == "" || req.AccessToken == "" {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Name, phone_id, business_id, and access_token are required", nil, "")
 	}
+	if req.MarketingMessagesLiteEnabled && !req.MarketingMessagesLiteOnboarded {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Marketing Messages Lite routing can only be enabled after onboarding requirements are confirmed", nil, "")
+	}
 
 	// Generate webhook verify token if not provided
 	webhookVerifyToken := req.WebhookVerifyToken
@@ -118,19 +125,21 @@ func (a *App) CreateAccount(r *fastglue.Request) error {
 	}
 
 	account := models.WhatsAppAccount{
-		OrganizationID:     orgID,
-		Name:               req.Name,
-		AppID:              req.AppID,
-		PhoneID:            req.PhoneID,
-		BusinessID:         req.BusinessID,
-		AccessToken:        encAccessToken,
-		AppSecret:          encAppSecret,
-		WebhookVerifyToken: webhookVerifyToken,
-		APIVersion:         apiVersion,
-		IsDefaultIncoming:  req.IsDefaultIncoming,
-		IsDefaultOutgoing:  req.IsDefaultOutgoing,
-		AutoReadReceipt:    req.AutoReadReceipt,
-		Status:             "active",
+		OrganizationID:                 orgID,
+		Name:                           req.Name,
+		AppID:                          req.AppID,
+		PhoneID:                        req.PhoneID,
+		BusinessID:                     req.BusinessID,
+		AccessToken:                    encAccessToken,
+		AppSecret:                      encAppSecret,
+		WebhookVerifyToken:             webhookVerifyToken,
+		APIVersion:                     apiVersion,
+		IsDefaultIncoming:              req.IsDefaultIncoming,
+		IsDefaultOutgoing:              req.IsDefaultOutgoing,
+		AutoReadReceipt:                req.AutoReadReceipt,
+		MarketingMessagesLiteOnboarded: req.MarketingMessagesLiteOnboarded,
+		MarketingMessagesLiteEnabled:   req.MarketingMessagesLiteEnabled,
+		Status:                         "active",
 	}
 
 	// If this is set as default, unset other defaults
@@ -230,7 +239,12 @@ func (a *App) UpdateAccount(r *fastglue.Request) error {
 	if req.APIVersion != "" {
 		account.APIVersion = req.APIVersion
 	}
+	if req.MarketingMessagesLiteEnabled && !req.MarketingMessagesLiteOnboarded {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Marketing Messages Lite routing can only be enabled after onboarding requirements are confirmed", nil, "")
+	}
 	account.AutoReadReceipt = req.AutoReadReceipt
+	account.MarketingMessagesLiteOnboarded = req.MarketingMessagesLiteOnboarded
+	account.MarketingMessagesLiteEnabled = req.MarketingMessagesLiteEnabled
 
 	// Handle default flags
 	if req.IsDefaultIncoming && !account.IsDefaultIncoming {
@@ -379,21 +393,23 @@ func (a *App) TestAccountConnection(r *fastglue.Request) error {
 
 func accountToResponse(acc models.WhatsAppAccount) AccountResponse {
 	return AccountResponse{
-		ID:                 acc.ID,
-		Name:               acc.Name,
-		AppID:              acc.AppID,
-		PhoneID:            acc.PhoneID,
-		BusinessID:         acc.BusinessID,
-		WebhookVerifyToken: acc.WebhookVerifyToken,
-		APIVersion:         acc.APIVersion,
-		IsDefaultIncoming:  acc.IsDefaultIncoming,
-		IsDefaultOutgoing:  acc.IsDefaultOutgoing,
-		AutoReadReceipt:    acc.AutoReadReceipt,
-		Status:             acc.Status,
-		HasAccessToken:     acc.AccessToken != "",
-		HasAppSecret:       acc.AppSecret != "",
-		CreatedAt:          acc.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:          acc.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		ID:                             acc.ID,
+		Name:                           acc.Name,
+		AppID:                          acc.AppID,
+		PhoneID:                        acc.PhoneID,
+		BusinessID:                     acc.BusinessID,
+		WebhookVerifyToken:             acc.WebhookVerifyToken,
+		APIVersion:                     acc.APIVersion,
+		IsDefaultIncoming:              acc.IsDefaultIncoming,
+		IsDefaultOutgoing:              acc.IsDefaultOutgoing,
+		AutoReadReceipt:                acc.AutoReadReceipt,
+		MarketingMessagesLiteOnboarded: acc.MarketingMessagesLiteOnboarded,
+		MarketingMessagesLiteEnabled:   acc.MarketingMessagesLiteEnabled,
+		Status:                         acc.Status,
+		HasAccessToken:                 acc.AccessToken != "",
+		HasAppSecret:                   acc.AppSecret != "",
+		CreatedAt:                      acc.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:                      acc.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 }
 

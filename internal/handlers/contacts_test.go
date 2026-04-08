@@ -198,6 +198,56 @@ func TestApp_ListContacts(t *testing.T) {
 		assert.Equal(t, 1, resp.Data.Page)
 		assert.Equal(t, 50, resp.Data.Limit)
 	})
+
+	t.Run("filter unread only", func(t *testing.T) {
+		app := newTestApp(t)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+		unreadContact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithPhoneNumber("+1111111111"))
+		readContact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithPhoneNumber("+2222222222"))
+
+		require.NoError(t, app.DB.Create(&models.Message{
+			BaseModel:       models.BaseModel{ID: uuid.New()},
+			OrganizationID:  org.ID,
+			WhatsAppAccount: account.Name,
+			ContactID:       unreadContact.ID,
+			Direction:       models.DirectionIncoming,
+			MessageType:     models.MessageTypeText,
+			Content:         "Unread",
+			Status:          models.MessageStatusDelivered,
+		}).Error)
+		require.NoError(t, app.DB.Create(&models.Message{
+			BaseModel:       models.BaseModel{ID: uuid.New()},
+			OrganizationID:  org.ID,
+			WhatsAppAccount: account.Name,
+			ContactID:       readContact.ID,
+			Direction:       models.DirectionIncoming,
+			MessageType:     models.MessageTypeText,
+			Content:         "Read",
+			Status:          models.MessageStatusRead,
+		}).Error)
+
+		req := testutil.NewGETRequest(t)
+		testutil.SetAuthContext(req, org.ID, user.ID)
+		testutil.SetQueryParam(req, "unread_only", "true")
+
+		err := app.ListContacts(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		var resp struct {
+			Data struct {
+				Contacts []handlers.ContactResponse `json:"contacts"`
+				Total    int64                      `json:"total"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+		require.Len(t, resp.Data.Contacts, 1)
+		assert.Equal(t, unreadContact.ID, resp.Data.Contacts[0].ID)
+		assert.Equal(t, int64(1), resp.Data.Total)
+	})
 }
 
 // --- GetContact Tests ---

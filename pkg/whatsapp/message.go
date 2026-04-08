@@ -455,3 +455,11 @@ func (c *Client) SendTemplateMessage(ctx context.Context, account *Account, phon
 	c.Log.Info("Template message sent", "message_id", messageID, "phone", phoneNumber, "template", templateName)
 	return messageID, nil
 }
+
+// SendMarketingTemplateMessage sends a marketing template through the MM Lite-compatible path.
+// Meta currently documents MM Lite as an onboarding/routing layer for marketing templates,
+// so the payload remains a standard WhatsApp template message.
+func (c *Client) SendMarketingTemplateMessage(ctx context.Context, account *Account, phoneNumber, templateName, languageCode string, components []map[string]interface{}) (string, error) {
+	c.Log.Info("Sending marketing template message", "phone", phoneNumber, "template", templateName, "route", "marketing_messages_lite")
+	return c.SendTemplateMessage(ctx, account, phoneNumber, templateName, languageCode, components)
+}

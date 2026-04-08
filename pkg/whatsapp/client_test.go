@@ -464,6 +464,38 @@ func TestClient_SendDocumentMessage(t *testing.T) {
 	assert.Equal(t, "wamid.doc123", msgID)
 }
 
+func TestClient_SendDocumentMessage_DefaultFilenameFallback(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+
+		assert.Equal(t, "document", body["type"])
+		doc := body["document"].(map[string]interface{})
+		assert.Equal(t, "media456", doc["id"])
+		assert.Equal(t, "document", doc["filename"])
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"messages": []map[string]string{{"id": "wamid.doc123"}},
+		})
+	}))
+	defer server.Close()
+
+	log := testutil.NopLogger()
+	client := whatsapp.NewWithTimeout(log, 5*time.Second)
+	client.HTTPClient = &http.Client{
+		Transport: &testServerTransport{serverURL: server.URL},
+	}
+
+	account := testAccount(server.URL)
+	msgID, err := client.SendDocumentMessage(t.Context(), account, "1234567890", "media456", "", "")
+
+	require.NoError(t, err)
+	assert.Equal(t, "wamid.doc123", msgID)
+}
+
 // testServerTransport redirects all requests to the test server
 type testServerTransport struct {
 	serverURL string

@@ -14,13 +14,13 @@ import (
 	"github.com/shridarpatil/whatomate/internal/assignment"
 	"github.com/shridarpatil/whatomate/internal/calling"
 	"github.com/shridarpatil/whatomate/internal/config"
-	"github.com/shridarpatil/whatomate/internal/storage"
-	"github.com/shridarpatil/whatomate/internal/tts"
 	"github.com/shridarpatil/whatomate/internal/database"
 	"github.com/shridarpatil/whatomate/internal/frontend"
 	"github.com/shridarpatil/whatomate/internal/handlers"
 	"github.com/shridarpatil/whatomate/internal/middleware"
 	"github.com/shridarpatil/whatomate/internal/queue"
+	"github.com/shridarpatil/whatomate/internal/storage"
+	"github.com/shridarpatil/whatomate/internal/tts"
 	"github.com/shridarpatil/whatomate/internal/websocket"
 	"github.com/shridarpatil/whatomate/internal/worker"
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
@@ -258,11 +258,11 @@ func runServer(args []string) {
 
 	// Create server with CORS wrapper
 	server := &fasthttp.Server{
-		Handler:      corsWrapper(g.Handler(), allowedOrigins),
-		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
-		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		Handler:            corsWrapper(g.Handler(), allowedOrigins),
+		ReadTimeout:        time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout:       time.Duration(cfg.Server.WriteTimeout) * time.Second,
 		MaxRequestBodySize: 15 * 1024 * 1024,
-		Name:         "Whatomate",
+		Name:               "Whatomate",
 	}
 
 	// Start server in goroutine
@@ -670,6 +670,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/campaigns/{id}/cancel", app.CancelCampaign)
 	g.POST("/api/campaigns/{id}/retry-failed", app.RetryFailed)
 	g.GET("/api/campaigns/{id}/progress", app.GetCampaign)
+	g.GET("/api/campaigns/{id}/report.xlsx", app.ExportCampaignReport)
 	g.POST("/api/campaigns/{id}/recipients/import", app.ImportRecipients)
 	g.GET("/api/campaigns/{id}/recipients", app.GetCampaignRecipients)
 	g.DELETE("/api/campaigns/{id}/recipients/{recipientId}", app.DeleteCampaignRecipient)

@@ -190,6 +190,10 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 				return "", fmt.Errorf("template is required for template messages")
 			}
 			components := whatsapp.BuildTemplateComponents(req.BodyParams, req.ButtonParams, req.Template.Buttons, req.Template.HeaderType, req.HeaderMediaID)
+			route := models.ResolveTemplateDeliveryRoute(req.Account, req.Template)
+			if route == models.TemplateDeliveryRouteMarketingMessagesLite {
+				return a.WhatsApp.SendMarketingTemplateMessage(sendCtx, waAccount, req.Contact.PhoneNumber, req.Template.Name, req.Template.Language, components)
+			}
 			return a.WhatsApp.SendTemplateMessage(sendCtx, waAccount, req.Contact.PhoneNumber, req.Template.Name, req.Template.Language, components)
 
 		case models.MessageTypeFlow:
@@ -282,8 +286,9 @@ func (a *App) createOutgoingMessage(req OutgoingMessageRequest, opts MessageSend
 			msg.Content = content
 			msg.TemplateName = req.Template.Name
 			msg.Metadata = models.JSONB{
-				"template_name": req.Template.Name,
-				"template_id":   req.Template.ID.String(),
+				"template_name":  req.Template.Name,
+				"template_id":    req.Template.ID.String(),
+				"delivery_route": string(models.ResolveTemplateDeliveryRoute(req.Account, req.Template)),
 			}
 			// Store header media so it renders in the chat bubble
 			if req.MediaURL != "" {
@@ -840,30 +845,30 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 // CreateExternalMessageRequest represents an externally-sourced outgoing message
 // that should be persisted without calling the WhatsApp API.
 type CreateExternalMessageRequest struct {
-	ContactID         string             `json:"contact_id"`
-	PhoneNumber       string             `json:"phone_number"`
-	PhoneNumberID     string             `json:"phone_number_id"`
-	ProfileName       string             `json:"profile_name"`
-	WhatsAppAccount   string             `json:"whatsapp_account"`
-	Type              models.MessageType `json:"type"`
-	Content           struct {
+	ContactID       string             `json:"contact_id"`
+	PhoneNumber     string             `json:"phone_number"`
+	PhoneNumberID   string             `json:"phone_number_id"`
+	ProfileName     string             `json:"profile_name"`
+	WhatsAppAccount string             `json:"whatsapp_account"`
+	Type            models.MessageType `json:"type"`
+	Content         struct {
 		Body string `json:"body"`
 	} `json:"content"`
-	MediaURL          string             `json:"media_url"`
-	MediaMimeType     string             `json:"media_mime_type"`
-	MediaFilename     string             `json:"media_filename"`
-	HeaderMediaURL    string             `json:"header_media_url"`
-	HeaderMediaMimeType string           `json:"header_media_mime_type"`
-	HeaderMediaFilename string           `json:"header_media_filename"`
-	InteractiveData   models.JSONB `json:"interactive_data"`
-	TemplateName      string             `json:"template_name"`
-	TemplateParams    models.JSONB `json:"template_params"`
-	FlowResponse      models.JSONB `json:"flow_response"`
-	Metadata          models.JSONB `json:"metadata"`
-	WhatsAppMessageID string             `json:"whatsapp_message_id"`
-	ExternalMessageID string             `json:"external_message_id"`
-	ReplyToMessageID  string             `json:"reply_to_message_id"`
-	SentAt            *time.Time         `json:"sent_at"`
+	MediaURL            string       `json:"media_url"`
+	MediaMimeType       string       `json:"media_mime_type"`
+	MediaFilename       string       `json:"media_filename"`
+	HeaderMediaURL      string       `json:"header_media_url"`
+	HeaderMediaMimeType string       `json:"header_media_mime_type"`
+	HeaderMediaFilename string       `json:"header_media_filename"`
+	InteractiveData     models.JSONB `json:"interactive_data"`
+	TemplateName        string       `json:"template_name"`
+	TemplateParams      models.JSONB `json:"template_params"`
+	FlowResponse        models.JSONB `json:"flow_response"`
+	Metadata            models.JSONB `json:"metadata"`
+	WhatsAppMessageID   string       `json:"whatsapp_message_id"`
+	ExternalMessageID   string       `json:"external_message_id"`
+	ReplyToMessageID    string       `json:"reply_to_message_id"`
+	SentAt              *time.Time   `json:"sent_at"`
 }
 
 // CreateExternalMessage persists an outbound message record from an external source
@@ -1275,4 +1280,3 @@ func templateHasRenderableHeaderMedia(template *models.Template) bool {
 		return false
 	}
 }
-

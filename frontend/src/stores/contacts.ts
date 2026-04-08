@@ -79,6 +79,7 @@ export const useContactsStore = defineStore('contacts', () => {
   const hasMoreMessages = ref(false)
   const searchQuery = ref('')
   const selectedTags = ref<string[]>([])
+  const showUnreadOnly = ref(false)
   const replyingTo = ref<Message | null>(null)
   const accountFilter = ref<string | null>(null)
 
@@ -90,9 +91,13 @@ export const useContactsStore = defineStore('contacts', () => {
   const hasMoreContacts = computed(() => contacts.value.length < contactsTotal.value)
 
   const filteredContacts = computed(() => {
-    if (!searchQuery.value) return contacts.value
+    let filtered = contacts.value
+    if (showUnreadOnly.value) {
+      filtered = filtered.filter(contact => contact.unread_count > 0)
+    }
+    if (!searchQuery.value) return filtered
     const query = searchQuery.value.toLowerCase()
-    return contacts.value.filter(c =>
+    return filtered.filter(c =>
       c.name.toLowerCase().includes(query) ||
       c.phone_number.includes(query) ||
       (c.profile_name?.toLowerCase().includes(query))
@@ -107,7 +112,7 @@ export const useContactsStore = defineStore('contacts', () => {
     })
   })
 
-  async function fetchContacts(params?: { search?: string; page?: number; limit?: number; tags?: string }) {
+  async function fetchContacts(params?: { search?: string; page?: number; limit?: number; tags?: string; unread_only?: boolean }) {
     isLoading.value = true
     try {
       const tagsParam = selectedTags.value.length > 0 ? selectedTags.value.join(',') : undefined
@@ -115,6 +120,7 @@ export const useContactsStore = defineStore('contacts', () => {
         page: 1,
         limit: contactsLimit.value,
         tags: tagsParam,
+        unread_only: showUnreadOnly.value || undefined,
         ...params
       })
       // API returns { status: "success", data: { contacts: [...], total: number } }
@@ -139,7 +145,8 @@ export const useContactsStore = defineStore('contacts', () => {
       const response = await contactsService.list({
         page: nextPage,
         limit: contactsLimit.value,
-        tags: tagsParam
+        tags: tagsParam,
+        unread_only: showUnreadOnly.value || undefined
       })
       const data = response.data.data || response.data
       const newContacts = data.contacts || []
@@ -345,6 +352,7 @@ export const useContactsStore = defineStore('contacts', () => {
     hasMoreMessages,
     searchQuery,
     selectedTags,
+    showUnreadOnly,
     replyingTo,
     accountFilter,
     filteredContacts,

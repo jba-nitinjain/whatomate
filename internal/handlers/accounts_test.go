@@ -180,17 +180,19 @@ func TestApp_CreateAccount_WithOptionalFields(t *testing.T) {
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 
 	req := testutil.NewJSONRequest(t, map[string]interface{}{
-		"name":                 "Full Account",
-		"phone_id":             "111222333",
-		"business_id":          "444555666",
-		"access_token":         "my-token",
-		"app_id":               "my-app-id",
-		"app_secret":           "my-app-secret",
-		"webhook_verify_token": "custom-verify-token",
-		"api_version":          "v19.0",
-		"is_default_incoming":  true,
-		"is_default_outgoing":  true,
-		"auto_read_receipt":    true,
+		"name":                              "Full Account",
+		"phone_id":                          "111222333",
+		"business_id":                       "444555666",
+		"access_token":                      "my-token",
+		"app_id":                            "my-app-id",
+		"app_secret":                        "my-app-secret",
+		"webhook_verify_token":              "custom-verify-token",
+		"api_version":                       "v19.0",
+		"is_default_incoming":               true,
+		"is_default_outgoing":               true,
+		"auto_read_receipt":                 true,
+		"marketing_messages_lite_onboarded": true,
+		"marketing_messages_lite_enabled":   true,
 	})
 	testutil.SetAuthContext(req, org.ID, user.ID)
 
@@ -210,8 +212,31 @@ func TestApp_CreateAccount_WithOptionalFields(t *testing.T) {
 	assert.True(t, resp.Data.IsDefaultIncoming)
 	assert.True(t, resp.Data.IsDefaultOutgoing)
 	assert.True(t, resp.Data.AutoReadReceipt)
+	assert.True(t, resp.Data.MarketingMessagesLiteOnboarded)
+	assert.True(t, resp.Data.MarketingMessagesLiteEnabled)
 	assert.True(t, resp.Data.HasAccessToken)
 	assert.True(t, resp.Data.HasAppSecret)
+}
+
+func TestApp_CreateAccount_RejectsMMLiteWithoutOnboarding(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID)
+
+	req := testutil.NewJSONRequest(t, map[string]interface{}{
+		"name":                            "MM Lite Account",
+		"phone_id":                        "123456789",
+		"business_id":                     "987654321",
+		"access_token":                    "test-access-token",
+		"marketing_messages_lite_enabled": true,
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+
+	err := app.CreateAccount(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusBadRequest, testutil.GetResponseStatusCode(req))
 }
 
 func TestApp_CreateAccount_ValidationErrors(t *testing.T) {

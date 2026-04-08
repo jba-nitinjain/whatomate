@@ -48,6 +48,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'vue-sonner'
 import { PageHeader, DataTable, DeleteConfirmDialog, SearchInput, type Column } from '@/components/shared'
 import HeaderMediaUpload from '@/components/shared/HeaderMediaUpload.vue'
+import { useCampaignReportExport } from '@/composables/useCampaignReportExport'
 import { useHeaderMedia } from '@/composables/useHeaderMedia'
 import { useViewRefresh } from '@/composables/useViewRefresh'
 import { getErrorMessage } from '@/lib/api-utils'
@@ -82,6 +83,7 @@ import { useDebounceFn } from '@vueuse/core'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const { exportingCampaignId, exportCampaignReport } = useCampaignReportExport(t)
 
 interface Campaign {
   id: string
@@ -186,6 +188,11 @@ const searchQuery = ref('')
 const currentPage = ref(1)
 const totalItems = ref(0)
 const pageSize = 20
+
+function canCampaignAcceptRecipients(campaign?: Campaign | null): boolean {
+  if (!campaign) return false
+  return campaign.status !== 'cancelled'
+}
 
 function handlePageChange(page: number) {
   currentPage.value = page
@@ -1373,7 +1380,7 @@ async function addRecipientsFromContacts() {
       tag_names: selectedContactGroupNames.value,
     })
     const result = response.data.data
-    toast.success(`Added ${result?.added_count || 0} recipients from contacts and groups.`)
+    toast.success(t('campaigns.addedRecipients', { count: result?.added_count || 0 }))
     showAddRecipientsDialog.value = false
     selectedContactIds.value = []
     selectedContactGroupNames.value = []
@@ -1737,7 +1744,7 @@ async function addRecipientsFromCSV() {
   try {
     const response = await campaignsService.addRecipients(selectedCampaign.value.id, { recipients: recipientsList })
     const result = response.data.data
-    toast.success(t('campaigns.addedFromCsv', { count: result?.added_count || recipientsList.length }))
+    toast.success(t('campaigns.addedRecipients', { count: result?.added_count || recipientsList.length }))
     showAddRecipientsDialog.value = false
     csvFile.value = null
     csvValidation.value = null
@@ -2003,10 +2010,28 @@ async function addRecipientsFromCSV() {
                     <Button variant="ghost" size="icon" class="h-8 w-8" @click="openCampaignReport(campaign)" title="View Report">
                       <Eye class="h-4 w-4" />
                     </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8"
+                      :disabled="exportingCampaignId === campaign.id"
+                      @click="exportCampaignReport(campaign)"
+                      :title="$t('campaigns.exportReport')"
+                    >
+                      <Loader2 v-if="exportingCampaignId === campaign.id" class="h-4 w-4 animate-spin" />
+                      <FileSpreadsheet v-else class="h-4 w-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" class="h-8 w-8" @click="viewRecipients(campaign)" title="View Recipients">
                       <Users class="h-4 w-4" />
                     </Button>
-                    <Button v-if="campaign.status === 'draft'" variant="ghost" size="icon" class="h-8 w-8" @click="openAddRecipientsDialog(campaign as any)" title="Add Recipients">
+                    <Button
+                      v-if="canCampaignAcceptRecipients(campaign)"
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8"
+                      @click="openAddRecipientsDialog(campaign as any)"
+                      :title="$t('campaigns.addRecipients')"
+                    >
                       <UserPlus class="h-4 w-4" />
                     </Button>
                     <Button v-if="campaign.status === 'draft'" variant="ghost" size="icon" class="h-8 w-8" @click="openEditDialog(campaign)" title="Edit">
@@ -2130,6 +2155,26 @@ async function addRecipientsFromCSV() {
                 <Button variant="outline" size="sm" @click="refreshSelectedCampaignData" :disabled="isLoading || isLoadingRecipients">
                   <RefreshCw :class="['mr-2 h-4 w-4', isLoading || isLoadingRecipients ? 'animate-spin' : '']" />
                   {{ $t('common.refresh') }}
+                </Button>
+                <Button
+                  v-if="selectedCampaign"
+                  variant="outline"
+                  size="sm"
+                  :disabled="exportingCampaignId === selectedCampaign.id"
+                  @click="exportCampaignReport(selectedCampaign)"
+                >
+                  <Loader2 v-if="exportingCampaignId === selectedCampaign.id" class="mr-2 h-4 w-4 animate-spin" />
+                  <FileSpreadsheet v-else class="mr-2 h-4 w-4" />
+                  {{ $t('campaigns.exportReport') }}
+                </Button>
+                <Button
+                  v-if="canCampaignAcceptRecipients(selectedCampaign)"
+                  variant="outline"
+                  size="sm"
+                  @click="showCampaignReportDialog = false; openAddRecipientsDialog(selectedCampaign as any)"
+                >
+                  <UserPlus class="mr-2 h-4 w-4" />
+                  {{ $t('campaigns.addRecipients') }}
                 </Button>
                 <Button variant="outline" size="sm" @click="openRecipientsFromReport">
                   <Users class="mr-2 h-4 w-4" />
@@ -2301,7 +2346,7 @@ async function addRecipientsFromCSV() {
                 {{ $t('common.refresh') }}
               </Button>
               <Button
-                v-if="selectedCampaign?.status === 'draft'"
+                v-if="canCampaignAcceptRecipients(selectedCampaign)"
                 variant="outline"
                 size="sm"
                 @click="showRecipientsDialog = false; openAddRecipientsDialog(selectedCampaign as any)"
@@ -2346,7 +2391,7 @@ async function addRecipientsFromCSV() {
             <Users class="h-12 w-12 mx-auto mb-2 opacity-50" />
             <p>{{ $t('campaigns.noRecipientsYet') }}</p>
             <Button
-              v-if="selectedCampaign?.status === 'draft'"
+              v-if="canCampaignAcceptRecipients(selectedCampaign)"
               variant="outline"
               size="sm"
               class="mt-4"

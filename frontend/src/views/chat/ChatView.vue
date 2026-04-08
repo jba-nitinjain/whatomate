@@ -88,6 +88,7 @@ import {
   Code,
   RotateCw,
   Filter,
+  Bell,
   StickyNote,
   Info
 } from 'lucide-vue-next'
@@ -391,6 +392,11 @@ function toggleTagFilter(tagName: string) {
 
 function clearTagFilter() {
   contactsStore.selectedTags = []
+  contactsStore.fetchContacts()
+}
+
+function toggleUnreadOnly() {
+  contactsStore.showUnreadOnly = !contactsStore.showUnreadOnly
   contactsStore.fetchContacts()
 }
 
@@ -1503,6 +1509,20 @@ async function sendMediaMessage() {
             </TooltipTrigger>
             <TooltipContent>{{ $t('chat.addContact') }}</TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-8 w-8 shrink-0 relative"
+                :class="contactsStore.showUnreadOnly ? 'text-emerald-400 bg-emerald-500/10' : 'text-white/40 hover:text-white hover:bg-white/[0.08] light:text-gray-500 light:hover:text-gray-900 light:hover:bg-gray-100'"
+                @click="toggleUnreadOnly"
+              >
+                <Bell class="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Unread only</TooltipContent>
+          </Tooltip>
           <!-- Tag Filter -->
           <Popover v-model:open="isTagFilterOpen">
             <PopoverTrigger as-child>
@@ -1557,7 +1577,16 @@ async function sendMediaMessage() {
           </Popover>
         </div>
         <!-- Active tag filters -->
-        <div v-if="contactsStore.selectedTags.length > 0" class="flex flex-wrap gap-1 mt-2">
+        <div v-if="contactsStore.selectedTags.length > 0 || contactsStore.showUnreadOnly" class="flex flex-wrap gap-1 mt-2">
+          <Badge
+            v-if="contactsStore.showUnreadOnly"
+            variant="outline"
+            class="cursor-pointer hover:opacity-80"
+            @click="toggleUnreadOnly"
+          >
+            {{ $t('chat.unreadMessages') }}
+            <X class="h-3 w-3 ml-1" />
+          </Badge>
           <TagBadge
             v-for="tagName in contactsStore.selectedTags"
             :key="tagName"

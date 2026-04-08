@@ -163,7 +163,7 @@ export const accountsService = {
 }
 
 export const contactsService = {
-  list: (params?: { search?: string; page?: number; limit?: number; tags?: string }) =>
+  list: (params?: { search?: string; page?: number; limit?: number; tags?: string; unread_only?: boolean }) =>
     api.get('/contacts', { params }),
   get: (id: string) => api.get(`/contacts/${id}`),
   create: (data: any) => api.post('/contacts', data),
@@ -298,6 +298,8 @@ export const campaignsService = {
   pause: (id: string) => api.post(`/campaigns/${id}/pause`),
   cancel: (id: string) => api.post(`/campaigns/${id}/cancel`),
   retryFailed: (id: string) => api.post(`/campaigns/${id}/retry-failed`),
+  exportReport: (id: string) =>
+    api.get(`/campaigns/${id}/report.xlsx`, { responseType: 'blob' }),
   // Recipients
   getRecipients: (id: string) => api.get(`/campaigns/${id}/recipients`),
   addRecipients: (

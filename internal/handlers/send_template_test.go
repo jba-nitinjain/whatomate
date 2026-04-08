@@ -254,6 +254,56 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		assert.Equal(t, "919876543210", sentMsg["to"])
 	})
 
+	t.Run("marketing template uses mm lite delivery route when enabled", func(t *testing.T) {
+		t.Parallel()
+		mockServer := newMockWhatsAppServer()
+		defer mockServer.close()
+
+		app := newMsgTestApp(t, mockServer)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		account := createTestAccount(t, app, org.ID)
+		account.MarketingMessagesLiteOnboarded = true
+		account.MarketingMessagesLiteEnabled = true
+		require.NoError(t, app.DB.Save(account).Error)
+
+		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
+		tpl := &models.Template{
+			BaseModel:       models.BaseModel{ID: uuid.New()},
+			OrganizationID:  org.ID,
+			WhatsAppAccount: account.Name,
+			Name:            "marketing_offer_" + uuid.New().String()[:8],
+			DisplayName:     "Marketing Offer",
+			Category:        "MARKETING",
+			Language:        "en",
+			Status:          string(models.TemplateStatusApproved),
+			BodyContent:     "Hi {{name}}, special offer for you.",
+		}
+		require.NoError(t, app.DB.Create(tpl).Error)
+
+		req := testutil.NewJSONRequest(t, map[string]interface{}{
+			"contact_id":    contact.ID.String(),
+			"template_name": tpl.Name,
+			"template_params": map[string]string{
+				"name": "Dana",
+			},
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+
+		err := app.SendTemplateMessage(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		app.WaitForBackgroundTasks()
+
+		var dbMsg models.Message
+		require.NoError(t, app.DB.Where("contact_id = ? AND template_name = ?", contact.ID, tpl.Name).First(&dbMsg).Error)
+		assert.Equal(t, "marketing_messages_lite", dbMsg.Metadata["delivery_route"])
+		require.Len(t, mockServer.sentMessages, 1)
+		assert.Equal(t, "template", mockServer.sentMessages[0]["type"])
+	})
+
 	t.Run("missing contact_id and phone_number", func(t *testing.T) {
 		t.Parallel()
 		app := newTestApp(t)
