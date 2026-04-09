@@ -21,6 +21,12 @@ Modern, open-source WhatsApp Business Platform. Single binary app.
 - **Real-time Chat**
   Live messaging with WebSocket support for instant communication, unread counters, and unread-only filtering.
 
+- **External Message Ingestion**
+  Persist externally-sent WhatsApp messages without calling Meta, with super-admin routing by `phone_number_id` to the correct organization/account.
+
+- **Super Admin Chat Repair Tool**
+  Settings includes a super-admin-only repair panel for previewing and safely fixing legacy AWS Lambda external chats that were mapped to the wrong organization.
+
 - **Template Management**
   Create and manage message templates approved by Meta.
 
@@ -94,6 +100,8 @@ docker buildx build \
   -t nikyjain/whatomate:<tag> \
   --push .
 ```
+
+For the standard repeatable workflow, see [DOCKER_HUB_PUBLISHING.md](./DOCKER_HUB_PUBLISHING.md). Agents should start from [AGENTS.md](./AGENTS.md).
 
 __________________
 

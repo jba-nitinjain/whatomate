@@ -115,6 +115,8 @@ POST /api/messages/external
 - The message is stored with status `sent`
 - This endpoint does not call the WhatsApp API
 - A super admin API key can target another organization by adding `X-Organization-ID: <org-uuid>`
+- If a super admin sends `phone_number_id`, Whatomate resolves the WhatsApp account from that phone ID before contact lookup and stores the message in that account's organization
+- If `phone_number_id` is ambiguous across organizations, send `X-Organization-ID` explicitly
 - To record a template sent by another system, set `type` to `template`, send `template_name`, and optionally send `template_params`, `phone_number_id`, and template header media fields
 
 ### Response

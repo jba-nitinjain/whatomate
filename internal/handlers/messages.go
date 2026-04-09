@@ -878,9 +878,6 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-	if !a.HasPermission(userID, models.ResourceChat, models.ActionWrite, orgID) {
-		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
-	}
 
 	var req CreateExternalMessageRequest
 	if err := a.decodeRequest(r, &req); err != nil {
@@ -892,6 +889,18 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 	}
 	if req.Type == "" {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "type is required", nil, "")
+	}
+
+	var account *models.WhatsAppAccount
+	if req.PhoneNumberID != "" {
+		orgID, account, err = a.resolveExternalMessageTargetOrgAndAccount(r, userID, orgID, req.PhoneNumberID)
+		if err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+		}
+	}
+
+	if !a.HasPermission(userID, models.ResourceChat, models.ActionWrite, orgID) {
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
 	}
 
 	// Resolve or create contact.
@@ -922,9 +931,11 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 		contact = *c
 	}
 
-	account, err := a.resolveExternalMessageWhatsAppAccount(orgID, &contact, req)
-	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	if account == nil {
+		account, err = a.resolveExternalMessageWhatsAppAccount(orgID, &contact, req)
+		if err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+		}
 	}
 
 	if contact.WhatsAppAccount == "" || contact.WhatsAppAccount != account.Name {
@@ -1183,6 +1194,24 @@ func (a *App) resolveExternalMessageWhatsAppAccount(orgID uuid.UUID, contact *mo
 	return a.resolveWhatsAppAccount(orgID, accountName)
 }
 
+func (a *App) resolveExternalMessageTargetOrgAndAccount(r *fastglue.Request, userID, fallbackOrgID uuid.UUID, phoneNumberID string) (uuid.UUID, *models.WhatsAppAccount, error) {
+	account, err := a.resolveWhatsAppAccountByPhoneNumberID(fallbackOrgID, phoneNumberID)
+	if err == nil {
+		return fallbackOrgID, account, nil
+	}
+
+	if headerHasOrganizationOverride(r) || !a.IsSuperAdmin(userID) {
+		return fallbackOrgID, nil, err
+	}
+
+	account, err = a.resolveWhatsAppAccountByPhoneNumberIDGlobal(phoneNumberID)
+	if err != nil {
+		return fallbackOrgID, nil, err
+	}
+
+	return account.OrganizationID, account, nil
+}
+
 func (a *App) resolveWhatsAppAccountByPhoneNumberID(orgID uuid.UUID, phoneNumberID string) (*models.WhatsAppAccount, error) {
 	var account models.WhatsAppAccount
 	if err := a.DB.Where("organization_id = ? AND phone_id = ?", orgID, phoneNumberID).First(&account).Error; err != nil {
@@ -1190,6 +1219,27 @@ func (a *App) resolveWhatsAppAccountByPhoneNumberID(orgID uuid.UUID, phoneNumber
 	}
 	a.decryptAccountSecrets(&account)
 	return &account, nil
+}
+
+func (a *App) resolveWhatsAppAccountByPhoneNumberIDGlobal(phoneNumberID string) (*models.WhatsAppAccount, error) {
+	var accounts []models.WhatsAppAccount
+	if err := a.DB.Where("phone_id = ?", phoneNumberID).Find(&accounts).Error; err != nil {
+		return nil, fmt.Errorf("WhatsApp account not found for phone_number_id")
+	}
+	if len(accounts) == 0 {
+		return nil, fmt.Errorf("WhatsApp account not found for phone_number_id")
+	}
+	if len(accounts) > 1 {
+		return nil, fmt.Errorf("Multiple WhatsApp accounts found for phone_number_id; send X-Organization-ID")
+	}
+
+	account := accounts[0]
+	a.decryptAccountSecrets(&account)
+	return &account, nil
+}
+
+func headerHasOrganizationOverride(r *fastglue.Request) bool {
+	return strings.TrimSpace(string(r.RequestCtx.Request.Header.Peek("X-Organization-ID"))) != ""
 }
 
 func resolveExternalTemplateMedia(req CreateExternalMessageRequest, template *models.Template, mediaURL, mediaMimeType, mediaFilename string) (string, string, string) {

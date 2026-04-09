@@ -55,11 +55,14 @@ The caller must have:
 ### Super admin API keys
 
 A super admin API key can be reused across organizations by sending the target tenant in the `X-Organization-ID` header.
+When `phone_number_id` is provided, Whatomate first resolves the WhatsApp account for that phone ID. If the phone ID belongs to another organization, the external message is stored in that account's organization instead of the super admin's default organization.
 
 Notes:
 
 - the API key must belong to a user with `is_super_admin = true`
 - `X-Organization-ID` must be the target organization's UUID
+- when `phone_number_id` uniquely identifies an account in another organization, Whatomate routes the request there automatically for super admins
+- if the same `phone_number_id` exists in more than one organization, send `X-Organization-ID` to disambiguate
 - the request still targets one organization per call
 - inside that organization, choose the WhatsApp account with `phone_number_id` or `whatsapp_account`
 
@@ -132,6 +135,7 @@ POST /api/messages/external
 ### WhatsApp account selection
 
 - if `phone_number_id` is provided, the API resolves the WhatsApp account from that phone ID first
+- for super admin requests, `phone_number_id` can also switch the effective organization before the contact is resolved
 - if `whatsapp_account` is provided, that account is used
 - otherwise the API tries the contact's current `whatsapp_account`
 - if neither is set, Whatomate uses the default outgoing account, or any available account as fallback

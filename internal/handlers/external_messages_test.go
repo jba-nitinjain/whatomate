@@ -115,6 +115,65 @@ func TestApp_CreateExternalMessage(t *testing.T) {
 		assert.Len(t, mockServer.sentMessages, 0)
 	})
 
+	t.Run("super admin routes by phone_number_id across organizations", func(t *testing.T) {
+		t.Parallel()
+
+		mockServer := newMockWhatsAppServer()
+		defer mockServer.close()
+
+		app := newMsgTestApp(t, mockServer)
+		homeOrg := testutil.CreateTestOrganization(t, app.DB)
+		targetOrg := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)
+		superAdmin := testutil.CreateTestUser(t, app.DB, homeOrg.ID, testutil.WithRoleID(&adminRole.ID), testutil.WithSuperAdmin())
+
+		homeAccount := createTestAccount(t, app, homeOrg.ID)
+		homeAccount.PhoneID = "home-phone-id"
+		require.NoError(t, app.DB.Model(homeAccount).Update("phone_id", homeAccount.PhoneID).Error)
+
+		targetAccount := &models.WhatsAppAccount{
+			BaseModel:          models.BaseModel{ID: uuid.New()},
+			OrganizationID:     targetOrg.ID,
+			Name:               "target-account",
+			PhoneID:            "target-phone-id",
+			BusinessID:         "target-business-id",
+			AccessToken:        "test-token",
+			WebhookVerifyToken: "webhook-token",
+			APIVersion:         "v18.0",
+			Status:             "active",
+		}
+		require.NoError(t, app.DB.Create(targetAccount).Error)
+
+		req := testutil.NewJSONRequest(t, map[string]any{
+			"phone_number":        "+919876543210",
+			"profile_name":        "Cross Org Contact",
+			"phone_number_id":     targetAccount.PhoneID,
+			"type":                "text",
+			"content":             map[string]string{"body": "Route by phone number ID"},
+			"whatsapp_message_id": "wamid.cross-org-123",
+		})
+		testutil.SetFullAuthContext(req, homeOrg.ID, superAdmin.ID, superAdmin.RoleID, true)
+
+		err := app.CreateExternalMessage(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		var contact models.Contact
+		require.NoError(t, app.DB.Where("organization_id = ? AND phone_number = ?", targetOrg.ID, "919876543210").First(&contact).Error)
+		assert.Equal(t, targetAccount.Name, contact.WhatsAppAccount)
+
+		var msg models.Message
+		require.NoError(t, app.DB.Where("contact_id = ?", contact.ID).First(&msg).Error)
+		assert.Equal(t, targetOrg.ID, msg.OrganizationID)
+		assert.Equal(t, targetAccount.Name, msg.WhatsAppAccount)
+		assert.Equal(t, "wamid.cross-org-123", msg.WhatsAppMessageID)
+
+		var homeOrgContacts int64
+		require.NoError(t, app.DB.Model(&models.Contact{}).Where("organization_id = ? AND phone_number = ?", homeOrg.ID, "919876543210").Count(&homeOrgContacts).Error)
+		assert.Zero(t, homeOrgContacts)
+		assert.Len(t, mockServer.sentMessages, 0)
+	})
+
 	t.Run("template message renders template body", func(t *testing.T) {
 		t.Parallel()
 
