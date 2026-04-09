@@ -34,7 +34,7 @@ If the local shell does not have Go installed, note that explicitly instead of c
 ## Current Important Conventions
 
 - External message ingestion supports super-admin routing by `phone_number_id` to the correct organization/account.
-- Legacy AWS Lambda misrouted chats can be reviewed and safely repaired from the super-admin-only Settings UI.
+- Legacy misrouted chats can be reviewed from the super-admin-only Settings UI using all message history, with safe moves plus explicit manual approval for merge-required cases.
 - The chat repair backend endpoints are preview/apply flows under `/api/admin/chat-repair`.
 
 ## Docker Publishing Rule

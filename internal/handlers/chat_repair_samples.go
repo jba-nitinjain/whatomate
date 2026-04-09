@@ -43,8 +43,6 @@ func (a *App) loadChatRepairSampleMessages(contactIDs []string, limitPerContact 
 			FROM messages m
 			WHERE m.deleted_at IS NULL
 				AND m.contact_id::text IN ?
-				AND m.metadata->>'source' = 'external_api'
-				AND COALESCE(m.metadata->>'source_system', '') = 'aws_lambda'
 		) x
 		WHERE x.row_num <= ?
 		ORDER BY x.contact_id, x.created_at DESC

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/handlers"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/shridarpatil/whatomate/test/testutil"
@@ -81,6 +80,38 @@ func TestApp_PreviewChatRepairCandidates(t *testing.T) {
 		err := app.PreviewChatRepairCandidates(req)
 		require.NoError(t, err)
 		testutil.AssertErrorResponse(t, req, fasthttp.StatusForbidden, "Only super admins can access chat repair")
+	})
+
+	t.Run("account evidence can resolve candidate without phone_number_id metadata", func(t *testing.T) {
+		t.Parallel()
+
+		app := newTestApp(t)
+		homeOrg := testutil.CreateTestOrganization(t, app.DB)
+		targetOrg := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)
+		superAdmin := testutil.CreateTestUser(t, app.DB, homeOrg.ID, testutil.WithRoleID(&adminRole.ID), testutil.WithSuperAdmin())
+
+		wrongContact, targetAccount := seedChatRepairAccountEvidenceCandidate(t, app, homeOrg.ID, targetOrg.ID)
+
+		req := testutil.NewGETRequest(t)
+		testutil.SetQueryParam(req, "limit", 10)
+		testutil.SetFullAuthContext(req, homeOrg.ID, superAdmin.ID, superAdmin.RoleID, true)
+
+		err := app.PreviewChatRepairCandidates(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		var resp struct {
+			Data struct {
+				Candidates []handlers.ChatRepairCandidate `json:"candidates"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+		require.Len(t, resp.Data.Candidates, 1)
+		assert.Equal(t, wrongContact.ID.String(), resp.Data.Candidates[0].ContactID)
+		assert.Equal(t, targetOrg.ID.String(), resp.Data.Candidates[0].TargetOrgID)
+		assert.Equal(t, targetAccount.Name, resp.Data.Candidates[0].TargetAccount)
+		assert.Equal(t, "move", resp.Data.Candidates[0].Action)
 	})
 }
 
@@ -168,85 +199,6 @@ func TestApp_ApplyChatRepairCandidates_ManualMerge(t *testing.T) {
 	var refreshedTarget models.Contact
 	require.NoError(t, app.DB.First(&refreshedTarget, targetContact.ID).Error)
 	assert.Equal(t, "Legacy sync body", refreshedTarget.LastMessagePreview)
-}
-
-func seedChatRepairCandidate(t *testing.T, app *handlers.App, homeOrgID, targetOrgID uuid.UUID) (*models.Contact, *models.WhatsAppAccount) {
-	t.Helper()
-
-	homeAccount := &models.WhatsAppAccount{
-		BaseModel:          models.BaseModel{ID: uuid.New()},
-		OrganizationID:     homeOrgID,
-		Name:               "home-account",
-		PhoneID:            "home-phone-id",
-		BusinessID:         "home-business-id",
-		AccessToken:        "test-token",
-		WebhookVerifyToken: "verify-home",
-		APIVersion:         "v18.0",
-		Status:             "active",
-	}
-	targetAccount := &models.WhatsAppAccount{
-		BaseModel:          models.BaseModel{ID: uuid.New()},
-		OrganizationID:     targetOrgID,
-		Name:               "target-account",
-		PhoneID:            "target-phone-id",
-		BusinessID:         "target-business-id",
-		AccessToken:        "test-token",
-		WebhookVerifyToken: "verify-target",
-		APIVersion:         "v18.0",
-		Status:             "active",
-	}
-	require.NoError(t, app.DB.Create(homeAccount).Error)
-	require.NoError(t, app.DB.Create(targetAccount).Error)
-
-	wrongContact := testutil.CreateTestContactWith(
-		t,
-		app.DB,
-		homeOrgID,
-		testutil.WithContactAccount(homeAccount.Name),
-		testutil.WithPhoneNumber("919999000111"),
-	)
-	require.NoError(t, app.DB.Model(wrongContact).Updates(map[string]any{
-		"profile_name":         "Legacy Contact",
-		"last_message_preview": "Wrong preview",
-		"whats_app_account":    homeAccount.Name,
-	}).Error)
-
-	message := &models.Message{
-		BaseModel:         models.BaseModel{ID: uuid.New()},
-		OrganizationID:    homeOrgID,
-		WhatsAppAccount:   homeAccount.Name,
-		ContactID:         wrongContact.ID,
-		Direction:         models.DirectionOutgoing,
-		MessageType:       models.MessageTypeText,
-		Content:           "Legacy sync body",
-		Status:            models.MessageStatusSent,
-		Metadata:          models.JSONB{"source": "external_api", "source_system": "aws_lambda", "phone_number_id": targetAccount.PhoneID},
-		WhatsAppMessageID: "wamid.legacy-chat-repair",
-	}
-	require.NoError(t, app.DB.Create(message).Error)
-
-	return wrongContact, targetAccount
-}
-
-func seedChatRepairMergeCandidate(t *testing.T, app *handlers.App, homeOrgID, targetOrgID uuid.UUID) (*models.Contact, *models.Contact, *models.WhatsAppAccount) {
-	t.Helper()
-
-	wrongContact, targetAccount := seedChatRepairCandidate(t, app, homeOrgID, targetOrgID)
-	targetContact := testutil.CreateTestContactWith(
-		t,
-		app.DB,
-		targetOrgID,
-		testutil.WithContactAccount(targetAccount.Name),
-		testutil.WithPhoneNumber(wrongContact.PhoneNumber),
-	)
-	require.NoError(t, app.DB.Model(targetContact).Updates(map[string]any{
-		"profile_name":         "Correct Contact",
-		"last_message_preview": "Correct preview",
-		"whats_app_account":    targetAccount.Name,
-	}).Error)
-	require.NoError(t, app.DB.Model(&models.Message{}).Where("contact_id = ?", wrongContact.ID).Update("whats_app_message_id", "wamid.legacy-chat-repair-merge").Error)
-
-	return wrongContact, targetContact, targetAccount
 }
 
 func normalizeChatRepairCandidate(candidate handlers.ChatRepairCandidate) handlers.ChatRepairCandidate {

@@ -12,8 +12,10 @@ type WSMessage struct {
 const (
 	TypeAuth          = "auth"
 	TypeNewMessage    = "new_message"
+	TypeMessageDeleted = "message_deleted"
 	TypeStatusUpdate  = "status_update"
 	TypeContactUpdate = "contact_update"
+	TypeConversationDeleted = "conversation_deleted"
 	TypeSetContact    = "set_contact"
 	TypePing          = "ping"
 	TypePong          = "pong"

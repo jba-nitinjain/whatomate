@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +33,20 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 	}
 
 	for _, row := range rows {
+		resolution, err := a.resolveChatRepairTarget(row.ContactID, row.CurrentAccount)
+		if err != nil {
+			return nil, ChatRepairSummary{}, err
+		}
+		if resolution.TargetOrgCount == 0 && resolution.TargetAccountCount == 0 {
+			continue
+		}
+		if resolution.TargetOrgID != "" && orgNames[resolution.TargetOrgID] == "" {
+			var targetOrg models.Organization
+			if err := a.DB.Select("id", "name").Where("id = ?", resolution.TargetOrgID).First(&targetOrg).Error; err == nil {
+				orgNames[targetOrg.ID.String()] = targetOrg.Name
+			}
+		}
+
 		candidate := ChatRepairCandidate{
 			ContactID:            row.ContactID,
 			PhoneNumber:          row.PhoneNumber,
@@ -41,27 +54,27 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 			CurrentOrgID:         row.CurrentOrgID,
 			CurrentOrgName:       orgNames[row.CurrentOrgID],
 			CurrentAccount:       row.CurrentAccount,
-			TargetOrgID:          row.TargetOrgID,
-			TargetOrgName:        orgNames[row.TargetOrgID],
-			TargetAccount:        row.TargetAccount,
+			TargetOrgID:          resolution.TargetOrgID,
+			TargetOrgName:        orgNames[resolution.TargetOrgID],
+			TargetAccount:        resolution.TargetAccount,
 			AffectedMessageCount: row.AffectedMessageCount,
 			LastMessageAt:        row.LastMessageAt,
-			PhoneNumberID:        row.SamplePhoneNumberID,
+			PhoneNumberID:        resolution.PhoneNumberID,
 			SampleMessages:       sampleMessages[row.ContactID],
 		}
 
 		switch {
-		case row.TargetOrgCount != 1:
+		case resolution.TargetOrgCount != 1:
 			candidate.Action = chatRepairActionConflict
-			candidate.Reason = "Multiple organizations match the same phone_number_id"
-		case row.TargetAccountCount != 1:
+			candidate.Reason = "Multiple organizations match the available contact/message routing evidence"
+		case resolution.TargetAccountCount != 1:
 			candidate.Action = chatRepairActionConflict
-			candidate.Reason = "Multiple WhatsApp accounts match the same phone_number_id"
-		case row.CurrentOrgID == row.TargetOrgID && strings.TrimSpace(row.CurrentAccount) == strings.TrimSpace(row.TargetAccount):
+			candidate.Reason = "Multiple WhatsApp accounts match the available contact/message routing evidence"
+		case row.CurrentOrgID == resolution.TargetOrgID && strings.TrimSpace(row.CurrentAccount) == strings.TrimSpace(resolution.TargetAccount):
 			continue
 		default:
 			var targetContact models.Contact
-			err := a.DB.Where("organization_id = ? AND phone_number = ? AND deleted_at IS NULL", row.TargetOrgID, row.PhoneNumber).First(&targetContact).Error
+			err := a.DB.Where("organization_id = ? AND phone_number = ? AND deleted_at IS NULL", resolution.TargetOrgID, row.PhoneNumber).First(&targetContact).Error
 			if err == nil && targetContact.ID.String() != row.ContactID {
 				candidate.Action = chatRepairActionMergeRequired
 				candidate.TargetContactID = targetContact.ID.String()
@@ -89,72 +102,6 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 	}
 
 	return candidates, summary, nil
-}
-
-func (a *App) loadChatRepairBaseRows(limit int) ([]chatRepairBaseRow, error) {
-	query := `
-		SELECT
-			c.id::text AS contact_id,
-			c.organization_id::text AS current_org_id,
-			c.phone_number,
-			c.profile_name,
-			c.whats_app_account AS current_account,
-			COUNT(DISTINCT wa.organization_id::text) AS target_org_count,
-			COUNT(DISTINCT wa.name) AS target_account_count,
-			MIN(wa.organization_id::text) AS target_org_id,
-			MIN(wa.name) AS target_account,
-			COUNT(DISTINCT m.id::text) AS affected_message_count,
-			MAX(m.created_at) AS last_message_at,
-			MIN(m.metadata->>'phone_number_id') AS sample_phone_number_id
-		FROM contacts c
-		JOIN messages m
-			ON m.contact_id = c.id
-			AND m.deleted_at IS NULL
-		JOIN whatsapp_accounts wa
-			ON wa.phone_id = m.metadata->>'phone_number_id'
-			AND wa.deleted_at IS NULL
-		WHERE c.deleted_at IS NULL
-			AND m.metadata->>'source' = 'external_api'
-			AND COALESCE(m.metadata->>'source_system', '') = 'aws_lambda'
-			AND COALESCE(m.metadata->>'phone_number_id', '') <> ''
-		GROUP BY c.id, c.organization_id, c.phone_number, c.profile_name, c.whats_app_account
-		ORDER BY MAX(m.created_at) DESC
-	`
-	if limit > 0 {
-		query += " LIMIT " + strconv.Itoa(limit)
-	}
-
-	var rows []chatRepairBaseRow
-	return rows, a.DB.Raw(query).Scan(&rows).Error
-}
-
-func (a *App) lookupOrganizationNames(rows []chatRepairBaseRow) (map[string]string, error) {
-	ids := make([]string, 0, len(rows)*2)
-	seen := make(map[string]bool, len(rows)*2)
-	for _, row := range rows {
-		if row.CurrentOrgID != "" && !seen[row.CurrentOrgID] {
-			ids = append(ids, row.CurrentOrgID)
-			seen[row.CurrentOrgID] = true
-		}
-		if row.TargetOrgID != "" && !seen[row.TargetOrgID] {
-			ids = append(ids, row.TargetOrgID)
-			seen[row.TargetOrgID] = true
-		}
-	}
-	if len(ids) == 0 {
-		return map[string]string{}, nil
-	}
-
-	var orgs []models.Organization
-	if err := a.DB.Select("id", "name").Where("id IN ?", ids).Find(&orgs).Error; err != nil {
-		return nil, err
-	}
-
-	names := make(map[string]string, len(orgs))
-	for _, org := range orgs {
-		names[org.ID.String()] = org.Name
-	}
-	return names, nil
 }
 
 func (a *App) applyChatRepairMove(tx *gorm.DB, candidate ChatRepairCandidate) (int64, error) {

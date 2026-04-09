@@ -330,6 +330,65 @@ export const useContactsStore = defineStore('contacts', () => {
     }
   }
 
+  function syncContact(contact: Contact) {
+    const index = contacts.value.findIndex(c => c.id === contact.id)
+    if (index !== -1) {
+      contacts.value[index] = {
+        ...contacts.value[index],
+        ...contact
+      }
+    } else {
+      contacts.value.unshift(contact)
+    }
+
+    if (currentContact.value?.id === contact.id) {
+      currentContact.value = {
+        ...currentContact.value,
+        ...contact
+      }
+    }
+  }
+
+  function removeMessage(messageId: string) {
+    const deleted = messages.value.find(m => m.id === messageId)
+    messages.value = messages.value.filter(m => m.id !== messageId)
+    messages.value = messages.value.map(message => {
+      if (message.reply_to_message_id !== messageId) {
+        return message
+      }
+      return {
+        ...message,
+        is_reply: false,
+        reply_to_message_id: undefined,
+        reply_to_message: undefined
+      }
+    })
+
+    if (replyingTo.value?.id === messageId) {
+      replyingTo.value = null
+    }
+
+    if (deleted && currentContact.value?.id === deleted.contact_id && messages.value.length === 0) {
+      currentContact.value = {
+        ...currentContact.value,
+        last_message_at: undefined,
+        unread_count: 0
+      }
+    }
+  }
+
+  function removeConversation(contactId: string) {
+    contacts.value = contacts.value.filter(c => c.id !== contactId)
+    contactsTotal.value = Math.max(0, contactsTotal.value - 1)
+    if (currentContact.value?.id === contactId) {
+      currentContact.value = null
+      messages.value = []
+      hasMoreMessages.value = false
+      replyingTo.value = null
+      accountFilter.value = null
+    }
+  }
+
   function updateContactTags(contactId: string, tags: string[]) {
     // Update in contacts list
     const contact = contacts.value.find(c => c.id === contactId)
@@ -377,6 +436,9 @@ export const useContactsStore = defineStore('contacts', () => {
     setReplyingTo,
     clearReplyingTo,
     updateMessageReactions,
-    updateContactTags
+    updateContactTags,
+    syncContact,
+    removeMessage,
+    removeConversation
   }
 })

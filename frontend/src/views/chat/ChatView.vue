@@ -90,7 +90,8 @@ import {
   Filter,
   Bell,
   StickyNote,
-  Info
+  Info,
+  Trash2
 } from 'lucide-vue-next'
 import { getInitials, getAvatarGradient } from '@/lib/utils'
 import { useColorMode } from '@/composables/useColorMode'
@@ -118,6 +119,7 @@ const { isDark } = useColorMode()
 const isMobile = useMediaQuery('(max-width: 767px)')
 
 const canWriteContacts = authStore.hasPermission('contacts', 'write')
+const canDeleteContacts = authStore.hasPermission('contacts', 'delete')
 
 const messageInput = ref('')
 const messagesEndRef = ref<HTMLElement | null>(null)
@@ -127,6 +129,8 @@ const isAssignDialogOpen = ref(false)
 const isTransferring = ref(false)
 const isResuming = ref(false)
 const isRefreshingView = ref(false)
+const deletingMessageId = ref<string | null>(null)
+const deletingConversationId = ref<string | null>(null)
 const isInfoPanelOpen = ref(false)
 const isNotesPanelOpen = ref(false)
 const contactSessionData = ref<any>(null)
@@ -1004,6 +1008,50 @@ async function resumeChatbot() {
   }
 }
 
+async function deleteMessage(message: Message) {
+  if (!contactsStore.currentContact || deletingMessageId.value) return
+  if (!confirm(t('chat.deleteMessageConfirm'))) return
+
+  deletingMessageId.value = message.id
+  try {
+    const response = await messagesService.delete(contactsStore.currentContact.id, message.id)
+    const data = response.data.data || response.data
+    contactsStore.removeMessage(message.id)
+    if (data.contact) {
+      contactsStore.syncContact(data.contact)
+    } else {
+      await contactsStore.fetchContacts()
+    }
+    toast.success(t('chat.deleteMessageSuccess'))
+  } catch (error) {
+    toast.error(t('chat.deleteMessageFailed'))
+  } finally {
+    deletingMessageId.value = null
+  }
+}
+
+async function deleteConversation(contact: Contact) {
+  if (deletingConversationId.value) return
+  if (!confirm(t('chat.deleteConversationConfirm', { name: contact.name || contact.phone_number }))) return
+
+  deletingConversationId.value = contact.id
+  try {
+    await contactsService.delete(contact.id, { include_messages: true })
+    contactsStore.removeConversation(contact.id)
+    if (route.params.contactId === contact.id) {
+      closeSidePanels()
+      wsService.setCurrentContact(null)
+      notesStore.clearNotes()
+      router.push('/chat')
+    }
+    toast.success(t('chat.deleteConversationSuccess'))
+  } catch (error) {
+    toast.error(t('chat.deleteConversationFailed'))
+  } finally {
+    deletingConversationId.value = null
+  }
+}
+
 function scrollToBottom(instant = false) {
   nextTick(() => {
     if (messagesEndRef.value) {
@@ -1636,6 +1684,29 @@ async function sendMediaMessage() {
                 </Badge>
               </div>
             </div>
+            <DropdownMenu v-if="canDeleteContacts">
+              <DropdownMenuTrigger as-child>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-8 w-8 shrink-0 text-white/40 hover:text-white hover:bg-white/[0.08] light:text-gray-400 light:hover:text-gray-900 light:hover:bg-gray-100"
+                  @click.stop
+                >
+                  <MoreVertical class="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" @click.stop>
+                <DropdownMenuItem
+                  class="text-destructive focus:text-destructive"
+                  :disabled="deletingConversationId === contact.id"
+                  @click.stop="deleteConversation(contact)"
+                >
+                  <Loader2 v-if="deletingConversationId === contact.id" class="mr-2 h-4 w-4 animate-spin" />
+                  <Trash2 v-else class="mr-2 h-4 w-4" />
+                  <span>{{ $t('chat.deleteConversation') }}</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           <!-- Loading indicator for infinite scroll -->
@@ -1833,6 +1904,16 @@ async function sendMediaMessage() {
                   <RotateCw v-if="!isRefreshingView" class="mr-2 h-4 w-4" />
                   <Loader2 v-else class="mr-2 h-4 w-4 animate-spin" />
                   <span>{{ $t('common.refresh') }}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  v-if="canDeleteContacts"
+                  class="text-destructive focus:text-destructive"
+                  :disabled="deletingConversationId === contactsStore.currentContact.id"
+                  @click="deleteConversation(contactsStore.currentContact)"
+                >
+                  <Loader2 v-if="deletingConversationId === contactsStore.currentContact.id" class="mr-2 h-4 w-4 animate-spin" />
+                  <Trash2 v-else class="mr-2 h-4 w-4" />
+                  <span>{{ $t('chat.deleteConversation') }}</span>
                 </DropdownMenuItem>
                 <template v-if="customActions.length > 0">
                   <DropdownMenuSeparator />
@@ -2210,6 +2291,17 @@ async function sendMediaMessage() {
                 >
                   <Reply class="h-3 w-3" />
                 </Button>
+                <Button
+                  v-if="canDeleteContacts"
+                  variant="ghost"
+                  size="icon"
+                  class="h-6 w-6 text-destructive hover:text-destructive"
+                  :disabled="deletingMessageId === message.id"
+                  @click="deleteMessage(message)"
+                >
+                  <Loader2 v-if="deletingMessageId === message.id" class="h-3 w-3 animate-spin" />
+                  <Trash2 v-else class="h-3 w-3" />
+                </Button>
               </div>
               <!-- Reply button for outgoing messages (shown on hover) -->
               <div v-if="message.direction === 'outgoing'" class="ml-1 flex flex-col gap-0.5 self-end opacity-100 transition-opacity md:self-center md:opacity-0 md:group-hover:opacity-100">
@@ -2239,6 +2331,17 @@ async function sendMediaMessage() {
                   @click="replyToMessage(message)"
                 >
                   <Reply class="h-3 w-3" />
+                </Button>
+                <Button
+                  v-if="canDeleteContacts"
+                  variant="ghost"
+                  size="icon"
+                  class="h-6 w-6 text-destructive hover:text-destructive"
+                  :disabled="deletingMessageId === message.id"
+                  @click="deleteMessage(message)"
+                >
+                  <Loader2 v-if="deletingMessageId === message.id" class="h-3 w-3 animate-spin" />
+                  <Trash2 v-else class="h-3 w-3" />
                 </Button>
                 <Button
                   v-if="message.status === 'failed' && message.message_type !== 'template'"

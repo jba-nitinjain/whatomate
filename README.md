@@ -25,7 +25,7 @@ Modern, open-source WhatsApp Business Platform. Single binary app.
   Persist externally-sent WhatsApp messages without calling Meta, with super-admin routing by `phone_number_id` to the correct organization/account.
 
 - **Super Admin Chat Repair Tool**
-  Settings includes a super-admin-only repair panel for previewing and safely fixing legacy AWS Lambda external chats that were mapped to the wrong organization.
+  Settings includes a super-admin-only repair panel for reviewing legacy misrouted chats across existing message history, with safe moves and explicit manual approval for merge-required cases.
 
 - **Template Management**
   Create and manage message templates approved by Meta.

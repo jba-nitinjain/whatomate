@@ -266,7 +266,8 @@ export const contactsService = {
   get: (id: string) => api.get(`/contacts/${id}`),
   create: (data: any) => api.post("/contacts", data),
   update: (id: string, data: any) => api.put(`/contacts/${id}`, data),
-  delete: (id: string) => api.delete(`/contacts/${id}`),
+  delete: (id: string, options?: { include_messages?: boolean }) =>
+    api.delete(`/contacts/${id}`, { params: options }),
   assign: (id: string, userId: string | null) =>
     api.put(`/contacts/${id}/assign`, { user_id: userId }),
   updateTags: (id: string, tags: string[]) =>
@@ -400,6 +401,8 @@ export const messagesService = {
     api.post(`/contacts/${contactId}/messages/${messageId}/reaction`, {
       emoji,
     }),
+  delete: (contactId: string, messageId: string) =>
+    api.delete(`/contacts/${contactId}/messages/${messageId}`),
 };
 
 export const templatesService = {

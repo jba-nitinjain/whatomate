@@ -14,13 +14,16 @@ type chatRepairBaseRow struct {
 	PhoneNumber          string     `gorm:"column:phone_number"`
 	ProfileName          string     `gorm:"column:profile_name"`
 	CurrentAccount       string     `gorm:"column:current_account"`
-	TargetOrgCount       int64      `gorm:"column:target_org_count"`
-	TargetAccountCount   int64      `gorm:"column:target_account_count"`
-	TargetOrgID          string     `gorm:"column:target_org_id"`
-	TargetAccount        string     `gorm:"column:target_account"`
 	AffectedMessageCount int64      `gorm:"column:affected_message_count"`
 	LastMessageAt        *time.Time `gorm:"column:last_message_at"`
-	SamplePhoneNumberID  string     `gorm:"column:sample_phone_number_id"`
+}
+
+type chatRepairTargetResolution struct {
+	TargetOrgID       string
+	TargetAccount     string
+	TargetOrgCount    int64
+	TargetAccountCount int64
+	PhoneNumberID     string
 }
 
 type ChatRepairCandidate struct {

@@ -19,6 +19,7 @@ import (
 	"github.com/shridarpatil/whatomate/pkg/whatsapp"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
+	"gorm.io/gorm"
 )
 
 // ContactResponse represents a contact with additional fields for the frontend
@@ -1473,7 +1474,8 @@ func (a *App) UpdateContact(r *fastglue.Request) error {
 	return r.SendEnvelope(a.buildContactResponse(contact, orgID))
 }
 
-// DeleteContact soft-deletes a contact
+// DeleteContact soft-deletes a contact. When include_messages=true is passed,
+// it also soft-deletes the full conversation history for that contact.
 func (a *App) DeleteContact(r *fastglue.Request) error {
 	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
@@ -1490,13 +1492,42 @@ func (a *App) DeleteContact(r *fastglue.Request) error {
 		return nil
 	}
 
-	// Get contact
 	contact, err := findByIDAndOrg[models.Contact](a.DB, r, contactID, orgID, "Contact")
 	if err != nil {
 		return nil
 	}
 
-	// Soft delete the contact
+	includeMessages := parseTruthyQueryArg(string(r.RequestCtx.QueryArgs().Peek("include_messages")))
+
+	if includeMessages {
+		tx := a.DB.Begin()
+		if tx.Error != nil {
+			a.Log.Error("Failed to start conversation delete transaction", "error", tx.Error)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete conversation", nil, "")
+		}
+
+		if err := a.deleteContactConversation(tx, contactID, orgID); err != nil {
+			tx.Rollback()
+			a.Log.Error("Failed to delete conversation", "error", err, "contact_id", contactID)
+			if err == gorm.ErrRecordNotFound {
+				return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Contact not found", nil, "")
+			}
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete conversation", nil, "")
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			a.Log.Error("Failed to commit conversation delete transaction", "error", err, "contact_id", contactID)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete conversation", nil, "")
+		}
+
+		a.broadcastConversationDeleted(orgID, contactID)
+
+		return r.SendEnvelope(map[string]any{
+			"message":    "Conversation deleted successfully",
+			"contact_id": contactID.String(),
+		})
+	}
+
 	if err := a.DB.Delete(contact).Error; err != nil {
 		a.Log.Error("Failed to delete contact", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete contact", nil, "")

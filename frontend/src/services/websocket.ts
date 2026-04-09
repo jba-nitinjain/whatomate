@@ -43,7 +43,9 @@ function showNotification(title: string, body: string, contactId: string) {
 // WebSocket message types
 const WS_TYPE_AUTH = 'auth'
 const WS_TYPE_NEW_MESSAGE = 'new_message'
+const WS_TYPE_MESSAGE_DELETED = 'message_deleted'
 const WS_TYPE_STATUS_UPDATE = 'status_update'
+const WS_TYPE_CONVERSATION_DELETED = 'conversation_deleted'
 const WS_TYPE_SET_CONTACT = 'set_contact'
 const WS_TYPE_PING = 'ping'
 const WS_TYPE_PONG = 'pong'
@@ -180,8 +182,14 @@ class WebSocketService {
         case WS_TYPE_NEW_MESSAGE:
           this.handleNewMessage(store, message.payload)
           break
+        case WS_TYPE_MESSAGE_DELETED:
+          this.handleMessageDeleted(store, message.payload)
+          break
         case WS_TYPE_STATUS_UPDATE:
           this.handleStatusUpdate(store, message.payload)
+          break
+        case WS_TYPE_CONVERSATION_DELETED:
+          this.handleConversationDeleted(store, message.payload)
           break
         case WS_TYPE_AGENT_TRANSFER:
           this.handleAgentTransfer(message.payload)
@@ -313,6 +321,25 @@ class WebSocketService {
 
   private handleStatusUpdate(store: ReturnType<typeof useContactsStore>, payload: any) {
     store.updateMessageStatus(payload.message_id, payload.status, payload.error_message)
+  }
+
+  private handleMessageDeleted(store: ReturnType<typeof useContactsStore>, payload: any) {
+    if (payload.contact_id) {
+      store.removeMessage(payload.message_id)
+    }
+    if (payload.contact) {
+      store.syncContact(payload.contact)
+    } else {
+      store.fetchContacts()
+    }
+  }
+
+  private handleConversationDeleted(store: ReturnType<typeof useContactsStore>, payload: any) {
+    store.removeConversation(payload.contact_id)
+    if (router.currentRoute.value.params.contactId === payload.contact_id) {
+      useNotesStore().clearNotes()
+      router.push('/chat')
+    }
   }
 
   private handleReactionUpdate(store: ReturnType<typeof useContactsStore>, payload: any) {
