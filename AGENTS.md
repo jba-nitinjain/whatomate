@@ -49,3 +49,7 @@ Always publish as multi-arch for:
 - `linux/arm64`
 
 Use [DOCKER_HUB_PUBLISHING.md](/e:/xampp/htdocs/bu-so/whatomate/DOCKER_HUB_PUBLISHING.md) as the source of truth.
+
+Preferred command from repo root:
+
+- `make docker-push`

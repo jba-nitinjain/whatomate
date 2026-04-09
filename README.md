@@ -90,10 +90,17 @@ When publishing images to Docker Hub, always push a multi-arch image that includ
 - `linux/amd64`
 - `linux/arm64`
 
+Preferred shortcut:
+
+```bash
+make docker-push
+```
+
 Example:
 
 ```bash
 docker buildx build \
+  --builder multiarch-builder \
   --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile \
   -t nikyjain/whatomate:latest \

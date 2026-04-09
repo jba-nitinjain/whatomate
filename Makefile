@@ -1,4 +1,4 @@
-.PHONY: all build build-prod run test clean docker-build docker-up docker-down migrate frontend-dev frontend-build
+.PHONY: all build build-prod run test clean docker-build docker-up docker-down docker-push docker-manifest migrate frontend-dev frontend-build
 
 # Go parameters
 GOCMD=go
@@ -14,6 +14,10 @@ LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIM
 
 # Docker parameters
 DOCKER_COMPOSE=docker compose -f docker/docker-compose.yml
+DOCKER_IMAGE?=nikyjain/whatomate:latest
+DOCKER_PLATFORMS?=linux/amd64,linux/arm64
+DOCKER_DOCKERFILE?=docker/Dockerfile
+DOCKER_BUILDER?=multiarch-builder
 
 all: build
 
@@ -82,6 +86,12 @@ docker-logs:
 
 docker-restart:
 	$(DOCKER_COMPOSE) restart
+
+docker-push:
+	docker buildx build --builder $(DOCKER_BUILDER) --platform $(DOCKER_PLATFORMS) -f $(DOCKER_DOCKERFILE) -t $(DOCKER_IMAGE) --push .
+
+docker-manifest:
+	docker buildx imagetools inspect $(DOCKER_IMAGE)
 
 # Database migrations
 migrate:
@@ -153,6 +163,8 @@ help:
 	@echo "  docker-up      - Start Docker containers"
 	@echo "  docker-down    - Stop Docker containers"
 	@echo "  docker-logs    - View Docker logs"
+	@echo "  docker-push    - Build and push multi-arch Docker Hub image ($(DOCKER_IMAGE))"
+	@echo "  docker-manifest - Inspect the published Docker image manifest"
 	@echo ""
 	@echo "Other:"
 	@echo "  clean          - Remove build artifacts"

@@ -16,7 +16,14 @@ The production image is built from [docker/Dockerfile](/e:/xampp/htdocs/bu-so/wh
 From the repo root:
 
 ```bash
+make docker-push
+```
+
+Equivalent raw command:
+
+```bash
 docker buildx build \
+  --builder multiarch-builder \
   --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile \
   -t nikyjain/whatomate:latest \
@@ -54,17 +61,13 @@ docker buildx inspect --bootstrap
 4. Build and push the image.
 
 ```bash
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  -f docker/Dockerfile \
-  -t nikyjain/whatomate:latest \
-  --push .
+make docker-push
 ```
 
 5. Verify the published manifest.
 
 ```bash
-docker buildx imagetools inspect nikyjain/whatomate:latest
+make docker-manifest
 ```
 
 The manifest should list both `linux/amd64` and `linux/arm64`.
@@ -75,6 +78,7 @@ If you want a second immutable tag, push it together with `latest`, but `latest`
 
 ```bash
 docker buildx build \
+  --builder multiarch-builder \
   --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile \
   -t nikyjain/whatomate:latest \
@@ -93,8 +97,6 @@ docker buildx build \
 ## Fast Checklist
 
 - `docker login`
-- `docker buildx use whatomate-multiarch`
 - `docker buildx inspect --bootstrap`
-- build from [docker/Dockerfile](/e:/xampp/htdocs/bu-so/whatomate/docker/Dockerfile)
-- push `nikyjain/whatomate:latest`
-- verify with `docker buildx imagetools inspect nikyjain/whatomate:latest`
+- `make docker-push`
+- `make docker-manifest`
