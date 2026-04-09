@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # Frontend build stage
 FROM node:22-alpine AS frontend-builder
 
@@ -5,10 +7,18 @@ WORKDIR /app/frontend
 
 # Copy frontend dependency files first for caching
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci --prefer-offline
 
 # Copy frontend source and build
-COPY frontend/ .
+COPY frontend/src ./src
+COPY frontend/public ./public
+COPY frontend/index.html ./
+COPY frontend/vite.config.ts ./
+COPY frontend/tsconfig.json ./
+COPY frontend/tsconfig.node.json ./
+COPY frontend/tailwind.config.cjs ./
+COPY frontend/postcss.config.cjs ./
+COPY frontend/components.json ./
 RUN npm run build
 
 # Go build stage
@@ -21,16 +31,21 @@ RUN apk add --no-cache git ca-certificates
 
 # Copy go mod files
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 # Copy source code
-COPY . .
+COPY cmd ./cmd
+COPY internal ./internal
+COPY pkg ./pkg
+COPY config.example.toml ./
 
 # Embed frontend build into Go binary
 COPY --from=frontend-builder /app/frontend/dist/ ./internal/frontend/dist/
 
 # Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o whatomate ./cmd/whatomate
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -o whatomate ./cmd/whatomate
 
 # Piper TTS download stage
 FROM debian:bookworm-slim AS piper-dl

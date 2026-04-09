@@ -26,6 +26,8 @@ docker buildx build \
   --builder multiarch-builder \
   --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile \
+  --cache-from type=registry,ref=nikyjain/whatomate:buildcache \
+  --cache-to type=registry,ref=nikyjain/whatomate:buildcache,mode=max \
   -t nikyjain/whatomate:latest \
   --push .
 ```
@@ -64,6 +66,8 @@ docker buildx inspect --bootstrap
 make docker-push
 ```
 
+This push also refreshes a registry-backed Buildx cache at `nikyjain/whatomate:buildcache` to speed up later multi-arch publishes.
+
 5. Verify the published manifest.
 
 ```bash
@@ -81,6 +85,8 @@ docker buildx build \
   --builder multiarch-builder \
   --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile \
+  --cache-from type=registry,ref=nikyjain/whatomate:buildcache \
+  --cache-to type=registry,ref=nikyjain/whatomate:buildcache,mode=max \
   -t nikyjain/whatomate:latest \
   -t nikyjain/whatomate:2026-04-09 \
   --push .
@@ -92,6 +98,7 @@ docker buildx build \
 - Do not publish single-arch images for release.
 - Do not skip the `latest` tag.
 - Use [docker/Dockerfile](/e:/xampp/htdocs/bu-so/whatomate/docker/Dockerfile) for the app image.
+- Keep the Buildx cache tag at `nikyjain/whatomate:buildcache` unless there is a deliberate reason to rotate it.
 - The local compose file at [docker/docker-compose.yml](/e:/xampp/htdocs/bu-so/whatomate/docker/docker-compose.yml) is for local builds and does not change the Docker Hub publishing target.
 
 ## Fast Checklist

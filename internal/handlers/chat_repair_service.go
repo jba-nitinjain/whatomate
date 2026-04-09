@@ -17,8 +17,18 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 
 	candidates := make([]ChatRepairCandidate, 0, len(rows))
 	summary := ChatRepairSummary{ScannedContacts: int64(len(rows))}
+	contactIDs := make([]string, 0, len(rows))
 
 	orgNames, err := a.lookupOrganizationNames(rows)
+	if err != nil {
+		return nil, ChatRepairSummary{}, err
+	}
+
+	for _, row := range rows {
+		contactIDs = append(contactIDs, row.ContactID)
+	}
+
+	sampleMessages, err := a.loadChatRepairSampleMessages(contactIDs, 3)
 	if err != nil {
 		return nil, ChatRepairSummary{}, err
 	}
@@ -37,6 +47,7 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 			AffectedMessageCount: row.AffectedMessageCount,
 			LastMessageAt:        row.LastMessageAt,
 			PhoneNumberID:        row.SamplePhoneNumberID,
+			SampleMessages:       sampleMessages[row.ContactID],
 		}
 
 		switch {
@@ -168,6 +179,46 @@ func (a *App) applyChatRepairMove(tx *gorm.DB, candidate ChatRepairCandidate) (i
 	}
 
 	if err := a.refreshChatRepairContactSnapshot(tx, candidate.ContactID, now); err != nil {
+		return 0, err
+	}
+
+	return messageUpdate.RowsAffected, nil
+}
+
+func (a *App) applyChatRepairManualMerge(tx *gorm.DB, candidate ChatRepairCandidate) (int64, error) {
+	now := time.Now().UTC()
+
+	if strings.TrimSpace(candidate.TargetContactID) == "" {
+		return 0, gorm.ErrRecordNotFound
+	}
+
+	messageUpdate := tx.Model(&models.Message{}).Where("contact_id = ? AND deleted_at IS NULL", candidate.ContactID).Updates(map[string]any{
+		"contact_id":         candidate.TargetContactID,
+		"organization_id":    candidate.TargetOrgID,
+		"whats_app_account":  candidate.TargetAccount,
+		"updated_at":         now,
+	})
+	if messageUpdate.Error != nil {
+		return 0, messageUpdate.Error
+	}
+
+	if err := a.refreshChatRepairContactSnapshot(tx, candidate.TargetContactID, now); err != nil {
+		return 0, err
+	}
+
+	var remainingMessages int64
+	if err := tx.Model(&models.Message{}).Where("contact_id = ? AND deleted_at IS NULL", candidate.ContactID).Count(&remainingMessages).Error; err != nil {
+		return 0, err
+	}
+
+	if remainingMessages == 0 {
+		if err := tx.Model(&models.Contact{}).Where("id = ? AND deleted_at IS NULL", candidate.ContactID).Updates(map[string]any{
+			"deleted_at": now,
+			"updated_at": now,
+		}).Error; err != nil {
+			return 0, err
+		}
+	} else if err := a.refreshChatRepairContactSnapshot(tx, candidate.ContactID, now); err != nil {
 		return 0, err
 	}
 

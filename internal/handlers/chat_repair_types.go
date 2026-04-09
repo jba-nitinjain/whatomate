@@ -39,6 +39,14 @@ type ChatRepairCandidate struct {
 	LastMessageAt        *time.Time `json:"last_message_at,omitempty"`
 	PhoneNumberID        string     `json:"phone_number_id"`
 	TargetContactID      string     `json:"target_contact_id,omitempty"`
+	SampleMessages       []ChatRepairSampleMessage `json:"sample_messages,omitempty"`
+}
+
+type ChatRepairSampleMessage struct {
+	Direction   string    `json:"direction"`
+	MessageType string    `json:"message_type"`
+	Preview     string    `json:"preview"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type ChatRepairSummary struct {
@@ -51,7 +59,8 @@ type ChatRepairSummary struct {
 }
 
 type ChatRepairApplyRequest struct {
-	ContactIDs []string `json:"contact_ids"`
+	ContactIDs            []string `json:"contact_ids"`
+	ManualMergeContactIDs []string `json:"manual_merge_contact_ids"`
 }
 
 type ChatRepairApplyResult struct {

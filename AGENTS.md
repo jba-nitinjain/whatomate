@@ -53,3 +53,7 @@ Use [DOCKER_HUB_PUBLISHING.md](/e:/xampp/htdocs/bu-so/whatomate/DOCKER_HUB_PUBLI
 Preferred command from repo root:
 
 - `make docker-push`
+
+The Docker publish path also maintains a remote Buildx cache at:
+
+- `nikyjain/whatomate:buildcache`

@@ -58,6 +58,10 @@ func TestApp_PreviewChatRepairCandidates(t *testing.T) {
 			AffectedMessageCount: 1,
 			PhoneNumberID:        targetAccount.PhoneID,
 		}, normalizeChatRepairCandidate(resp.Data.Candidates[0]))
+		require.Len(t, resp.Data.Candidates[0].SampleMessages, 1)
+		assert.Equal(t, "outgoing", resp.Data.Candidates[0].SampleMessages[0].Direction)
+		assert.Equal(t, "text", resp.Data.Candidates[0].SampleMessages[0].MessageType)
+		assert.Equal(t, "Legacy sync body", resp.Data.Candidates[0].SampleMessages[0].Preview)
 		assert.EqualValues(t, 1, resp.Data.Summary.ScannedContacts)
 		assert.EqualValues(t, 1, resp.Data.Summary.MoveCandidates)
 		assert.EqualValues(t, 1, resp.Data.Summary.AutoFixableCandidates)
@@ -121,6 +125,51 @@ func TestApp_ApplyChatRepairCandidates(t *testing.T) {
 	assert.Equal(t, targetAccount.Name, updatedMessage.WhatsAppAccount)
 }
 
+func TestApp_ApplyChatRepairCandidates_ManualMerge(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	homeOrg := testutil.CreateTestOrganization(t, app.DB)
+	targetOrg := testutil.CreateTestOrganization(t, app.DB)
+	adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)
+	superAdmin := testutil.CreateTestUser(t, app.DB, homeOrg.ID, testutil.WithRoleID(&adminRole.ID), testutil.WithSuperAdmin())
+
+	wrongContact, targetContact, targetAccount := seedChatRepairMergeCandidate(t, app, homeOrg.ID, targetOrg.ID)
+
+	req := testutil.NewJSONRequest(t, handlers.ChatRepairApplyRequest{
+		ManualMergeContactIDs: []string{wrongContact.ID.String()},
+	})
+	testutil.SetFullAuthContext(req, homeOrg.ID, superAdmin.ID, superAdmin.RoleID, true)
+
+	err := app.ApplyChatRepairCandidates(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data handlers.ChatRepairApplyResult `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+	assert.EqualValues(t, 1, resp.Data.ProcessedCandidates)
+	assert.EqualValues(t, 1, resp.Data.UpdatedContacts)
+	assert.EqualValues(t, 1, resp.Data.UpdatedMessages)
+	assert.EqualValues(t, 0, resp.Data.SkippedCandidates)
+
+	var mergedMessage models.Message
+	require.NoError(t, app.DB.Where("whats_app_message_id = ?", "wamid.legacy-chat-repair-merge").First(&mergedMessage).Error)
+	assert.Equal(t, targetContact.ID, mergedMessage.ContactID)
+	assert.Equal(t, targetOrg.ID, mergedMessage.OrganizationID)
+	assert.Equal(t, targetAccount.Name, mergedMessage.WhatsAppAccount)
+
+	var archivedContact models.Contact
+	require.NoError(t, app.DB.Unscoped().First(&archivedContact, wrongContact.ID).Error)
+	require.NotNil(t, archivedContact.DeletedAt)
+	assert.True(t, archivedContact.DeletedAt.Valid)
+
+	var refreshedTarget models.Contact
+	require.NoError(t, app.DB.First(&refreshedTarget, targetContact.ID).Error)
+	assert.Equal(t, "Legacy sync body", refreshedTarget.LastMessagePreview)
+}
+
 func seedChatRepairCandidate(t *testing.T, app *handlers.App, homeOrgID, targetOrgID uuid.UUID) (*models.Contact, *models.WhatsAppAccount) {
 	t.Helper()
 
@@ -179,7 +228,29 @@ func seedChatRepairCandidate(t *testing.T, app *handlers.App, homeOrgID, targetO
 	return wrongContact, targetAccount
 }
 
+func seedChatRepairMergeCandidate(t *testing.T, app *handlers.App, homeOrgID, targetOrgID uuid.UUID) (*models.Contact, *models.Contact, *models.WhatsAppAccount) {
+	t.Helper()
+
+	wrongContact, targetAccount := seedChatRepairCandidate(t, app, homeOrgID, targetOrgID)
+	targetContact := testutil.CreateTestContactWith(
+		t,
+		app.DB,
+		targetOrgID,
+		testutil.WithContactAccount(targetAccount.Name),
+		testutil.WithPhoneNumber(wrongContact.PhoneNumber),
+	)
+	require.NoError(t, app.DB.Model(targetContact).Updates(map[string]any{
+		"profile_name":         "Correct Contact",
+		"last_message_preview": "Correct preview",
+		"whats_app_account":    targetAccount.Name,
+	}).Error)
+	require.NoError(t, app.DB.Model(&models.Message{}).Where("contact_id = ?", wrongContact.ID).Update("whats_app_message_id", "wamid.legacy-chat-repair-merge").Error)
+
+	return wrongContact, targetContact, targetAccount
+}
+
 func normalizeChatRepairCandidate(candidate handlers.ChatRepairCandidate) handlers.ChatRepairCandidate {
 	candidate.LastMessageAt = nil
+	candidate.SampleMessages = nil
 	return candidate
 }

@@ -45,7 +45,7 @@ func (a *App) PreviewChatRepairCandidates(r *fastglue.Request) error {
 	})
 }
 
-// ApplyChatRepairCandidates applies the safe move-only repairs selected by the super admin.
+// ApplyChatRepairCandidates applies safe move repairs and explicitly approved manual merges.
 func (a *App) ApplyChatRepairCandidates(r *fastglue.Request) error {
 	userID, ok := r.RequestCtx.UserValue("user_id").(uuid.UUID)
 	if !ok {
@@ -72,6 +72,10 @@ func (a *App) ApplyChatRepairCandidates(r *fastglue.Request) error {
 	for _, id := range req.ContactIDs {
 		selected[strings.TrimSpace(id)] = true
 	}
+	manualMergeSelected := make(map[string]bool, len(req.ManualMergeContactIDs))
+	for _, id := range req.ManualMergeContactIDs {
+		manualMergeSelected[strings.TrimSpace(id)] = true
+	}
 
 	tx := a.DB.Begin()
 	if tx.Error != nil {
@@ -80,25 +84,47 @@ func (a *App) ApplyChatRepairCandidates(r *fastglue.Request) error {
 
 	result := ChatRepairApplyResult{}
 	for _, candidate := range candidates {
-		if len(selected) > 0 && !selected[candidate.ContactID] {
-			continue
+		if len(selected) > 0 || len(manualMergeSelected) > 0 {
+			if !selected[candidate.ContactID] && !manualMergeSelected[candidate.ContactID] {
+				continue
+			}
 		}
 
 		result.ProcessedCandidates++
-		if candidate.Action != chatRepairActionMove {
-			result.SkippedCandidates++
+		switch candidate.Action {
+		case chatRepairActionMove:
+			if !selected[candidate.ContactID] {
+				result.SkippedCandidates++
+				continue
+			}
+
+			updatedMessages, err := a.applyChatRepairMove(tx, candidate)
+			if err != nil {
+				tx.Rollback()
+				a.Log.Error("Failed to apply chat repair candidate", "error", err, "contact_id", candidate.ContactID)
+				return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to apply chat repair", nil, "")
+			}
+
+			result.UpdatedContacts++
+			result.UpdatedMessages += updatedMessages
+		case chatRepairActionMergeRequired:
+			if !manualMergeSelected[candidate.ContactID] {
+				result.SkippedCandidates++
+				continue
+			}
+
+			updatedMessages, err := a.applyChatRepairManualMerge(tx, candidate)
+			if err != nil {
+				tx.Rollback()
+				a.Log.Error("Failed to apply manual chat repair merge", "error", err, "contact_id", candidate.ContactID, "target_contact_id", candidate.TargetContactID)
+				return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to apply chat repair", nil, "")
+			}
+
+			result.UpdatedContacts++
+			result.UpdatedMessages += updatedMessages
+		default:
 			continue
 		}
-
-		updatedMessages, err := a.applyChatRepairMove(tx, candidate)
-		if err != nil {
-			tx.Rollback()
-			a.Log.Error("Failed to apply chat repair candidate", "error", err, "contact_id", candidate.ContactID)
-			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to apply chat repair", nil, "")
-		}
-
-		result.UpdatedContacts++
-		result.UpdatedMessages += updatedMessages
 	}
 
 	if err := tx.Commit().Error; err != nil {

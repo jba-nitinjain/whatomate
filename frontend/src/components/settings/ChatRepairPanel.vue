@@ -23,6 +23,7 @@ const { t } = useI18n();
 
 const isLoading = ref(false);
 const isApplying = ref(false);
+const mergingContactId = ref<string | null>(null);
 const summary = ref<ChatRepairSummary | null>(null);
 const candidates = ref<ChatRepairCandidate[]>([]);
 const selectedContactIds = ref<string[]>([]);
@@ -87,6 +88,25 @@ async function applySafeCandidates() {
     toast.error(t("settings.chatRepairApplyFailed"));
   } finally {
     isApplying.value = false;
+  }
+}
+
+async function approveManualMerge(contactId: string) {
+  mergingContactId.value = contactId;
+  try {
+    const response = await chatRepairService.apply([], [contactId]);
+    const data = (response.data as any).data || response.data;
+    toast.success(
+      t("settings.chatRepairManualMergeSuccess", {
+        contacts: data.updated_contacts,
+        messages: data.updated_messages,
+      }),
+    );
+    await loadCandidates();
+  } catch {
+    toast.error(t("settings.chatRepairManualMergeFailed"));
+  } finally {
+    mergingContactId.value = null;
   }
 }
 
@@ -231,9 +251,11 @@ onMounted(loadCandidates);
         :key="candidate.contact_id"
         :candidate="candidate"
         :selected="selectedContactIds.includes(candidate.contact_id)"
+        :is-merging="mergingContactId === candidate.contact_id"
         @toggle="
           (checked) => setCandidateSelection(candidate.contact_id, checked)
         "
+        @manual-merge="approveManualMerge(candidate.contact_id)"
       />
     </CardContent>
   </Card>

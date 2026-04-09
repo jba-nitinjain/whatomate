@@ -197,6 +197,7 @@ export const apiKeysService = {
 };
 
 export interface ChatRepairCandidate {
+  sample_messages?: ChatRepairSampleMessage[];
   contact_id: string;
   phone_number: string;
   profile_name: string;
@@ -212,6 +213,13 @@ export interface ChatRepairCandidate {
   last_message_at?: string;
   phone_number_id: string;
   target_contact_id?: string;
+}
+
+export interface ChatRepairSampleMessage {
+  direction: string;
+  message_type: string;
+  preview: string;
+  created_at: string;
 }
 
 export interface ChatRepairSummary {
@@ -236,9 +244,10 @@ export const chatRepairService = {
       "/admin/chat-repair",
       { params: { limit } },
     ),
-  apply: (contactIds?: string[]) =>
+  apply: (contactIds?: string[], manualMergeContactIds?: string[]) =>
     api.post<ChatRepairApplyResult>("/admin/chat-repair/apply", {
       contact_ids: contactIds ?? [],
+      manual_merge_contact_ids: manualMergeContactIds ?? [],
     }),
 };
 

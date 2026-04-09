@@ -103,6 +103,8 @@ docker buildx build \
   --builder multiarch-builder \
   --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile \
+  --cache-from type=registry,ref=nikyjain/whatomate:buildcache \
+  --cache-to type=registry,ref=nikyjain/whatomate:buildcache,mode=max \
   -t nikyjain/whatomate:latest \
   -t nikyjain/whatomate:<tag> \
   --push .
