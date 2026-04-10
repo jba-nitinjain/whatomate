@@ -89,6 +89,28 @@ func seedChatRepairMergeCandidate(t *testing.T, app *handlers.App, homeOrgID, ta
 	return wrongContact, targetContact, targetAccount
 }
 
+func seedChatRepairDeletedTargetCandidate(t *testing.T, app *handlers.App, homeOrgID, targetOrgID uuid.UUID) (*models.Contact, *models.Contact, *models.WhatsAppAccount) {
+	t.Helper()
+
+	wrongContact, targetAccount := seedChatRepairCandidate(t, app, homeOrgID, targetOrgID)
+	targetContact := testutil.CreateTestContactWith(
+		t,
+		app.DB,
+		targetOrgID,
+		testutil.WithContactAccount(targetAccount.Name),
+		testutil.WithPhoneNumber(wrongContact.PhoneNumber),
+	)
+	require.NoError(t, app.DB.Model(targetContact).Updates(map[string]any{
+		"profile_name":         "Deleted Target Contact",
+		"last_message_preview": "Deleted preview",
+		"whats_app_account":    targetAccount.Name,
+	}).Error)
+	require.NoError(t, app.DB.Delete(targetContact).Error)
+	require.NoError(t, app.DB.Model(&models.Message{}).Where("contact_id = ?", wrongContact.ID).Update("whats_app_message_id", "wamid.legacy-chat-repair-deleted-target").Error)
+
+	return wrongContact, targetContact, targetAccount
+}
+
 func seedChatRepairAccountEvidenceCandidate(t *testing.T, app *handlers.App, homeOrgID, targetOrgID uuid.UUID) (*models.Contact, *models.WhatsAppAccount) {
 	t.Helper()
 

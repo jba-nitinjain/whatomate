@@ -15,7 +15,6 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 	}
 
 	candidates := make([]ChatRepairCandidate, 0, len(rows))
-	summary := ChatRepairSummary{ScannedContacts: int64(len(rows))}
 	contactIDs := make([]string, 0, len(rows))
 
 	orgNames, err := a.lookupOrganizationNames(rows)
@@ -74,11 +73,15 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 			continue
 		default:
 			var targetContact models.Contact
-			err := a.DB.Where("organization_id = ? AND phone_number = ? AND deleted_at IS NULL", resolution.TargetOrgID, row.PhoneNumber).First(&targetContact).Error
+			err := a.DB.Unscoped().Where("organization_id = ? AND phone_number = ?", resolution.TargetOrgID, row.PhoneNumber).First(&targetContact).Error
 			if err == nil && targetContact.ID.String() != row.ContactID {
 				candidate.Action = chatRepairActionMergeRequired
 				candidate.TargetContactID = targetContact.ID.String()
-				candidate.Reason = "A contact with this phone number already exists in the target organization"
+				if targetContact.DeletedAt.Valid {
+					candidate.Reason = "A matching deleted contact already exists in the target organization and must be restored before merging"
+				} else {
+					candidate.Reason = "A contact with this phone number already exists in the target organization"
+				}
 			} else if err != nil && err != gorm.ErrRecordNotFound {
 				return nil, ChatRepairSummary{}, err
 			} else {
@@ -87,20 +90,10 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 			}
 		}
 
-		summary.AffectedExternalMessages += row.AffectedMessageCount
-		switch candidate.Action {
-		case chatRepairActionMove:
-			summary.MoveCandidates++
-			summary.AutoFixableCandidates++
-		case chatRepairActionMergeRequired:
-			summary.MergeRequiredCandidates++
-		case chatRepairActionConflict:
-			summary.ConflictCandidates++
-		}
-
 		candidates = append(candidates, candidate)
 	}
 
+	candidates, summary := reconcileChatRepairCandidates(int64(len(rows)), candidates)
 	return candidates, summary, nil
 }
 
@@ -137,6 +130,19 @@ func (a *App) applyChatRepairManualMerge(tx *gorm.DB, candidate ChatRepairCandid
 
 	if strings.TrimSpace(candidate.TargetContactID) == "" {
 		return 0, gorm.ErrRecordNotFound
+	}
+
+	var targetContact models.Contact
+	if err := tx.Unscoped().Where("id = ?", candidate.TargetContactID).First(&targetContact).Error; err != nil {
+		return 0, err
+	}
+	if targetContact.DeletedAt.Valid {
+		if err := tx.Unscoped().Model(&targetContact).Updates(map[string]any{
+			"deleted_at": nil,
+			"updated_at": now,
+		}).Error; err != nil {
+			return 0, err
+		}
 	}
 
 	messageUpdate := tx.Model(&models.Message{}).Where("contact_id = ? AND deleted_at IS NULL", candidate.ContactID).Updates(map[string]any{

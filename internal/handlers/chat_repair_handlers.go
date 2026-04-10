@@ -67,6 +67,9 @@ func (a *App) ApplyChatRepairCandidates(r *fastglue.Request) error {
 		a.Log.Error("Failed to scan chat repair candidates before applying fixes", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to scan chat repair candidates", nil, "")
 	}
+	if msg := validateChatRepairApplyRequest(req, candidates); msg != "" {
+		return r.SendErrorEnvelope(fasthttp.StatusConflict, msg, nil, "")
+	}
 
 	selected := make(map[string]bool, len(req.ContactIDs))
 	for _, id := range req.ContactIDs {
@@ -132,4 +135,61 @@ func (a *App) ApplyChatRepairCandidates(r *fastglue.Request) error {
 	}
 
 	return r.SendEnvelope(result)
+}
+
+func validateChatRepairApplyRequest(req ChatRepairApplyRequest, candidates []ChatRepairCandidate) string {
+	if len(req.ContactIDs) == 0 && len(req.ManualMergeContactIDs) == 0 {
+		return ""
+	}
+
+	candidateByID := make(map[string]ChatRepairCandidate, len(candidates))
+	for _, candidate := range candidates {
+		candidateByID[candidate.ContactID] = candidate
+	}
+
+	for _, rawID := range req.ContactIDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			continue
+		}
+
+		candidate, ok := candidateByID[id]
+		if !ok {
+			return "One or more selected chat repairs no longer exist. Refresh candidates and try again."
+		}
+		if candidate.Action == chatRepairActionMove {
+			continue
+		}
+		if candidate.Action == chatRepairActionConflict {
+			return "One or more selected chat repairs are no longer safe to move because they conflict with another chat that resolves to the same target phone number. Refresh candidates and resolve the conflict before retrying."
+		}
+		if candidate.Action == chatRepairActionMergeRequired {
+			return "One or more selected chat repairs now require a manual merge. Refresh candidates and review them before retrying."
+		}
+		return "Selected chat repairs are no longer safe to apply. Refresh candidates and try again."
+	}
+
+	for _, rawID := range req.ManualMergeContactIDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			continue
+		}
+
+		candidate, ok := candidateByID[id]
+		if !ok {
+			return "One or more selected chat repairs no longer exist. Refresh candidates and try again."
+		}
+		if candidate.Action == chatRepairActionMergeRequired {
+			continue
+		}
+		if candidate.Action == chatRepairActionConflict {
+			return "One or more selected chat repairs cannot be merged automatically because their target is ambiguous. Refresh candidates and resolve the conflict before retrying."
+		}
+		if candidate.Action == chatRepairActionMove {
+			return "One or more selected chat repairs no longer require a manual merge. Refresh candidates and try again."
+		}
+		return "Selected chat repairs are no longer safe to apply. Refresh candidates and try again."
+	}
+
+	return ""
 }

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
+import type { AxiosError } from "axios";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -56,6 +57,13 @@ function setCandidateSelection(contactId: string, checked: boolean) {
     : selectedContactIds.value.filter((id) => id !== contactId);
 }
 
+function getApplyErrorMessage(error: unknown, fallback: string) {
+  return (
+    (error as AxiosError<{ message?: string }>)?.response?.data?.message ||
+    fallback
+  );
+}
+
 async function loadCandidates() {
   isLoading.value = true;
   try {
@@ -84,8 +92,8 @@ async function applySafeCandidates() {
       }),
     );
     await loadCandidates();
-  } catch {
-    toast.error(t("settings.chatRepairApplyFailed"));
+  } catch (error) {
+    toast.error(getApplyErrorMessage(error, t("settings.chatRepairApplyFailed")));
   } finally {
     isApplying.value = false;
   }
@@ -103,8 +111,10 @@ async function approveManualMerge(contactId: string) {
       }),
     );
     await loadCandidates();
-  } catch {
-    toast.error(t("settings.chatRepairManualMergeFailed"));
+  } catch (error) {
+    toast.error(
+      getApplyErrorMessage(error, t("settings.chatRepairManualMergeFailed")),
+    );
   } finally {
     mergingContactId.value = null;
   }

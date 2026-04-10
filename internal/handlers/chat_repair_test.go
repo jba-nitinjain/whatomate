@@ -113,6 +113,7 @@ func TestApp_PreviewChatRepairCandidates(t *testing.T) {
 		assert.Equal(t, targetAccount.Name, resp.Data.Candidates[0].TargetAccount)
 		assert.Equal(t, "move", resp.Data.Candidates[0].Action)
 	})
+
 }
 
 func TestApp_ApplyChatRepairCandidates(t *testing.T) {
