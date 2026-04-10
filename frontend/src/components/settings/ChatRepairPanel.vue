@@ -1,8 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
-import type { AxiosError } from "axios";
+import { onMounted } from "vue";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,114 +10,31 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import ChatRepairCandidateCard from "@/components/settings/ChatRepairCandidateCard.vue";
-import {
-  chatRepairService,
-  type ChatRepairCandidate,
-  type ChatRepairSummary,
-} from "@/services/api";
+import { useChatRepair } from "@/composables";
 import { AlertTriangle, Loader2, RefreshCw, Wrench } from "lucide-vue-next";
 
-const { t } = useI18n();
+const {
+  applySafeCandidates,
+  approveManualMerge,
+  candidates,
+  clearSafeCandidateSelection,
+  isApplying,
+  isLoadingCandidates,
+  isScanning,
+  loadCandidates,
+  mergingContactId,
+  safeCandidates,
+  scanCandidates,
+  selectAllSafeCandidates,
+  selectedContactIds,
+  selectedSafeCount,
+  setCandidateSelection,
+  summary,
+} = useChatRepair();
 
-const isLoading = ref(false);
-const isApplying = ref(false);
-const mergingContactId = ref<string | null>(null);
-const summary = ref<ChatRepairSummary | null>(null);
-const candidates = ref<ChatRepairCandidate[]>([]);
-const selectedContactIds = ref<string[]>([]);
-
-const safeCandidates = computed(() =>
-  candidates.value.filter((candidate) => candidate.action === "move"),
-);
-const selectedSafeCount = computed(
-  () =>
-    safeCandidates.value.filter((candidate) =>
-      selectedContactIds.value.includes(candidate.contact_id),
-    ).length,
-);
-
-function syncSelection() {
-  const safeIds = new Set(
-    safeCandidates.value.map((candidate) => candidate.contact_id),
-  );
-  selectedContactIds.value = selectedContactIds.value.filter((id) =>
-    safeIds.has(id),
-  );
-  if (selectedContactIds.value.length === 0 && safeIds.size > 0) {
-    selectedContactIds.value = [...safeIds];
-  }
-}
-
-function setCandidateSelection(contactId: string, checked: boolean) {
-  selectedContactIds.value = checked
-    ? Array.from(new Set([...selectedContactIds.value, contactId]))
-    : selectedContactIds.value.filter((id) => id !== contactId);
-}
-
-function getApplyErrorMessage(error: unknown, fallback: string) {
-  return (
-    (error as AxiosError<{ message?: string }>)?.response?.data?.message ||
-    fallback
-  );
-}
-
-async function loadCandidates() {
-  isLoading.value = true;
-  try {
-    const response = await chatRepairService.preview();
-    const data = (response.data as any).data || response.data;
-    summary.value = data.summary;
-    candidates.value = data.candidates || [];
-    syncSelection();
-  } catch {
-    toast.error(t("settings.chatRepairPreviewFailed"));
-  } finally {
-    isLoading.value = false;
-  }
-}
-
-async function applySafeCandidates() {
-  if (!selectedContactIds.value.length) return;
-  isApplying.value = true;
-  try {
-    const response = await chatRepairService.apply(selectedContactIds.value);
-    const data = (response.data as any).data || response.data;
-    toast.success(
-      t("settings.chatRepairApplySuccess", {
-        contacts: data.updated_contacts,
-        messages: data.updated_messages,
-      }),
-    );
-    await loadCandidates();
-  } catch (error) {
-    toast.error(getApplyErrorMessage(error, t("settings.chatRepairApplyFailed")));
-  } finally {
-    isApplying.value = false;
-  }
-}
-
-async function approveManualMerge(contactId: string) {
-  mergingContactId.value = contactId;
-  try {
-    const response = await chatRepairService.apply([], [contactId]);
-    const data = (response.data as any).data || response.data;
-    toast.success(
-      t("settings.chatRepairManualMergeSuccess", {
-        contacts: data.updated_contacts,
-        messages: data.updated_messages,
-      }),
-    );
-    await loadCandidates();
-  } catch (error) {
-    toast.error(
-      getApplyErrorMessage(error, t("settings.chatRepairManualMergeFailed")),
-    );
-  } finally {
-    mergingContactId.value = null;
-  }
-}
-
-onMounted(loadCandidates);
+onMounted(() => {
+  void loadCandidates();
+});
 </script>
 
 <template>
@@ -143,11 +57,14 @@ onMounted(loadCandidates);
         <Button
           variant="outline"
           size="sm"
-          class="bg-white/[0.04] border-white/[0.1] text-white/70 hover:bg-white/[0.08] hover:text-white light:bg-white light:border-gray-200 light:text-gray-700 light:hover:bg-gray-50"
-          @click="loadCandidates"
-          :disabled="isLoading || isApplying"
+          class="border-white/[0.1] bg-white/[0.04] text-white/70 hover:bg-white/[0.08] hover:text-white light:border-gray-200 light:bg-white light:text-gray-700 light:hover:bg-gray-50"
+          :disabled="isLoadingCandidates || isScanning || isApplying"
+          @click="scanCandidates"
         >
-          <Loader2 v-if="isLoading" class="mr-2 h-4 w-4 animate-spin" />
+          <Loader2
+            v-if="isLoadingCandidates || isScanning"
+            class="mr-2 h-4 w-4 animate-spin"
+          />
           <RefreshCw v-else class="mr-2 h-4 w-4" />
           {{ $t("settings.chatRepairScan") }}
         </Button>
@@ -155,8 +72,10 @@ onMounted(loadCandidates);
         <Button
           size="sm"
           class="bg-amber-600 text-white hover:bg-amber-500"
+          :disabled="
+            !selectedSafeCount || isLoadingCandidates || isScanning || isApplying
+          "
           @click="applySafeCandidates"
-          :disabled="!selectedSafeCount || isLoading || isApplying"
         >
           <Loader2 v-if="isApplying" class="mr-2 h-4 w-4 animate-spin" />
           <Wrench v-else class="mr-2 h-4 w-4" />
@@ -232,25 +151,21 @@ onMounted(loadCandidates);
         <button
           type="button"
           class="hover:text-white light:hover:text-gray-900"
-          @click="
-            selectedContactIds = safeCandidates.map(
-              (candidate) => candidate.contact_id,
-            )
-          "
+          @click="selectAllSafeCandidates"
         >
           {{ $t("common.selectAll") }}
         </button>
         <button
           type="button"
           class="hover:text-white light:hover:text-gray-900"
-          @click="selectedContactIds = []"
+          @click="clearSafeCandidateSelection"
         >
           {{ $t("common.clear") }}
         </button>
       </div>
 
       <div
-        v-if="!candidates.length && !isLoading"
+        v-if="!candidates.length && !isLoadingCandidates"
         class="rounded-lg border border-dashed border-white/[0.1] p-6 text-sm text-white/50 light:border-gray-200 light:text-gray-500"
       >
         {{ $t("settings.chatRepairEmpty") }}
@@ -262,9 +177,7 @@ onMounted(loadCandidates);
         :candidate="candidate"
         :selected="selectedContactIds.includes(candidate.contact_id)"
         :is-merging="mergingContactId === candidate.contact_id"
-        @toggle="
-          (checked) => setCandidateSelection(candidate.contact_id, checked)
-        "
+        @toggle="(checked) => setCandidateSelection(candidate.contact_id, checked)"
         @manual-merge="approveManualMerge(candidate.contact_id)"
       />
     </CardContent>

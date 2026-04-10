@@ -584,6 +584,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/api-keys", app.CreateAPIKey)
 	g.DELETE("/api/api-keys/{id}", app.DeleteAPIKey)
 	g.GET("/api/admin/chat-repair", app.PreviewChatRepairCandidates)
+	g.POST("/api/admin/chat-repair/scan", app.ScanChatRepairCandidates)
 	g.POST("/api/admin/chat-repair/apply", app.ApplyChatRepairCandidates)
 
 	// Accounts

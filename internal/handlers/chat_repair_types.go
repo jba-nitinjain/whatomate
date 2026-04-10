@@ -19,11 +19,11 @@ type chatRepairBaseRow struct {
 }
 
 type chatRepairTargetResolution struct {
-	TargetOrgID       string
-	TargetAccount     string
-	TargetOrgCount    int64
+	TargetOrgID        string
+	TargetAccount      string
+	TargetOrgCount     int64
 	TargetAccountCount int64
-	PhoneNumberID     string
+	PhoneNumberID      string
 }
 
 type ChatRepairCandidate struct {
@@ -71,4 +71,10 @@ type ChatRepairApplyResult struct {
 	UpdatedContacts     int64 `json:"updated_contacts"`
 	UpdatedMessages     int64 `json:"updated_messages"`
 	SkippedCandidates   int64 `json:"skipped_candidates"`
+}
+
+type ChatRepairScanResult struct {
+	AutoApplied ChatRepairApplyResult `json:"auto_applied"`
+	Summary     ChatRepairSummary     `json:"summary"`
+	Candidates  []ChatRepairCandidate `json:"candidates"`
 }

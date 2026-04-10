@@ -30,6 +30,10 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 	if err != nil {
 		return nil, ChatRepairSummary{}, err
 	}
+	messageLocations, err := a.loadChatRepairMessageLocations(contactIDs)
+	if err != nil {
+		return nil, ChatRepairSummary{}, err
+	}
 
 	for _, row := range rows {
 		resolution, err := a.resolveChatRepairTarget(row.ContactID, row.CurrentAccount)
@@ -61,6 +65,9 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 			PhoneNumberID:        resolution.PhoneNumberID,
 			SampleMessages:       sampleMessages[row.ContactID],
 		}
+		currentMatchesTarget := row.CurrentOrgID == resolution.TargetOrgID &&
+			strings.TrimSpace(row.CurrentAccount) == strings.TrimSpace(resolution.TargetAccount)
+		messageDrift := hasChatRepairMessageDrift(messageLocations[row.ContactID], resolution.TargetOrgID, resolution.TargetAccount)
 
 		switch {
 		case resolution.TargetOrgCount != 1:
@@ -69,7 +76,7 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 		case resolution.TargetAccountCount != 1:
 			candidate.Action = chatRepairActionConflict
 			candidate.Reason = "Multiple WhatsApp accounts match the available contact/message routing evidence"
-		case row.CurrentOrgID == resolution.TargetOrgID && strings.TrimSpace(row.CurrentAccount) == strings.TrimSpace(resolution.TargetAccount):
+		case currentMatchesTarget && !messageDrift:
 			continue
 		default:
 			var targetContact models.Contact
@@ -86,7 +93,11 @@ func (a *App) buildChatRepairCandidates(limit int) ([]ChatRepairCandidate, ChatR
 				return nil, ChatRepairSummary{}, err
 			} else {
 				candidate.Action = chatRepairActionMove
-				candidate.Reason = "Safe to move this chat to the resolved organization/account"
+				if currentMatchesTarget {
+					candidate.Reason = "Safe to normalize misrouted messages under this chat to the resolved organization/account"
+				} else {
+					candidate.Reason = "Safe to move this chat to the resolved organization/account"
+				}
 			}
 		}
 

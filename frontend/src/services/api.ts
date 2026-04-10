@@ -238,14 +238,32 @@ export interface ChatRepairApplyResult {
   skipped_candidates: number;
 }
 
+export interface ApiResponseEnvelope<T> {
+  data: T;
+}
+
+export type ApiResponseData<T> = T | ApiResponseEnvelope<T>;
+
+export interface ChatRepairPreviewResult {
+  summary: ChatRepairSummary;
+  candidates: ChatRepairCandidate[];
+}
+
+export interface ChatRepairScanResult {
+  auto_applied: ChatRepairApplyResult;
+  summary: ChatRepairSummary;
+  candidates: ChatRepairCandidate[];
+}
+
 export const chatRepairService = {
   preview: (limit = 100) =>
-    api.get<{ summary: ChatRepairSummary; candidates: ChatRepairCandidate[] }>(
+    api.get<ApiResponseData<ChatRepairPreviewResult>>(
       "/admin/chat-repair",
       { params: { limit } },
     ),
+  scan: () => api.post<ApiResponseData<ChatRepairScanResult>>("/admin/chat-repair/scan", {}),
   apply: (contactIds?: string[], manualMergeContactIds?: string[]) =>
-    api.post<ChatRepairApplyResult>("/admin/chat-repair/apply", {
+    api.post<ApiResponseData<ChatRepairApplyResult>>("/admin/chat-repair/apply", {
       contact_ids: contactIds ?? [],
       manual_merge_contact_ids: manualMergeContactIds ?? [],
     }),
