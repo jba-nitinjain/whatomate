@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+
 	"github.com/google/uuid"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -23,7 +25,7 @@ func (a *App) ApplyChatRepairCandidates(r *fastglue.Request) error {
 	}
 
 	var req ChatRepairApplyRequest
-	if err := r.ParseBody(&req); err != nil {
+	if err := json.Unmarshal(r.RequestCtx.Request.Body(), &req); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
 	}
 
