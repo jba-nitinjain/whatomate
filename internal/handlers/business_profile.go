@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"github.com/shridarpatil/whatomate/pkg/whatsapp"
+	"github.com/nikyjain/whatomate/pkg/whatsapp"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 )

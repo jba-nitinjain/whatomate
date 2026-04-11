@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 	"golang.org/x/crypto/bcrypt"
@@ -104,6 +104,11 @@ func (a *App) ListUsers(r *fastglue.Request) error {
 
 	countQuery := a.DB.Joins(joinClause, orgID).Where("users.deleted_at IS NULL")
 	dataQuery := a.DB.Joins(joinClause, orgID).Where("users.deleted_at IS NULL")
+	// Non-super-admins must not see super-admin accounts.
+	if !a.IsSuperAdmin(userID) {
+		countQuery = countQuery.Where("users.is_super_admin = false")
+		dataQuery = dataQuery.Where("users.is_super_admin = false")
+	}
 	if search != "" {
 		countQuery = countQuery.Where("users.full_name ILIKE ? OR users.email ILIKE ?", "%"+search+"%", "%"+search+"%")
 		dataQuery = dataQuery.Where("users.full_name ILIKE ? OR users.email ILIKE ?", "%"+search+"%", "%"+search+"%")
@@ -402,6 +407,11 @@ func (a *App) UpdateUser(r *fastglue.Request) error {
 
 	isMember := user.OrganizationID != orgID
 
+	// Prevent non-super-admins from editing super-admin accounts.
+	if !a.IsSuperAdmin(currentUserID) && user.IsSuperAdmin {
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Cannot edit a super admin user", nil, "")
+	}
+
 	// Load org-specific role for members
 	if isMember {
 		var userOrg models.UserOrganization
@@ -509,6 +519,18 @@ func (a *App) UpdateUser(r *fastglue.Request) error {
 			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Cannot remove your own super admin status", nil, "")
 		}
 		user.IsSuperAdmin = *saField
+	}
+
+	// Super-admin org transfer: move the user to a different organisation.
+	if req.OrganizationID != nil && *req.OrganizationID != uuid.Nil && a.IsSuperAdmin(currentUserID) {
+		var targetOrg models.Organization
+		if err := a.DB.Where("id = ? AND deleted_at IS NULL", *req.OrganizationID).First(&targetOrg).Error; err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Target organisation not found", nil, "")
+		}
+		user.OrganizationID = *req.OrganizationID
+		// Ensure the user has a user_organizations row in the target org.
+		a.DB.Where(models.UserOrganization{UserID: user.ID, OrganizationID: *req.OrganizationID}).
+			FirstOrCreate(&models.UserOrganization{UserID: user.ID, OrganizationID: *req.OrganizationID})
 	}
 
 	if err := a.DB.Save(&user).Error; err != nil {

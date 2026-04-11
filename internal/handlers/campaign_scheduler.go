@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/models"
 )
 
 // StartScheduledCampaignProcessor starts a background loop that promotes due scheduled campaigns

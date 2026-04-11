@@ -3,7 +3,7 @@ package handlers
 import (
 	"time"
 
-	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/models"
 )
 
 type chatRepairSampleMessageRow struct {

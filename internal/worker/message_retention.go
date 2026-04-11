@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/zerodha/logf"
 	"gorm.io/gorm"
 )

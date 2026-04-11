@@ -39,6 +39,7 @@ export interface UpdateUserData {
   role_id?: string
   is_active?: boolean
   is_super_admin?: boolean
+  organization_id?: string
 }
 
 export interface FetchUsersParams {

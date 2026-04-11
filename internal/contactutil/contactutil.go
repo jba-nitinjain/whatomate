@@ -2,7 +2,7 @@ package contactutil
 
 import (
 	"github.com/google/uuid"
-	"github.com/shridarpatil/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/models"
 	"gorm.io/gorm"
 )
 

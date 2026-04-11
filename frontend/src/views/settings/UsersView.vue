@@ -89,7 +89,7 @@ const getDefaultRoleId = () => rolesStore.roles.find(r => r.name === 'agent' && 
 
 function openCreateDialog() { formData.value.role_id = getDefaultRoleId(); baseOpenCreateDialog() }
 function openEditDialog(user: User) {
-  baseOpenEditDialog(user, (u) => ({ email: u.email, password: '', full_name: u.full_name, role_id: u.role_id || '', is_active: u.is_active, is_super_admin: u.is_super_admin || false }))
+  baseOpenEditDialog(user, (u) => ({ email: u.email, password: '', full_name: u.full_name, role_id: u.role_id || '', is_active: u.is_active, is_super_admin: u.is_super_admin || false, organization_id: u.organization_id || '' }))
 }
 
 watch(() => organizationsStore.selectedOrgId, () => { fetchUsers(); rolesStore.fetchRoles() })
@@ -128,6 +128,7 @@ async function saveUser() {
       data.is_active = formData.value.is_active
       if (formData.value.password) data.password = formData.value.password
       if (isSuperAdmin.value) data.is_super_admin = formData.value.is_super_admin
+      if (isSuperAdmin.value && formData.value.organization_id) data.organization_id = formData.value.organization_id
       await usersStore.updateUser(editingUser.value.id, data)
       toast.success(t('common.updatedSuccess', { resource: t('resources.User') }))
     } else {
@@ -334,7 +335,7 @@ function copyInviteLink() {
             </SelectContent>
           </Select>
         </div>
-        <div v-if="isSuperAdmin && !editingUser" class="space-y-2">
+        <div v-if="isSuperAdmin" class="space-y-2">
           <Label for="org_id">Organisation</Label>
           <Select v-model="formData.organization_id">
             <SelectTrigger>
@@ -347,7 +348,7 @@ function copyInviteLink() {
               </SelectItem>
             </SelectContent>
           </Select>
-          <p class="text-xs text-muted-foreground">Place this user in a specific organisation.</p>
+          <p class="text-xs text-muted-foreground">Place this user in a specific organisation. Changing this will move the user to the selected org.</p>
         </div>
         <div v-if="editingUser" class="flex items-center justify-between"><Label for="is_active" class="font-normal cursor-pointer">{{ $t('users.accountActive') }}</Label><Switch id="is_active" :checked="formData.is_active" @update:checked="formData.is_active = $event" :disabled="editingUser?.id === currentUserId" /></div>
         <div v-if="isSuperAdmin" class="flex items-center justify-between border-t pt-4"><div><Label for="is_super_admin" class="font-normal cursor-pointer">{{ $t('users.superAdminLabel') }}</Label><p class="text-xs text-muted-foreground">{{ $t('users.superAdminDesc') }}</p></div><Switch id="is_super_admin" :checked="formData.is_super_admin" @update:checked="formData.is_super_admin = $event" :disabled="editingUser?.id === currentUserId && editingUser?.is_super_admin" /></div>

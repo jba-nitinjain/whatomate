@@ -7,9 +7,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
-	"github.com/shridarpatil/whatomate/internal/models"
-	"github.com/shridarpatil/whatomate/internal/websocket"
-	"github.com/shridarpatil/whatomate/pkg/whatsapp"
+	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/websocket"
+	"github.com/nikyjain/whatomate/pkg/whatsapp"
 )
 
 // InitiateOutgoingCall sets up WebRTC between the agent browser and

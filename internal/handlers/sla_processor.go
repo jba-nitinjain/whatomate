@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shridarpatil/whatomate/internal/models"
-	"github.com/shridarpatil/whatomate/internal/websocket"
+	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/websocket"
 )
 
 // SLAProcessor handles periodic SLA checks and escalations

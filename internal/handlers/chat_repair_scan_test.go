@@ -3,9 +3,9 @@ package handlers_test
 import (
 	"testing"
 
-	"github.com/shridarpatil/whatomate/internal/handlers"
-	"github.com/shridarpatil/whatomate/internal/models"
-	"github.com/shridarpatil/whatomate/test/testutil"
+	"github.com/nikyjain/whatomate/internal/handlers"
+	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/test/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"

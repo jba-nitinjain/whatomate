@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shridarpatil/whatomate/internal/contactutil"
-	"github.com/shridarpatil/whatomate/internal/models"
-	"github.com/shridarpatil/whatomate/pkg/whatsapp"
+	"github.com/nikyjain/whatomate/internal/contactutil"
+	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/pkg/whatsapp"
 )
 
 // IncomingTextMessage represents a text, interactive, or media message from the webhook
