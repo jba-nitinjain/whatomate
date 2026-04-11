@@ -50,6 +50,7 @@ const generalSettings = ref({
   default_timezone: "UTC",
   date_format: "YYYY-MM-DD",
   mask_phone_numbers: false,
+  message_retention_days: 0,
 });
 
 // Notification Settings
@@ -92,6 +93,7 @@ onMounted(async () => {
         default_timezone: orgData.settings?.timezone || "UTC",
         date_format: orgData.settings?.date_format || "YYYY-MM-DD",
         mask_phone_numbers: orgData.settings?.mask_phone_numbers || false,
+        message_retention_days: orgData.settings?.message_retention_days || 0,
       };
       callingSettings.value = {
         calling_enabled: orgData.settings?.calling_enabled || false,
@@ -126,6 +128,7 @@ async function saveGeneralSettings() {
       timezone: generalSettings.value.default_timezone,
       date_format: generalSettings.value.date_format,
       mask_phone_numbers: generalSettings.value.mask_phone_numbers,
+      message_retention_days: generalSettings.value.message_retention_days || 0,
     });
     toast.success(t("settings.generalSaved"));
   } catch (error) {
@@ -409,6 +412,28 @@ function togglePlayAudio(type: "hold_music" | "ringback") {
                       generalSettings.mask_phone_numbers = $event
                     "
                   />
+                </div>
+                <Separator class="bg-white/[0.08] light:bg-gray-200" />
+                <div class="flex items-center justify-between gap-6">
+                  <div class="flex-1">
+                    <p class="font-medium text-white light:text-gray-900">
+                      Message Retention
+                    </p>
+                    <p class="text-sm text-white/40 light:text-gray-500">
+                      Delete messages older than this many days (1–60). Set to 0 to retain messages indefinitely.
+                    </p>
+                  </div>
+                  <div class="flex items-center gap-2 w-32">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="60"
+                      class="w-20 text-right"
+                      :model-value="generalSettings.message_retention_days"
+                      @update:model-value="(v) => generalSettings.message_retention_days = Math.min(60, Math.max(0, Number(v) || 0))"
+                    />
+                    <span class="text-sm text-white/40 light:text-gray-500">days</span>
+                  </div>
                 </div>
                 <div class="flex justify-end">
                   <Button

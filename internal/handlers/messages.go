@@ -1229,7 +1229,17 @@ func (a *App) resolveExternalMessageTargetOrgAndAccount(r *fastglue.Request, use
 		return fallbackOrgID, account, nil
 	}
 
-	if headerHasOrganizationOverride(r) || !a.IsSuperAdmin(userID) {
+	// If the caller pinned an org via X-Organization-ID, respect that; no global search.
+	if headerHasOrganizationOverride(r) {
+		return fallbackOrgID, nil, err
+	}
+
+	// Allow global cross-org lookup when:
+	//   a) the caller is a super-admin (JWT session), OR
+	//   b) the request is authenticated via an API key (X-API-Key header) — API keys are
+	//      explicitly provisioned tokens, and cross-org routing by phone_number_id is the
+	//      intended behaviour for external-send Lambda integrations.
+	if !a.IsSuperAdmin(userID) && !isAPIKeyRequest(r) {
 		return fallbackOrgID, nil, err
 	}
 
@@ -1239,6 +1249,12 @@ func (a *App) resolveExternalMessageTargetOrgAndAccount(r *fastglue.Request, use
 	}
 
 	return account.OrganizationID, account, nil
+}
+
+// isAPIKeyRequest reports whether the request was authenticated via an API key
+// (X-API-Key header) rather than a JWT session cookie/bearer token.
+func isAPIKeyRequest(r *fastglue.Request) bool {
+	return strings.TrimSpace(string(r.RequestCtx.Request.Header.Peek("X-API-Key"))) != ""
 }
 
 func (a *App) resolveWhatsAppAccountByPhoneNumberID(orgID uuid.UUID, phoneNumberID string) (*models.WhatsAppAccount, error) {

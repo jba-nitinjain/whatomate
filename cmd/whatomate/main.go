@@ -280,6 +280,10 @@ func runServer(args []string) {
 	go slaProcessor.Start(slaCtx)
 	lo.Info("SLA processor started")
 
+	// Start message retention cleanup worker (runs once at startup, then every 24 h)
+	go worker.StartMessageRetentionWorker(db, lo)
+	lo.Info("Message retention worker started")
+
 	// Start embedded workers
 	var workers []*worker.Worker
 	var workerCancel context.CancelFunc
@@ -586,6 +590,8 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/admin/chat-repair", app.PreviewChatRepairCandidates)
 	g.POST("/api/admin/chat-repair/scan", app.ScanChatRepairCandidates)
 	g.POST("/api/admin/chat-repair/apply", app.ApplyChatRepairCandidates)
+	g.GET("/api/admin/org-mismatch", app.PreviewOrgMismatch)
+	g.POST("/api/admin/org-mismatch/apply", app.ApplyOrgMismatchFix)
 
 	// Accounts
 	g.GET("/api/accounts", app.ListAccounts)

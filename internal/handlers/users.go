@@ -15,11 +15,12 @@ import (
 // Note: is_super_admin is intentionally excluded to prevent mass assignment.
 // Super admin status changes are handled via parseSuperAdminField.
 type UserRequest struct {
-	Email    string     `json:"email"`
-	Password string     `json:"password"`
-	FullName string     `json:"full_name"`
-	RoleID   *uuid.UUID `json:"role_id"`
-	IsActive *bool      `json:"is_active"`
+	Email          string     `json:"email"`
+	Password       string     `json:"password"`
+	FullName       string     `json:"full_name"`
+	RoleID         *uuid.UUID `json:"role_id"`
+	IsActive       *bool      `json:"is_active"`
+	OrganizationID *uuid.UUID `json:"organization_id"` // Super-admin only: place user in a specific org
 }
 
 // superAdminField is used to extract is_super_admin separately from the request body.
@@ -222,6 +223,18 @@ func (a *App) CreateUser(r *fastglue.Request) error {
 	var req UserRequest
 	if err := a.decodeRequest(r, &req); err != nil {
 		return nil
+	}
+
+	// Super-admin can specify a target organisation for the new user.
+	if req.OrganizationID != nil && *req.OrganizationID != uuid.Nil {
+		if !a.IsSuperAdmin(userID) {
+			return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Only super admins can create users in another organisation", nil, "")
+		}
+		var targetOrg models.Organization
+		if err := a.DB.Where("id = ?", *req.OrganizationID).First(&targetOrg).Error; err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Target organisation not found", nil, "")
+		}
+		orgID = *req.OrganizationID
 	}
 
 	// Validate required fields

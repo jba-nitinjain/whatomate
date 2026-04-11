@@ -273,6 +273,33 @@ export const accountsService = {
   list: () => api.get("/accounts"),
 };
 
+export interface OrgMismatchRecord {
+  contact_id: string;
+  phone_number: string;
+  profile_name: string;
+  current_org_id: string;
+  current_org_name: string;
+  correct_org_id: string;
+  correct_org_name: string;
+  phone_number_id: string;
+  message_count: number;
+}
+
+export interface OrgMismatchPreviewResult {
+  count: number;
+  records: OrgMismatchRecord[];
+}
+
+export interface OrgMismatchApplyResult {
+  fixed: number;
+  errors?: string[];
+}
+
+export const orgMismatchService = {
+  preview: () => api.get<ApiResponseData<OrgMismatchPreviewResult>>("/admin/org-mismatch"),
+  apply: () => api.post<ApiResponseData<OrgMismatchApplyResult>>("/admin/org-mismatch/apply", {}),
+};
+
 export const contactsService = {
   list: (params?: {
     search?: string;
@@ -878,6 +905,7 @@ export const organizationService = {
     transfer_timeout_secs?: number;
     hold_music_file?: string;
     ringback_file?: string;
+    message_retention_days?: number;
   }) => api.put("/org/settings", data),
   uploadOrgAudio: (file: File, type: "hold_music" | "ringback") => {
     const formData = new FormData();

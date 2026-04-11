@@ -65,7 +65,7 @@ def get_rds_connection():
         rds_connection = connect_to_rds()
     else:
         try:
-            # Ping to check if connection is still alive. 
+            # Ping to check if connection is still alive.
             # 'reconnect=True' will try to re-establish if necessary.
             rds_connection.ping(reconnect=True)
         except Exception as e:
@@ -208,9 +208,17 @@ def sync_to_whatomate(body_data, wamid):
         msg_type = str(message_data.get("type", "text")).lower()
         logger.info(f"[Line {line}] Message type resolved for Whatomate sync. msg_type={msg_type}")
 
+        # FIX: derive account name per-message so each WhatsApp number routes to
+        # its own account in Whatomate instead of always using the global env var.
+        whatsapp_account_name = credentials.get("whatsapp_account") or WHATOMATE_ACCOUNT_NAME
+
         whatomate_payload = {
             "phone_number": to_number,
-            "whatsapp_account": WHATOMATE_ACCOUNT_NAME,
+            # FIX: phone_number_id must be a top-level field so Whatomate's
+            # resolveExternalMessageTargetOrgAndAccount() picks it up for routing.
+            # Previously it was buried inside metadata{} where the handler ignores it.
+            "phone_number_id": phone_number_id,
+            "whatsapp_account": whatsapp_account_name,
             "whatsapp_message_id": str(wamid),
             "external_message_id": str(body_data.get("bulk_send_id", f"aws-sqs-{wamid}")),
             "sent_at": datetime.utcnow().isoformat() + "Z",
@@ -333,7 +341,10 @@ def sync_to_whatomate(body_data, wamid):
             WHATOMATE_API_URL,
             json=whatomate_payload,
             headers=headers,
-            timeout=10,
+            # FIX: separate connect (5 s) and read (30 s) timeouts.
+            # Previously timeout=10 used a single scalar which could silently
+            # block the Lambda for up to 20 s per message under slow responses.
+            timeout=(5, 30),
             allow_redirects=False
         )
 
@@ -408,23 +419,23 @@ def process_batch(event, conn):
                     message = body.get('message')
                     credentials = body.get('credentials')
                     bulk_send_id = body.get('bulk_send_id')
-                    category = body.get('category') 
+                    category = body.get('category')
 
                     line = inspect.currentframe().f_lineno
                     logger.info(f"[Line {line}] Processing message {i+1}/{len(records)}: Sending API call")
-                    
+
                     fb_response = send_message(message, credentials, category)
 
                     if fb_response['status'] == "success":
                         wamid = fb_response['message_id']
-                        
+
                         # Update local RDS
                         log_message_to_conversations(cursor, wamid, message, credentials, fb_response)
                         update_bulk_status(cursor, bulk_send_id, "sent", wamid)
-                        
+
                         # Sync to Whatomate (Added here)
                         sync_to_whatomate(body, wamid)
-                        
+
                     else:
                         update_bulk_status(cursor, bulk_send_id, "failed", fb_response.get('error'))
                         db_logging(cursor, {"message": message, "error": fb_response}, file="lambda_handler", phone_number_id=credentials.get("Phone_Number_ID"))
@@ -448,19 +459,19 @@ def send_message(message, credentials, category):
     line = inspect.currentframe().f_lineno
     try:
         base_url = f"https://graph.facebook.com/{credentials['Version']}/{credentials['Phone_Number_ID']}"
-        endpoint = "messages" 
+        endpoint = "messages"
         if category == 'MARKETING':
             endpoint = "marketing_messages"
-        
+
         fb_url = f"{base_url}/{endpoint}"
-        
+
         headers = {
             "Authorization": f"Bearer {credentials['User_Access_Token']}",
             "Content-Type": "application/json"
         }
-        
+
         logger.info(f"[Line {line}] Sending API call to {fb_url} with payload: {json.dumps(message, indent=2)}")
-        
+
         response = requests.post(fb_url, headers=headers, json=message)
         response_data = response.json()
 
@@ -478,7 +489,7 @@ def send_message(message, credentials, category):
 def update_bulk_status(cursor, bulk_send_id, status, message_id=None):
     """Update the bulk_send_txn table."""
     query = """
-        UPDATE bulk_send_txn 
+        UPDATE bulk_send_txn
         SET sent_date_time = %s, message_id = %s, status = %s
         WHERE id = %s
     """
@@ -488,7 +499,7 @@ def log_message_to_conversations(cursor, message_id, message, credentials, fb_re
     """Log message details into the conversations table."""
     now = datetime.now()
     query = """
-        INSERT INTO conversations 
+        INSERT INTO conversations
         (id, direction, mobile_number, type, content, status, createdDatetime, updatedDatetime, raw_data, Phone_Number_ID)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """

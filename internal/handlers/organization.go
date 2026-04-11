@@ -22,6 +22,7 @@ type OrganizationSettings struct {
 	TransferTimeoutSecs int    `json:"transfer_timeout_secs"`
 	HoldMusicFile       string `json:"hold_music_file"`
 	RingbackFile        string `json:"ringback_file"`
+	MessageRetentionDays int   `json:"message_retention_days"` // 0 = retain forever, 1-60 = delete after N days
 }
 
 // GetOrganizationSettings returns the organization settings
@@ -73,6 +74,9 @@ func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
 		if v, ok := org.Settings["ringback_file"].(string); ok && v != "" {
 			settings.RingbackFile = v
 		}
+		if v, ok := org.Settings["message_retention_days"].(float64); ok && v >= 0 {
+			settings.MessageRetentionDays = int(v)
+		}
 	}
 
 	return r.SendEnvelope(map[string]interface{}{
@@ -89,15 +93,16 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	}
 
 	var req struct {
-		MaskPhoneNumbers    *bool   `json:"mask_phone_numbers"`
-		Timezone            *string `json:"timezone"`
-		DateFormat          *string `json:"date_format"`
-		Name                *string `json:"name"`
-		CallingEnabled      *bool   `json:"calling_enabled"`
-		MaxCallDuration     *int    `json:"max_call_duration"`
-		TransferTimeoutSecs *int    `json:"transfer_timeout_secs"`
-		HoldMusicFile       *string `json:"hold_music_file"`
-		RingbackFile        *string `json:"ringback_file"`
+		MaskPhoneNumbers     *bool   `json:"mask_phone_numbers"`
+		Timezone             *string `json:"timezone"`
+		DateFormat           *string `json:"date_format"`
+		Name                 *string `json:"name"`
+		CallingEnabled       *bool   `json:"calling_enabled"`
+		MaxCallDuration      *int    `json:"max_call_duration"`
+		TransferTimeoutSecs  *int    `json:"transfer_timeout_secs"`
+		HoldMusicFile        *string `json:"hold_music_file"`
+		RingbackFile         *string `json:"ringback_file"`
+		MessageRetentionDays *int    `json:"message_retention_days"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
@@ -137,6 +142,16 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	}
 	if req.RingbackFile != nil {
 		org.Settings["ringback_file"] = *req.RingbackFile
+	}
+	if req.MessageRetentionDays != nil {
+		days := *req.MessageRetentionDays
+		if days < 0 {
+			days = 0
+		}
+		if days > 60 {
+			days = 60
+		}
+		org.Settings["message_retention_days"] = days
 	}
 	if req.Name != nil && *req.Name != "" {
 		org.Name = *req.Name

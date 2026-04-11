@@ -39,9 +39,10 @@ interface UserFormData {
   role_id: string
   is_active: boolean
   is_super_admin: boolean
+  organization_id: string
 }
 
-const defaultFormData: UserFormData = { email: '', password: '', full_name: '', role_id: '', is_active: true, is_super_admin: false }
+const defaultFormData: UserFormData = { email: '', password: '', full_name: '', role_id: '', is_active: true, is_super_admin: false, organization_id: '' }
 
 const {
   isLoading, isSubmitting, isDialogOpen, editingItem: editingUser, deleteDialogOpen, itemToDelete: userToDelete,
@@ -92,7 +93,11 @@ function openEditDialog(user: User) {
 }
 
 watch(() => organizationsStore.selectedOrgId, () => { fetchUsers(); rolesStore.fetchRoles() })
-onMounted(() => { fetchUsers(); rolesStore.fetchRoles() })
+onMounted(() => {
+  fetchUsers()
+  rolesStore.fetchRoles()
+  if (isSuperAdmin.value) organizationsStore.fetchOrganizations()
+})
 
 async function fetchUsers() {
   isLoading.value = true
@@ -132,6 +137,7 @@ async function saveUser() {
         full_name: formData.value.full_name,
         role_id: formData.value.role_id || undefined,
         is_super_admin: isSuperAdmin.value && formData.value.is_super_admin ? true : undefined,
+        organization_id: isSuperAdmin.value && formData.value.organization_id ? formData.value.organization_id : undefined,
       })
       toast.success(t('common.createdSuccess', { resource: t('resources.User') }))
     }
@@ -327,6 +333,21 @@ function copyInviteLink() {
               </SelectItem>
             </SelectContent>
           </Select>
+        </div>
+        <div v-if="isSuperAdmin && !editingUser" class="space-y-2">
+          <Label for="org_id">Organisation</Label>
+          <Select v-model="formData.organization_id">
+            <SelectTrigger>
+              <SelectValue placeholder="Current organisation (default)" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">Current organisation (default)</SelectItem>
+              <SelectItem v-for="org in organizationsStore.organizations" :key="org.id" :value="org.id">
+                {{ org.name }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-muted-foreground">Place this user in a specific organisation.</p>
         </div>
         <div v-if="editingUser" class="flex items-center justify-between"><Label for="is_active" class="font-normal cursor-pointer">{{ $t('users.accountActive') }}</Label><Switch id="is_active" :checked="formData.is_active" @update:checked="formData.is_active = $event" :disabled="editingUser?.id === currentUserId" /></div>
         <div v-if="isSuperAdmin" class="flex items-center justify-between border-t pt-4"><div><Label for="is_super_admin" class="font-normal cursor-pointer">{{ $t('users.superAdminLabel') }}</Label><p class="text-xs text-muted-foreground">{{ $t('users.superAdminDesc') }}</p></div><Switch id="is_super_admin" :checked="formData.is_super_admin" @update:checked="formData.is_super_admin = $event" :disabled="editingUser?.id === currentUserId && editingUser?.is_super_admin" /></div>

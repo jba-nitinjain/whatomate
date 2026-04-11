@@ -29,6 +29,7 @@ export interface CreateUserData {
   full_name: string
   role_id?: string
   is_super_admin?: boolean
+  organization_id?: string
 }
 
 export interface UpdateUserData {
