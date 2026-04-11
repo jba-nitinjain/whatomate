@@ -1,27 +1,75 @@
+# ─── Version control ────────────────────────────────────────────────────────
 .git
+.gitignore
+.gitattributes
 .github
+
+# ─── IDE / editor ────────────────────────────────────────────────────────────
 .vscode
 .idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
 
+# ─── CI / tooling config ─────────────────────────────────────────────────────
+.claude
+.goreleaser.yml
+.golangci.yml
+.pre-commit-config.yaml
+Makefile
+
+# ─── Docs / non-build assets ─────────────────────────────────────────────────
 docs
-test
+*.md
+LICENSE
+AUTHORS
+CHANGELOG*
 
-frontend/node_modules
-frontend/dist
+# ─── Tests ───────────────────────────────────────────────────────────────────
+*_test.go
+frontend/src/**/*.test.*
+frontend/src/**/*.spec.*
 frontend/playwright-report
 frontend/test-results
+frontend/e2e
 
-node_modules
-tmp
-temp
-logs
+# ─── Secrets / local config ──────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+docker/.env
+docker/.env.*
+config.toml
+*.pem
+*.key
+*.cert
+*.p12
+
+# ─── Frontend build artefacts (built inside Docker) ──────────────────────────
+frontend/node_modules
+frontend/dist
+frontend/.cache
+
+# ─── Go build artefacts ──────────────────────────────────────────────────────
+whatomate
+*.exe
+*.test
+vendor
+
+# ─── Runtime data (never needed in image) ────────────────────────────────────
 uploads
 audio
-
+logs
+tmp
+temp
 *.log
-*.md
-lambda.py
 
-config.toml
+# ─── Docker files themselves ─────────────────────────────────────────────────
+docker/docker-compose.yml
+docker/Dockerfile.goreleaser
+
+# ─── Misc ────────────────────────────────────────────────────────────────────
+lambda.py
 internal/frontend/dist/*
 !internal/frontend/dist/.gitkeep
