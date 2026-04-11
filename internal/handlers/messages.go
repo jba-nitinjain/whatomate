@@ -1040,6 +1040,35 @@ func (a *App) CreateExternalMessage(r *fastglue.Request) error {
 		msg.ReplyToMessageID = &replyToMessage.ID
 	}
 
+	// Idempotency: if a message with the same WhatsApp message ID already exists for
+	// this organisation, return the existing record instead of creating a duplicate.
+	// This prevents 100+ copies when Lambda retries after a timeout.
+	if req.WhatsAppMessageID != "" {
+		var existing models.Message
+		if err := a.DB.Where("organization_id = ? AND whats_app_message_id = ?",
+			orgID, req.WhatsAppMessageID).First(&existing).Error; err == nil {
+			a.Log.Debug("Duplicate external message detected, returning existing record",
+				"wamid", req.WhatsAppMessageID, "id", existing.ID)
+			return r.SendEnvelope(MessageResponse{
+				ID:              existing.ID,
+				ContactID:       existing.ContactID,
+				Direction:       existing.Direction,
+				MessageType:     existing.MessageType,
+				Content:         map[string]string{"body": existing.Content},
+				MediaURL:        existing.MediaURL,
+				MediaMimeType:   existing.MediaMimeType,
+				MediaFilename:   existing.MediaFilename,
+				InteractiveData: existing.InteractiveData,
+				Status:          existing.Status,
+				WAMID:           existing.WhatsAppMessageID,
+				IsReply:         existing.IsReply,
+				WhatsAppAccount: existing.WhatsAppAccount,
+				CreatedAt:       existing.CreatedAt,
+				UpdatedAt:       existing.UpdatedAt,
+			})
+		}
+	}
+
 	if err := a.DB.Create(msg).Error; err != nil {
 		a.Log.Error("Failed to create external message", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create message", nil, "")
