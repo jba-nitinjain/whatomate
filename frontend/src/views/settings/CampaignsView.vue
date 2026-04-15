@@ -91,6 +91,7 @@ interface Campaign {
   template_name: string
   template_id?: string
   whatsapp_account?: string
+  header_media_url?: string
   header_media_id?: string
   header_media_filename?: string
   header_media_mime_type?: string
@@ -557,6 +558,7 @@ const newCampaign = ref({
   name: '',
   whatsapp_account: '',
   template_id: '',
+  header_media_url: '',
   scheduled_at: ''
 })
 
@@ -880,6 +882,7 @@ async function createCampaign() {
       name: newCampaign.value.name,
       whatsapp_account: newCampaign.value.whatsapp_account,
       template_id: newCampaign.value.template_id,
+      header_media_url: campaignMediaFile.value ? '' : newCampaign.value.header_media_url.trim(),
       scheduled_at: toCampaignScheduledAt(newCampaign.value.scheduled_at)
     })
     const created = response.data.data || response.data
@@ -912,6 +915,7 @@ function resetForm() {
     name: '',
     whatsapp_account: '',
     template_id: '',
+    header_media_url: '',
     scheduled_at: ''
   }
   clearCampaignMedia()
@@ -923,6 +927,7 @@ function openEditDialog(campaign: Campaign) {
     name: campaign.name,
     whatsapp_account: campaign.whatsapp_account || '',
     template_id: campaign.template_id || '',
+    header_media_url: campaign.header_media_url || '',
     scheduled_at: formatDateTimeLocal(campaign.scheduled_at)
   }
   showCreateDialog.value = true
@@ -948,6 +953,7 @@ async function saveCampaign() {
         name: newCampaign.value.name,
         whatsapp_account: newCampaign.value.whatsapp_account,
         template_id: newCampaign.value.template_id,
+        header_media_url: campaignMediaFile.value ? '' : newCampaign.value.header_media_url.trim(),
         scheduled_at: toCampaignScheduledAt(newCampaign.value.scheduled_at)
       })
 
@@ -1845,6 +1851,18 @@ async function addRecipientsFromCSV() {
                 </p>
               </div>
               <!-- Header media upload (shown when template needs IMAGE/VIDEO/DOCUMENT) -->
+              <div v-if="selectedTemplateNeedsMedia" class="grid gap-2">
+                <Label for="header_media_url">Header Media URL</Label>
+                <Input
+                  id="header_media_url"
+                  v-model="newCampaign.header_media_url"
+                  placeholder="https://example.com/media.jpg"
+                  :disabled="isCreating || !!campaignMediaFile"
+                />
+                <p class="text-xs text-muted-foreground">
+                  Optional. If you upload a file, the file is used instead of this URL.
+                </p>
+              </div>
               <HeaderMediaUpload
                 v-if="selectedTemplateNeedsMedia"
                 :file="campaignMediaFile"

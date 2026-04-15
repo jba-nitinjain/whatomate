@@ -189,7 +189,7 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 			if req.Template == nil {
 				return "", fmt.Errorf("template is required for template messages")
 			}
-			components := whatsapp.BuildTemplateComponents(req.BodyParams, req.ButtonParams, req.Template.Buttons, req.Template.HeaderType, req.HeaderMediaID)
+			components := whatsapp.BuildTemplateComponents(req.BodyParams, req.ButtonParams, req.Template.Buttons, req.Template.HeaderType, req.HeaderMediaID, "")
 			route := models.ResolveTemplateDeliveryRoute(req.Account, req.Template)
 			if route == models.TemplateDeliveryRouteMarketingMessagesLite {
 				return a.WhatsApp.SendMarketingTemplateMessage(sendCtx, waAccount, req.Contact.PhoneNumber, req.Template.Name, req.Template.Language, components)

@@ -441,6 +441,61 @@ func TestApp_UpdateCampaign_NotFound(t *testing.T) {
 	assert.Equal(t, fasthttp.StatusNotFound, testutil.GetResponseStatusCode(req))
 }
 
+func TestApp_CreateCampaign_WithHeaderMediaURL(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	mockServer := newMockWhatsAppServer()
+	defer mockServer.close()
+
+	downloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte{0xff, 0xd8, 0xff, 0xd9})
+	}))
+	defer downloadServer.Close()
+
+	app := newMsgTestApp(t, mockServer)
+	app.Queue = mockQueue
+	app.HTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("create-campaign-media-url")), testutil.WithPassword("password"))
+	account := createTestAccount(t, app, org.ID)
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	template.HeaderType = "IMAGE"
+	require.NoError(t, app.DB.Save(template).Error)
+
+	headerMediaURL := downloadServer.URL + "/campaign-media/header.jpg"
+	req := testutil.NewJSONRequest(t, map[string]interface{}{
+		"name":             "URL Media Campaign",
+		"whatsapp_account": account.Name,
+		"template_id":      template.ID.String(),
+		"header_media_url": headerMediaURL,
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+
+	err := app.CreateCampaign(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data handlers.CampaignResponse `json:"data"`
+	}
+	err = json.Unmarshal(testutil.GetResponseBody(req), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, headerMediaURL, resp.Data.HeaderMediaURL)
+	assert.Equal(t, "header.jpg", resp.Data.HeaderMediaFilename)
+	assert.Equal(t, "image/jpeg", resp.Data.HeaderMediaMimeType)
+	assert.Empty(t, resp.Data.HeaderMediaID)
+
+	var stored models.BulkMessageCampaign
+	require.NoError(t, app.DB.First(&stored, "id = ?", resp.Data.ID).Error)
+	assert.Equal(t, headerMediaURL, stored.HeaderMediaURL)
+	assert.Equal(t, "header.jpg", stored.HeaderMediaFilename)
+	assert.Equal(t, "image/jpeg", stored.HeaderMediaMimeType)
+	assert.Empty(t, stored.HeaderMediaID)
+	assert.NotEmpty(t, stored.HeaderMediaLocalPath)
+	assert.Len(t, mockServer.uploadedMedia, 0)
+}
+
 func TestApp_UploadCampaignMedia_InferMimeTypeFromFilename(t *testing.T) {
 	mockQueue := testutil.NewMockQueue()
 	mockServer := newMockWhatsAppServer()
@@ -457,6 +512,8 @@ func TestApp_UploadCampaignMedia_InferMimeTypeFromFilename(t *testing.T) {
 	require.NoError(t, app.DB.Save(template).Error)
 
 	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusDraft)
+	campaign.HeaderMediaURL = "https://example.com/original.pdf"
+	require.NoError(t, app.DB.Save(campaign).Error)
 	req := newMultipartUploadRequest(t, "file", "campaign-brief.pdf", "application/octet-stream", []byte("%PDF-1.4 test campaign media"))
 	testutil.SetAuthContext(req, org.ID, user.ID)
 	testutil.SetPathParam(req, "id", campaign.ID.String())
@@ -467,6 +524,7 @@ func TestApp_UploadCampaignMedia_InferMimeTypeFromFilename(t *testing.T) {
 
 	var updated models.BulkMessageCampaign
 	require.NoError(t, app.DB.First(&updated, "id = ?", campaign.ID).Error)
+	assert.Empty(t, updated.HeaderMediaURL)
 	assert.NotEmpty(t, updated.HeaderMediaID)
 	assert.Equal(t, "campaign-brief.pdf", updated.HeaderMediaFilename)
 	assert.Equal(t, "application/pdf", updated.HeaderMediaMimeType)

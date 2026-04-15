@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -28,6 +30,7 @@ type CampaignRequest struct {
 	Name            string     `json:"name" validate:"required"`
 	WhatsAppAccount string     `json:"whatsapp_account" validate:"required"`
 	TemplateID      string     `json:"template_id" validate:"required"`
+	HeaderMediaURL  string     `json:"header_media_url"`
 	HeaderMediaID   string     `json:"header_media_id"`
 	ScheduledAt     *time.Time `json:"scheduled_at"`
 }
@@ -39,6 +42,7 @@ type CampaignResponse struct {
 	WhatsAppAccount     string                `json:"whatsapp_account"`
 	TemplateID          uuid.UUID             `json:"template_id"`
 	TemplateName        string                `json:"template_name,omitempty"`
+	HeaderMediaURL      string                `json:"header_media_url,omitempty"`
 	HeaderMediaID       string                `json:"header_media_id,omitempty"`
 	HeaderMediaFilename string                `json:"header_media_filename,omitempty"`
 	HeaderMediaMimeType string                `json:"header_media_mime_type,omitempty"`
@@ -122,6 +126,7 @@ func (a *App) ListCampaigns(r *fastglue.Request) error {
 			Name:                c.Name,
 			WhatsAppAccount:     c.WhatsAppAccount,
 			TemplateID:          c.TemplateID,
+			HeaderMediaURL:      c.HeaderMediaURL,
 			HeaderMediaID:       c.HeaderMediaID,
 			HeaderMediaFilename: c.HeaderMediaFilename,
 			HeaderMediaMimeType: c.HeaderMediaMimeType,
@@ -173,20 +178,30 @@ func (a *App) CreateCampaign(r *fastglue.Request) error {
 		return nil
 	}
 
-	// Validate WhatsApp account exists
 	if _, err := a.resolveWhatsAppAccount(orgID, req.WhatsAppAccount); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account not found", nil, "")
 	}
 
 	campaign := models.BulkMessageCampaign{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
 		OrganizationID:  orgID,
 		WhatsAppAccount: req.WhatsAppAccount,
 		Name:            req.Name,
 		TemplateID:      templateID,
+		HeaderMediaURL:  strings.TrimSpace(req.HeaderMediaURL),
 		HeaderMediaID:   req.HeaderMediaID,
 		Status:          models.CampaignStatusDraft,
 		ScheduledAt:     req.ScheduledAt,
 		CreatedBy:       userID,
+	}
+
+	if campaign.HeaderMediaURL != "" {
+		if !campaignTemplateNeedsMedia(template) {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Template does not have a media header", nil, "")
+		}
+		if err := a.populateCampaignHeaderMediaFromURL(r.RequestCtx, &campaign); err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadGateway, err.Error(), nil, "")
+		}
 	}
 
 	if err := a.DB.Create(&campaign).Error; err != nil {
@@ -202,6 +217,7 @@ func (a *App) CreateCampaign(r *fastglue.Request) error {
 		WhatsAppAccount:     campaign.WhatsAppAccount,
 		TemplateID:          campaign.TemplateID,
 		TemplateName:        template.Name,
+		HeaderMediaURL:      campaign.HeaderMediaURL,
 		HeaderMediaID:       campaign.HeaderMediaID,
 		HeaderMediaFilename: campaign.HeaderMediaFilename,
 		HeaderMediaMimeType: campaign.HeaderMediaMimeType,
@@ -240,6 +256,7 @@ func (a *App) GetCampaign(r *fastglue.Request) error {
 		Name:                campaign.Name,
 		WhatsAppAccount:     campaign.WhatsAppAccount,
 		TemplateID:          campaign.TemplateID,
+		HeaderMediaURL:      campaign.HeaderMediaURL,
 		HeaderMediaID:       campaign.HeaderMediaID,
 		HeaderMediaFilename: campaign.HeaderMediaFilename,
 		HeaderMediaMimeType: campaign.HeaderMediaMimeType,
@@ -288,6 +305,28 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 		return nil
 	}
 
+	templateID := campaign.TemplateID
+	if req.TemplateID != "" {
+		parsedTemplateID, err := uuid.Parse(req.TemplateID)
+		if err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid template ID", nil, "")
+		}
+		templateID = parsedTemplateID
+	}
+
+	template, err := findByIDAndOrg[models.Template](a.DB, r, templateID, orgID, "Template")
+	if err != nil {
+		return nil
+	}
+
+	accountName := campaign.WhatsAppAccount
+	if req.WhatsAppAccount != "" {
+		accountName = req.WhatsAppAccount
+	}
+	if _, err := a.resolveWhatsAppAccount(orgID, accountName); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account not found", nil, "")
+	}
+
 	// Update fields
 	updates := map[string]interface{}{
 		"name":         req.Name,
@@ -295,15 +334,31 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 	}
 
 	if req.TemplateID != "" {
-		templateID, err := uuid.Parse(req.TemplateID)
-		if err != nil {
-			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid template ID", nil, "")
-		}
 		updates["template_id"] = templateID
 	}
 
 	if req.WhatsAppAccount != "" {
 		updates["whats_app_account"] = req.WhatsAppAccount
+	}
+
+	if trimmedURL := strings.TrimSpace(req.HeaderMediaURL); trimmedURL != "" {
+		if !campaignTemplateNeedsMedia(template) {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Template does not have a media header", nil, "")
+		}
+
+		previewCampaign := *campaign
+		previewCampaign.TemplateID = templateID
+		previewCampaign.WhatsAppAccount = accountName
+		previewCampaign.HeaderMediaURL = trimmedURL
+		if err := a.populateCampaignHeaderMediaFromURL(r.RequestCtx, &previewCampaign); err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadGateway, err.Error(), nil, "")
+		}
+
+		updates["header_media_url"] = previewCampaign.HeaderMediaURL
+		updates["header_media_id"] = previewCampaign.HeaderMediaID
+		updates["header_media_filename"] = previewCampaign.HeaderMediaFilename
+		updates["header_media_mime_type"] = previewCampaign.HeaderMediaMimeType
+		updates["header_media_local_path"] = previewCampaign.HeaderMediaLocalPath
 	}
 
 	if err := a.DB.Model(campaign).Updates(updates).Error; err != nil {
@@ -319,6 +374,7 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 		Name:                campaign.Name,
 		WhatsAppAccount:     campaign.WhatsAppAccount,
 		TemplateID:          campaign.TemplateID,
+		HeaderMediaURL:      campaign.HeaderMediaURL,
 		HeaderMediaID:       campaign.HeaderMediaID,
 		HeaderMediaFilename: campaign.HeaderMediaFilename,
 		HeaderMediaMimeType: campaign.HeaderMediaMimeType,
@@ -336,6 +392,100 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 	}
 
 	return r.SendEnvelope(response)
+}
+
+func campaignTemplateNeedsMedia(template *models.Template) bool {
+	if template == nil {
+		return false
+	}
+	switch template.HeaderType {
+	case "IMAGE", "VIDEO", "DOCUMENT":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) populateCampaignHeaderMediaFromURL(ctx context.Context, campaign *models.BulkMessageCampaign) error {
+	headerMediaURL := strings.TrimSpace(campaign.HeaderMediaURL)
+	if headerMediaURL == "" {
+		return nil
+	}
+	data, filename, mimeType, err := a.downloadCampaignHeaderMedia(ctx, headerMediaURL)
+	if err != nil {
+		return err
+	}
+
+	localPath, err := a.saveCampaignMedia(campaign.ID.String(), data, mimeType)
+	if err != nil {
+		a.Log.Error("Failed to save campaign media locally", "error", err, "campaign_id", campaign.ID, "header_media_url", headerMediaURL)
+	}
+
+	campaign.HeaderMediaID = ""
+	campaign.HeaderMediaFilename = filename
+	campaign.HeaderMediaMimeType = mimeType
+	campaign.HeaderMediaLocalPath = localPath
+
+	return nil
+}
+
+func (a *App) downloadCampaignHeaderMedia(ctx context.Context, headerMediaURL string) ([]byte, string, string, error) {
+	if _, err := url.ParseRequestURI(headerMediaURL); err != nil {
+		return nil, "", "", fmt.Errorf("invalid header media url")
+	}
+
+	httpClient := a.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, headerMediaURL, nil)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("prepare header media download: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("download header media: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", "", fmt.Errorf("header media url returned status %d", resp.StatusCode)
+	}
+
+	const maxMediaSize = 16 << 20
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxMediaSize+1))
+	if err != nil {
+		return nil, "", "", fmt.Errorf("read header media: %w", err)
+	}
+	if len(data) > maxMediaSize {
+		return nil, "", "", fmt.Errorf("header media file too large. Maximum size is 16MB")
+	}
+
+	filename := campaignHeaderMediaFilename(headerMediaURL)
+	mimeType := detectCampaignMediaMimeType(filename, resp.Header.Get("Content-Type"), data)
+	if !isAllowedCampaignMediaMimeType(mimeType) {
+		return nil, "", "", fmt.Errorf("unsupported header media type: %s", mimeType)
+	}
+	if filepath.Ext(filename) == "" {
+		if ext := getExtensionFromMimeType(mimeType); ext != "" {
+			filename += ext
+		}
+	}
+
+	return data, sanitizeFilename(filename), mimeType, nil
+}
+
+func campaignHeaderMediaFilename(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err == nil {
+		name := path.Base(parsed.Path)
+		if name != "" && name != "." && name != "/" {
+			return name
+		}
+	}
+	return "header-media"
 }
 
 // DeleteCampaign implements campaign deletion
@@ -460,8 +610,8 @@ func (a *App) validateCampaignReadyForStart(campaign *models.BulkMessageCampaign
 
 	switch campaign.Template.HeaderType {
 	case "IMAGE", "VIDEO", "DOCUMENT":
-		if strings.TrimSpace(campaign.HeaderMediaID) == "" {
-			return fmt.Errorf("template requires %s header media. Upload campaign media before starting", strings.ToLower(campaign.Template.HeaderType))
+		if strings.TrimSpace(campaign.HeaderMediaID) == "" && strings.TrimSpace(campaign.HeaderMediaURL) == "" {
+			return fmt.Errorf("template requires %s header media. Configure campaign media before starting", strings.ToLower(campaign.Template.HeaderType))
 		}
 	}
 
@@ -1120,8 +1270,8 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 	ctx := r.RequestCtx
 	mediaID, err := a.WhatsApp.UploadMedia(ctx, waAccount, data, mimeType, fileHeader.Filename)
 	if err != nil {
-		a.Log.Error("Failed to upload media to WhatsApp", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to upload media to WhatsApp", nil, "")
+		a.Log.Error("Failed to upload media to WhatsApp", "error", err, "campaign_id", campaignUUID, "mime_type", mimeType, "filename", fileHeader.Filename)
+		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Failed to upload media to WhatsApp: "+err.Error(), nil, "")
 	}
 
 	// Save file locally for preview
@@ -1133,6 +1283,7 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 
 	// Update campaign with media ID, filename, mime type, and local path
 	updates := map[string]interface{}{
+		"header_media_url":        "",
 		"header_media_id":         mediaID,
 		"header_media_filename":   sanitizeFilename(fileHeader.Filename),
 		"header_media_mime_type":  mimeType,
@@ -1205,7 +1356,7 @@ func (a *App) ServeCampaignMedia(r *fastglue.Request) error {
 	}
 
 	// Check if campaign has media
-	if strings.TrimSpace(campaign.HeaderMediaLocalPath) == "" && strings.TrimSpace(campaign.HeaderMediaID) == "" {
+	if strings.TrimSpace(campaign.HeaderMediaLocalPath) == "" && strings.TrimSpace(campaign.HeaderMediaID) == "" && strings.TrimSpace(campaign.HeaderMediaURL) == "" {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "No media found", nil, "")
 	}
 
@@ -1238,6 +1389,35 @@ func (a *App) readCampaignMediaFile(ctx context.Context, campaign *models.BulkMe
 		if !os.IsNotExist(err) {
 			a.Log.Warn("Stored campaign media read failed, attempting re-download", "campaign_id", campaign.ID, "error", err)
 		}
+	}
+
+	if strings.TrimSpace(campaign.HeaderMediaURL) != "" {
+		data, _, mimeType, err := a.downloadCampaignHeaderMedia(ctx, campaign.HeaderMediaURL)
+		if err != nil {
+			return nil, "", fmt.Errorf("download campaign media from url: %w", err)
+		}
+
+		localPath, err := a.saveCampaignMedia(campaign.ID.String(), data, mimeType)
+		if err == nil {
+			campaign.HeaderMediaLocalPath = localPath
+			campaign.HeaderMediaMimeType = mimeType
+			if dbErr := a.DB.Model(campaign).Updates(map[string]interface{}{
+				"header_media_local_path": localPath,
+				"header_media_mime_type":  mimeType,
+			}).Error; dbErr != nil {
+				return nil, "", fmt.Errorf("update campaign media path: %w", dbErr)
+			}
+		} else {
+			a.Log.Warn("Failed to save campaign media downloaded from URL", "campaign_id", campaign.ID, "error", err)
+		}
+
+		if mimeType == "" {
+			mimeType = campaign.HeaderMediaMimeType
+		}
+		if mimeType == "" {
+			mimeType = http.DetectContentType(data)
+		}
+		return data, mimeType, nil
 	}
 
 	if strings.TrimSpace(campaign.HeaderMediaID) == "" {

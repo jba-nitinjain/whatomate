@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -272,18 +274,28 @@ func BodyParamsToComponents(bodyParams map[string]string) []map[string]interface
 
 // BuildTemplateComponents builds the full WhatsApp template components array,
 // including an optional header component (for IMAGE/VIDEO/DOCUMENT), body parameters,
-// and dynamic URL button parameters.
-func BuildTemplateComponents(bodyParams map[string]string, buttonParams map[int]string, buttons []interface{}, headerType string, headerMediaID string) []map[string]interface{} {
+// and dynamic URL button parameters. Header media prefers an uploaded media ID and
+// falls back to a public link when provided.
+func BuildTemplateComponents(bodyParams map[string]string, buttonParams map[int]string, buttons []interface{}, headerType, headerMediaID, headerMediaLink string) []map[string]interface{} {
 	var components []map[string]interface{}
 
 	// Add header component if media is provided
-	if headerMediaID != "" {
+	if headerMediaID != "" || headerMediaLink != "" {
 		mediaType := strings.ToLower(headerType) // "image", "video", "document"
+		mediaPayload := map[string]interface{}{}
+		if headerMediaID != "" {
+			mediaPayload["id"] = headerMediaID
+		} else {
+			mediaPayload["link"] = headerMediaLink
+			if mediaType == "document" {
+				if filename := templateHeaderFilenameFromLink(headerMediaLink); filename != "" {
+					mediaPayload["filename"] = filename
+				}
+			}
+		}
 		headerParam := map[string]interface{}{
 			"type": mediaType,
-			mediaType: map[string]interface{}{
-				"id": headerMediaID,
-			},
+			mediaType: mediaPayload,
 		}
 		components = append(components, map[string]interface{}{
 			"type":       "header",
@@ -326,6 +338,18 @@ func BuildTemplateComponents(bodyParams map[string]string, buttonParams map[int]
 		return nil
 	}
 	return components
+}
+
+func templateHeaderFilenameFromLink(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	name := path.Base(parsed.Path)
+	if name == "" || name == "." || name == "/" {
+		return ""
+	}
+	return name
 }
 
 // SendFlowMessage sends an interactive WhatsApp Flow message

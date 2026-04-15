@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"time"
 
@@ -272,22 +274,30 @@ type UploadMediaResponse struct {
 func (c *Client) UploadMedia(ctx context.Context, account *Account, data []byte, mimeType, filename string) (string, error) {
 	url := fmt.Sprintf("%s/%s/%s/media", c.getBaseURL(), account.APIVersion, account.PhoneID)
 
-	// Create multipart form body
 	body := &bytes.Buffer{}
-	boundary := "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+	writer := multipart.NewWriter(body)
 
-	// Build multipart body manually
-	fmt.Fprintf(body, "--%s\r\n", boundary)
-	body.WriteString("Content-Disposition: form-data; name=\"messaging_product\"\r\n\r\n")
-	body.WriteString("whatsapp\r\n")
+	messagingProduct, err := writer.CreateFormField("messaging_product")
+	if err != nil {
+		return "", fmt.Errorf("failed to create messaging_product part: %w", err)
+	}
+	if _, err := io.WriteString(messagingProduct, "whatsapp"); err != nil {
+		return "", fmt.Errorf("failed to write messaging_product part: %w", err)
+	}
 
-	fmt.Fprintf(body, "--%s\r\n", boundary)
-	fmt.Fprintf(body, "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n", filename)
-	fmt.Fprintf(body, "Content-Type: %s\r\n\r\n", mimeType)
-	body.Write(data)
-	body.WriteString("\r\n")
-
-	fmt.Fprintf(body, "--%s--\r\n", boundary)
+	partHeader := textproto.MIMEHeader{}
+	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+	partHeader.Set("Content-Type", mimeType)
+	filePart, err := writer.CreatePart(partHeader)
+	if err != nil {
+		return "", fmt.Errorf("failed to create file part: %w", err)
+	}
+	if _, err := filePart.Write(data); err != nil {
+		return "", fmt.Errorf("failed to write file part: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("failed to finalize upload request: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
@@ -295,7 +305,7 @@ func (c *Client) UploadMedia(ctx context.Context, account *Account, data []byte,
 	}
 
 	req.Header.Set("Authorization", "Bearer "+account.AccessToken)
-	req.Header.Set("Content-Type", fmt.Sprintf("multipart/form-data; boundary=%s", boundary))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -309,7 +319,7 @@ func (c *Client) UploadMedia(ctx context.Context, account *Account, data []byte,
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("media upload failed with status %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("media upload failed: %w", ParseMetaAPIError(resp.StatusCode, respBody))
 	}
 
 	var uploadResp UploadMediaResponse

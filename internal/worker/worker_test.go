@@ -491,7 +491,7 @@ func TestWorker_sendTemplateMessage_BuildsComponents(t *testing.T) {
 		},
 	}
 
-	msgID, err := w.sendTemplateMessage(context.Background(), account, template, recipient, "")
+	msgID, err := w.sendTemplateMessage(context.Background(), account, template, recipient, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "wamid.test123", msgID)
 
@@ -547,7 +547,7 @@ func TestWorker_sendTemplateMessage_NoParams(t *testing.T) {
 		TemplateParams: nil, // No params
 	}
 
-	msgID, err := w.sendTemplateMessage(context.Background(), account, template, recipient, "")
+	msgID, err := w.sendTemplateMessage(context.Background(), account, template, recipient, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "wamid.test456", msgID)
 
@@ -603,7 +603,7 @@ func TestWorker_sendTemplateMessage_WithDynamicURLButton(t *testing.T) {
 		},
 	}
 
-	msgID, err := w.sendTemplateMessage(context.Background(), account, template, recipient, "")
+	msgID, err := w.sendTemplateMessage(context.Background(), account, template, recipient, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "wamid.test789", msgID)
 
@@ -618,6 +618,61 @@ func TestWorker_sendTemplateMessage_WithDynamicURLButton(t *testing.T) {
 	params := buttonComponent["parameters"].([]interface{})
 	require.Len(t, params, 1)
 	assert.Equal(t, "TRACK-123", params[0].(map[string]interface{})["text"])
+}
+
+func TestWorker_sendTemplateMessage_WithHeaderMediaURL(t *testing.T) {
+	w := testWorker(t)
+
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		rw.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
+			"messages": []map[string]interface{}{
+				{"id": "wamid.header-link"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	w.WhatsApp = whatsapp.NewWithBaseURL(w.Log, server.URL)
+
+	account := &models.WhatsAppAccount{
+		PhoneID:     "123",
+		BusinessID:  "456",
+		AccessToken: "token",
+		APIVersion:  "v21.0",
+	}
+
+	template := &models.Template{
+		Name:        "header_link_template",
+		Language:    "en",
+		HeaderType:  "IMAGE",
+		BodyContent: "Hello {{1}}",
+	}
+
+	recipient := &models.BulkMessageRecipient{
+		PhoneNumber: "1234567890",
+		TemplateParams: models.JSONB{
+			"1": "Alice",
+		},
+	}
+
+	msgID, err := w.sendTemplateMessage(context.Background(), account, template, recipient, "", "https://cdn.example.com/banner.jpg")
+	require.NoError(t, err)
+	assert.Equal(t, "wamid.header-link", msgID)
+
+	templateData := capturedBody["template"].(map[string]interface{})
+	components := templateData["components"].([]interface{})
+	require.Len(t, components, 2)
+
+	headerComponent := components[0].(map[string]interface{})
+	assert.Equal(t, "header", headerComponent["type"])
+	params := headerComponent["parameters"].([]interface{})
+	require.Len(t, params, 1)
+	imageParam := params[0].(map[string]interface{})
+	assert.Equal(t, "image", imageParam["type"])
+	assert.Equal(t, "https://cdn.example.com/banner.jpg", imageParam["image"].(map[string]interface{})["link"])
 }
 
 func TestWorker_Close_NilConsumer(t *testing.T) {

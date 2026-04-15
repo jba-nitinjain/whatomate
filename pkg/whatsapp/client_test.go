@@ -2,6 +2,9 @@ package whatsapp_test
 
 import (
 	"encoding/json"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -326,6 +329,121 @@ func TestClient_DownloadMedia(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantData, data)
+		})
+	}
+}
+
+func TestClient_UploadMedia(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		filename        string
+		mimeType        string
+		serverResponse  func(t *testing.T, w http.ResponseWriter, r *http.Request)
+		wantMediaID     string
+		wantErr         bool
+		wantErrContains string
+	}{
+		{
+			name:     "successful upload",
+			filename: "campaign-brief.pdf",
+			mimeType: "application/pdf",
+			serverResponse: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodPost, r.Method)
+				assert.Contains(t, r.URL.Path, "/media")
+				assert.Equal(t, "Bearer test-access-token", r.Header.Get("Authorization"))
+
+				mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+				require.NoError(t, err)
+				assert.Equal(t, "multipart/form-data", mediaType)
+
+				reader := multipart.NewReader(r.Body, params["boundary"])
+				parts := map[string]string{}
+				var fileContentType string
+				var fileContent []byte
+
+				for {
+					part, err := reader.NextPart()
+					if err == io.EOF {
+						break
+					}
+					require.NoError(t, err)
+					data, err := io.ReadAll(part)
+					require.NoError(t, err)
+					parts[part.FormName()] = string(data)
+					if part.FormName() == "file" {
+						fileContentType = part.Header.Get("Content-Type")
+						fileContent = data
+						assert.Equal(t, "campaign-brief.pdf", part.FileName())
+					}
+				}
+
+				assert.Equal(t, "whatsapp", parts["messaging_product"])
+				assert.Equal(t, "application/pdf", fileContentType)
+				assert.Equal(t, []byte("pdf-bytes"), fileContent)
+
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "media-uploaded-123"})
+			},
+			wantMediaID: "media-uploaded-123",
+		},
+		{
+			name:     "meta error propagates details",
+			filename: "campaign-brief.pdf",
+			mimeType: "application/pdf",
+			serverResponse: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(whatsapp.MetaAPIError{
+					Error: struct {
+						Message      string `json:"message"`
+						Type         string `json:"type"`
+						Code         int    `json:"code"`
+						ErrorSubcode int    `json:"error_subcode"`
+						ErrorUserMsg string `json:"error_user_msg"`
+						ErrorData    struct {
+							Details string `json:"details"`
+						} `json:"error_data"`
+						FBTraceID string `json:"fbtrace_id"`
+					}{
+						Message: "Unsupported media type",
+						Code:    100,
+					},
+				})
+			},
+			wantErr:         true,
+			wantErrContains: "Unsupported media type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tt.serverResponse(t, w, r)
+			}))
+			defer server.Close()
+
+			log := testutil.NopLogger()
+			client := whatsapp.NewWithTimeout(log, 5*time.Second)
+			client.HTTPClient = &http.Client{
+				Transport: &testServerTransport{serverURL: server.URL},
+			}
+
+			account := testAccount(server.URL)
+			ctx := testutil.TestContext(t)
+
+			mediaID, err := client.UploadMedia(ctx, account, []byte("pdf-bytes"), tt.mimeType, tt.filename)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrContains)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantMediaID, mediaID)
 		})
 	}
 }

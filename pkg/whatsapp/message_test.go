@@ -462,3 +462,46 @@ func TestClient_SendTemplateMessage_WithComponents(t *testing.T) {
 	assert.Len(t, sentComponents, 2)
 }
 
+func TestBuildTemplateComponents_HeaderMediaLink(t *testing.T) {
+	t.Parallel()
+
+	components := whatsapp.BuildTemplateComponents(
+		map[string]string{"1": "Alice"},
+		nil,
+		nil,
+		"IMAGE",
+		"",
+		"https://cdn.example.com/banner.jpg",
+	)
+
+	require.Len(t, components, 2)
+
+	headerComponent := components[0]
+	assert.Equal(t, "header", headerComponent["type"])
+	params := headerComponent["parameters"].([]map[string]interface{})
+	require.Len(t, params, 1)
+	assert.Equal(t, "image", params[0]["type"])
+	assert.Equal(t, "https://cdn.example.com/banner.jpg", params[0]["image"].(map[string]interface{})["link"])
+}
+
+func TestBuildTemplateComponents_DocumentLinkIncludesFilename(t *testing.T) {
+	t.Parallel()
+
+	components := whatsapp.BuildTemplateComponents(
+		nil,
+		nil,
+		nil,
+		"DOCUMENT",
+		"",
+		"https://cdn.example.com/files/campaign-brief.pdf?download=1",
+	)
+
+	require.Len(t, components, 1)
+
+	headerComponent := components[0]
+	params := headerComponent["parameters"].([]map[string]interface{})
+	require.Len(t, params, 1)
+	document := params[0]["document"].(map[string]interface{})
+	assert.Equal(t, "https://cdn.example.com/files/campaign-brief.pdf?download=1", document["link"])
+	assert.Equal(t, "campaign-brief.pdf", document["filename"])
+}
