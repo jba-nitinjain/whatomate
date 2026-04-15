@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1106,20 +1107,10 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "File too large. Maximum size is 16MB", nil, "")
 	}
 
-	// Determine and validate MIME type
-	mimeType := fileHeader.Header.Get("Content-Type")
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
-	allowedMIME := map[string]bool{
-		"image/jpeg": true, "image/png": true, "image/webp": true,
-		"video/mp4": true, "video/3gpp": true,
-		"audio/aac": true, "audio/mp4": true, "audio/mpeg": true, "audio/ogg": true,
-		"application/pdf": true, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true,
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   true,
-		"application/vnd.openxmlformats-officedocument.presentationml.presentation": true,
-	}
-	if !allowedMIME[mimeType] {
+	// Browsers and proxies often send uploads as application/octet-stream.
+	// Fall back to filename/content sniffing so valid campaign media is not rejected.
+	mimeType := detectCampaignMediaMimeType(fileHeader.Filename, fileHeader.Header.Get("Content-Type"), data)
+	if !isAllowedCampaignMediaMimeType(mimeType) {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Unsupported file type: "+mimeType, nil, "")
 	}
 
@@ -1281,8 +1272,63 @@ func getMimeTypeFromExtension(ext string) string {
 		return "application/msword"
 	case ".docx":
 		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xls":
+		return "application/vnd.ms-excel"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".ppt":
+		return "application/vnd.ms-powerpoint"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	case ".txt":
+		return "text/plain"
 	default:
 		return "application/octet-stream"
+	}
+}
+
+func detectCampaignMediaMimeType(filename, contentType string, data []byte) string {
+	mimeType := strings.TrimSpace(contentType)
+	if idx := strings.Index(mimeType, ";"); idx >= 0 {
+		mimeType = strings.TrimSpace(mimeType[:idx])
+	}
+
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		if inferred := getMimeTypeFromExtension(strings.ToLower(filepath.Ext(filename))); inferred != "application/octet-stream" {
+			mimeType = inferred
+		} else if len(data) > 0 {
+			mimeType = http.DetectContentType(data)
+		}
+	}
+
+	if mimeType == "" {
+		return "application/octet-stream"
+	}
+	return mimeType
+}
+
+func isAllowedCampaignMediaMimeType(mimeType string) bool {
+	switch mimeType {
+	case "image/jpeg",
+		"image/png",
+		"image/webp",
+		"video/mp4",
+		"video/3gpp",
+		"audio/aac",
+		"audio/mp4",
+		"audio/mpeg",
+		"audio/ogg",
+		"application/pdf",
+		"application/msword",
+		"application/vnd.ms-excel",
+		"application/vnd.ms-powerpoint",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		"text/plain":
+		return true
+	default:
+		return false
 	}
 }
 

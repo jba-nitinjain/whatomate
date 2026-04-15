@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
+	"net/textproto"
 	"testing"
 	"time"
 
@@ -14,8 +16,34 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
+	"github.com/zerodha/fastglue"
 	"github.com/xuri/excelize/v2"
 )
+
+func newMultipartUploadRequest(t *testing.T, fieldName, filename, contentType string, data []byte) *fastglue.Request {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	partHeader := textproto.MIMEHeader{}
+	partHeader.Set("Content-Disposition", `form-data; name="`+fieldName+`"; filename="`+filename+`"`)
+	if contentType != "" {
+		partHeader.Set("Content-Type", contentType)
+	}
+
+	part, err := writer.CreatePart(partHeader)
+	require.NoError(t, err)
+	_, err = part.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	req := testutil.NewRequest(t)
+	req.RequestCtx.Request.Header.SetMethod("POST")
+	req.RequestCtx.Request.Header.SetContentType(writer.FormDataContentType())
+	req.RequestCtx.Request.SetBody(body.Bytes())
+	return req
+}
 
 // createTestCampaign creates a test campaign in the database.
 func createTestCampaign(t *testing.T, app *handlers.App, orgID, templateID, userID uuid.UUID, whatsappAccount string, status models.CampaignStatus) *models.BulkMessageCampaign {
@@ -384,6 +412,38 @@ func TestApp_UpdateCampaign_NotFound(t *testing.T) {
 	err := app.UpdateCampaign(req)
 	require.NoError(t, err)
 	assert.Equal(t, fasthttp.StatusNotFound, testutil.GetResponseStatusCode(req))
+}
+
+func TestApp_UploadCampaignMedia_InferMimeTypeFromFilename(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	mockServer := newMockWhatsAppServer()
+	defer mockServer.close()
+
+	app := newMsgTestApp(t, mockServer)
+	app.Queue = mockQueue
+
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("upload-campaign-media")), testutil.WithPassword("password"))
+	account := createTestAccount(t, app, org.ID)
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	template.HeaderType = "DOCUMENT"
+	require.NoError(t, app.DB.Save(template).Error)
+
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusDraft)
+	req := newMultipartUploadRequest(t, "file", "campaign-brief.pdf", "application/octet-stream", []byte("%PDF-1.4 test campaign media"))
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+
+	err := app.UploadCampaignMedia(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var updated models.BulkMessageCampaign
+	require.NoError(t, app.DB.First(&updated, "id = ?", campaign.ID).Error)
+	assert.NotEmpty(t, updated.HeaderMediaID)
+	assert.Equal(t, "campaign-brief.pdf", updated.HeaderMediaFilename)
+	assert.Equal(t, "application/pdf", updated.HeaderMediaMimeType)
+	assert.NotEmpty(t, updated.HeaderMediaLocalPath)
 }
 
 // --- DeleteCampaign Tests ---

@@ -883,16 +883,21 @@ async function createCampaign() {
       scheduled_at: toCampaignScheduledAt(newCampaign.value.scheduled_at)
     })
     const created = response.data.data || response.data
-    // Upload media if a file was selected
+    editingCampaignId.value = created?.id || null
+
     if (campaignMediaFile.value && created?.id) {
       try {
         await campaignsService.uploadMedia(created.id, campaignMediaFile.value)
-      } catch (err) {
-        toast.error(t('campaigns.mediaUploadFailed'))
+      } catch (error: any) {
+        toast.error(getErrorMessage(error, t('campaigns.mediaUploadFailed')))
+        await fetchCampaigns()
+        return
       }
     }
+
     toast.success(t('common.createdSuccess', { resource: t('resources.Campaign') }))
     showCreateDialog.value = false
+    editingCampaignId.value = null
     resetForm()
     await fetchCampaigns()
   } catch (error: any) {
@@ -945,14 +950,17 @@ async function saveCampaign() {
         template_id: newCampaign.value.template_id,
         scheduled_at: toCampaignScheduledAt(newCampaign.value.scheduled_at)
       })
-      // Upload media if a file was selected
+
       if (campaignMediaFile.value) {
         try {
           await campaignsService.uploadMedia(editingCampaignId.value, campaignMediaFile.value)
-        } catch (err) {
-          toast.error(t('campaigns.mediaUploadFailed'))
+        } catch (error: any) {
+          toast.error(getErrorMessage(error, t('campaigns.mediaUploadFailed')))
+          await fetchCampaigns()
+          return
         }
       }
+
       toast.success(t('common.updatedSuccess', { resource: t('resources.Campaign') }))
       showCreateDialog.value = false
       editingCampaignId.value = null
