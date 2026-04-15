@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
 	"net/textproto"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nikyjain/whatomate/internal/handlers"
 	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/pkg/whatsapp"
 	"github.com/nikyjain/whatomate/test/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,6 +46,30 @@ func newMultipartUploadRequest(t *testing.T, fieldName, filename, contentType st
 	req.RequestCtx.Request.Header.SetContentType(writer.FormDataContentType())
 	req.RequestCtx.Request.SetBody(body.Bytes())
 	return req
+}
+
+func newCampaignMediaDownloadServer(t *testing.T, mediaID string, payload []byte) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v18.0/"+mediaID:
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"url":       "http://" + r.Host + "/download/" + mediaID,
+				"mime_type": "application/pdf",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/download/"+mediaID:
+			if r.Header.Get("Authorization") != "Bearer test-token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(payload)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
 }
 
 // createTestCampaign creates a test campaign in the database.
@@ -444,6 +471,46 @@ func TestApp_UploadCampaignMedia_InferMimeTypeFromFilename(t *testing.T) {
 	assert.Equal(t, "campaign-brief.pdf", updated.HeaderMediaFilename)
 	assert.Equal(t, "application/pdf", updated.HeaderMediaMimeType)
 	assert.NotEmpty(t, updated.HeaderMediaLocalPath)
+}
+
+func TestApp_ServeCampaignMedia_RedownloadsMissingLocalFile(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	mediaID := "media-redownload-" + uuid.New().String()[:8]
+	payload := []byte("%PDF-1.4 restored campaign media")
+	server := newCampaignMediaDownloadServer(t, mediaID, payload)
+	defer server.Close()
+
+	log := testutil.NopLogger()
+	waClient := whatsapp.NewWithBaseURL(log, server.URL)
+	app := newTestApp(t, withQueue(mockQueue), withWhatsApp(waClient))
+
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("serve-campaign-media")), testutil.WithPassword("password"))
+	account := createTestAccount(t, app, org.ID)
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	template.HeaderType = "DOCUMENT"
+	require.NoError(t, app.DB.Save(template).Error)
+
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusDraft)
+	campaign.HeaderMediaID = mediaID
+	campaign.HeaderMediaMimeType = "application/pdf"
+	campaign.HeaderMediaLocalPath = "campaigns/missing-preview.pdf"
+	require.NoError(t, app.DB.Save(campaign).Error)
+
+	req := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+
+	err := app.ServeCampaignMedia(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	assert.Equal(t, payload, testutil.GetResponseBody(req))
+	assert.Equal(t, "application/pdf", string(req.RequestCtx.Response.Header.Peek("Content-Type")))
+
+	var updated models.BulkMessageCampaign
+	require.NoError(t, app.DB.First(&updated, "id = ?", campaign.ID).Error)
+	assert.NotEmpty(t, updated.HeaderMediaLocalPath)
+	assert.NotEqual(t, "campaigns/missing-preview.pdf", updated.HeaderMediaLocalPath)
 }
 
 // --- DeleteCampaign Tests ---

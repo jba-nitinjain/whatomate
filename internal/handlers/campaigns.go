@@ -1205,43 +1205,20 @@ func (a *App) ServeCampaignMedia(r *fastglue.Request) error {
 	}
 
 	// Check if campaign has media
-	if campaign.HeaderMediaLocalPath == "" {
+	if strings.TrimSpace(campaign.HeaderMediaLocalPath) == "" && strings.TrimSpace(campaign.HeaderMediaID) == "" {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "No media found", nil, "")
 	}
 
-	// Security: prevent directory traversal and symlink attacks
-	filePath := filepath.Clean(campaign.HeaderMediaLocalPath)
-	baseDir, err := filepath.Abs(a.getMediaStoragePath())
+	data, contentType, err := a.readCampaignMediaFile(r.RequestCtx, campaign)
 	if err != nil {
-		a.Log.Error("Storage configuration error", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Storage configuration error", nil, "")
-	}
-	fullPath, err := filepath.Abs(filepath.Join(baseDir, filePath))
-	if err != nil || !strings.HasPrefix(fullPath, baseDir+string(os.PathSeparator)) {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid file path", nil, "")
-	}
-
-	// Reject symlinks
-	info, err := os.Lstat(fullPath)
-	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "File not found", nil, "")
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid file path", nil, "")
-	}
-
-	// Read file
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		a.Log.Error("Failed to read media file", "path", fullPath, "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to read file", nil, "")
-	}
-
-	// Use stored mime type or determine from extension
-	contentType := campaign.HeaderMediaMimeType
-	if contentType == "" {
-		ext := strings.ToLower(filepath.Ext(filePath))
-		contentType = getMimeTypeFromExtension(ext)
+		status := fasthttp.StatusInternalServerError
+		message := "Failed to read file"
+		if os.IsNotExist(err) {
+			status = fasthttp.StatusNotFound
+			message = "File not found"
+		}
+		a.Log.Error("Failed to serve campaign media", "campaign_id", campaignUUID, "error", err)
+		return r.SendErrorEnvelope(status, message, nil, "")
 	}
 
 	r.RequestCtx.Response.Header.Set("Content-Type", contentType)
@@ -1249,6 +1226,80 @@ func (a *App) ServeCampaignMedia(r *fastglue.Request) error {
 	r.RequestCtx.SetBody(data)
 
 	return nil
+}
+
+func (a *App) readCampaignMediaFile(ctx context.Context, campaign *models.BulkMessageCampaign) ([]byte, string, error) {
+	filePath := strings.TrimSpace(campaign.HeaderMediaLocalPath)
+	if filePath != "" {
+		data, contentType, err := a.readStoredMediaFile(filePath, campaign.HeaderMediaMimeType)
+		if err == nil {
+			return data, contentType, nil
+		}
+		if !os.IsNotExist(err) {
+			a.Log.Warn("Stored campaign media read failed, attempting re-download", "campaign_id", campaign.ID, "error", err)
+		}
+	}
+
+	if strings.TrimSpace(campaign.HeaderMediaID) == "" {
+		if filePath == "" {
+			return nil, "", os.ErrNotExist
+		}
+		return nil, "", fmt.Errorf("read stored campaign media: %w", os.ErrNotExist)
+	}
+
+	account, err := a.resolveWhatsAppAccount(campaign.OrganizationID, campaign.WhatsAppAccount)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve whatsapp account: %w", err)
+	}
+
+	localPath, err := a.DownloadAndSaveMedia(ctx, campaign.HeaderMediaID, campaign.HeaderMediaMimeType, a.toWhatsAppAccount(account))
+	if err != nil {
+		return nil, "", fmt.Errorf("download campaign media: %w", err)
+	}
+
+	campaign.HeaderMediaLocalPath = localPath
+	if err := a.DB.Model(campaign).Update("header_media_local_path", localPath).Error; err != nil {
+		return nil, "", fmt.Errorf("update campaign media path: %w", err)
+	}
+
+	return a.readStoredMediaFile(localPath, campaign.HeaderMediaMimeType)
+}
+
+func (a *App) readStoredMediaFile(filePath, storedMimeType string) ([]byte, string, error) {
+	filePath = filepath.Clean(filePath)
+	baseDir, err := filepath.Abs(a.getMediaStoragePath())
+	if err != nil {
+		return nil, "", fmt.Errorf("storage configuration error: %w", err)
+	}
+
+	fullPath, err := filepath.Abs(filepath.Join(baseDir, filePath))
+	if err != nil || !strings.HasPrefix(fullPath, baseDir+string(os.PathSeparator)) {
+		return nil, "", fmt.Errorf("invalid file path")
+	}
+
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return nil, "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, "", fmt.Errorf("invalid file path")
+	}
+
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return nil, "", err
+	}
+
+	contentType := storedMimeType
+	if contentType == "" {
+		ext := strings.ToLower(filepath.Ext(filePath))
+		contentType = getMimeTypeFromExtension(ext)
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	return data, contentType, nil
 }
 
 // getMimeTypeFromExtension returns MIME type from file extension
