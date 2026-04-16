@@ -16,7 +16,7 @@ Modern, open-source WhatsApp Business Platform. Single binary app.
   Customizable roles with fine-grained permissions. Create custom roles, assign specific permissions per resource (users, contacts, templates, etc.), and control access at the action level (read, create, update, delete). Super admins can manage multiple organizations.
 
 - **WhatsApp Cloud API Integration**
-  Connect with Meta's WhatsApp Business API for messaging, including optional MM Lite routing controls for marketing templates after account onboarding.
+  Connect with Meta's WhatsApp Business API for messaging, including optional MM Lite routing controls for marketing templates after account onboarding. Settings -> Accounts also includes Meta-backed phone verification, phone registration, and two-step PIN management. Meta does not expose an API to disable two-step verification.
 
 - **Real-time Chat**
   Live messaging with WebSocket support for instant communication, unread counters, and unread-only filtering.
