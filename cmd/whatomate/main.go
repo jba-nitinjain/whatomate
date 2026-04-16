@@ -514,6 +514,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	// Webhook routes (public - for Meta)
 	g.GET("/api/webhook", app.WebhookVerify)
 	g.POST("/api/webhook", app.WebhookHandler)
+	g.GET("/public/campaigns/{id}/media/{filename}", app.ServePublicCampaignMedia)
 
 	// WebSocket route (auth via message-based flow after upgrade)
 	g.GET("/ws", app.WebSocketHandler)

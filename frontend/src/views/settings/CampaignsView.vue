@@ -1154,11 +1154,11 @@ function campaignNeedsMedia(campaign: Campaign): boolean {
     return ht === 'IMAGE' || ht === 'VIDEO' || ht === 'DOCUMENT'
   }
   // If template not in local list, check if campaign already has media fields
-  return !!campaign.header_media_id
+  return !!campaign.header_media_id || !!campaign.header_media_url
 }
 
 function campaignHasMedia(campaign: Campaign): boolean {
-  return !!campaign.header_media_id
+  return !!campaign.header_media_id || !!campaign.header_media_url
 }
 
 // Cache for media blob URLs and loading states

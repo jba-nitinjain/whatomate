@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1222,12 +1225,6 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Template does not have a media header", nil, "")
 	}
 
-	// Get WhatsApp account
-	account, err := a.resolveWhatsAppAccount(orgID, campaign.WhatsAppAccount)
-	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account not found", nil, "")
-	}
-
 	// Parse multipart form
 	form, err := r.RequestCtx.MultipartForm()
 	if err != nil {
@@ -1264,28 +1261,19 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Unsupported file type: "+mimeType, nil, "")
 	}
 
-	// Upload to WhatsApp
-	waAccount := a.toWhatsAppAccount(account)
-
-	ctx := r.RequestCtx
-	mediaID, err := a.WhatsApp.UploadMedia(ctx, waAccount, data, mimeType, fileHeader.Filename)
-	if err != nil {
-		a.Log.Error("Failed to upload media to WhatsApp", "error", err, "campaign_id", campaignUUID, "mime_type", mimeType, "filename", fileHeader.Filename)
-		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Failed to upload media to WhatsApp: "+err.Error(), nil, "")
-	}
-
-	// Save file locally for preview
+	// Save file locally and expose it via a signed public URL so template sends
+	// can use header link values directly instead of pre-uploading to Meta.
 	localPath, err := a.saveCampaignMedia(campaignUUID.String(), data, mimeType)
 	if err != nil {
-		a.Log.Error("Failed to save media locally", "error", err)
-		// Don't fail the request, just log the error - preview won't work
+		a.Log.Error("Failed to save media locally", "error", err, "campaign_id", campaignUUID, "mime_type", mimeType, "filename", fileHeader.Filename)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to save media locally", nil, "")
 	}
 
-	// Update campaign with media ID, filename, mime type, and local path
+	filename := sanitizeFilename(fileHeader.Filename)
 	updates := map[string]interface{}{
 		"header_media_url":        "",
-		"header_media_id":         mediaID,
-		"header_media_filename":   sanitizeFilename(fileHeader.Filename),
+		"header_media_id":         "",
+		"header_media_filename":   filename,
 		"header_media_mime_type":  mimeType,
 		"header_media_local_path": localPath,
 	}
@@ -1294,10 +1282,22 @@ func (a *App) UploadCampaignMedia(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to save media info", nil, "")
 	}
 
-	a.Log.Info("Campaign media uploaded", "campaign_id", campaignUUID, "media_id", mediaID, "filename", fileHeader.Filename, "local_path", localPath)
+	campaign.HeaderMediaID = ""
+	campaign.HeaderMediaFilename = filename
+	campaign.HeaderMediaMimeType = mimeType
+	campaign.HeaderMediaLocalPath = localPath
+	publicURL := a.buildPublicCampaignMediaURL(r, &campaign)
+
+	if err := a.DB.Model(&campaign).Update("header_media_url", publicURL).Error; err != nil {
+		a.Log.Error("Failed to update campaign media URL", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to save media info", nil, "")
+	}
+
+	a.Log.Info("Campaign media uploaded", "campaign_id", campaignUUID, "filename", fileHeader.Filename, "local_path", localPath, "public_url", publicURL)
 
 	return r.SendEnvelope(map[string]interface{}{
-		"media_id":   mediaID,
+		"media_id":   "",
+		"media_url":  publicURL,
 		"filename":   fileHeader.Filename,
 		"mime_type":  mimeType,
 		"local_path": localPath,
@@ -1333,6 +1333,96 @@ func (a *App) saveCampaignMedia(campaignID string, data []byte, mimeType string)
 	a.Log.Info("Campaign media saved locally", "path", relativePath, "size", len(data))
 
 	return relativePath, nil
+}
+
+func (a *App) buildPublicCampaignMediaURL(r *fastglue.Request, campaign *models.BulkMessageCampaign) string {
+	baseURL := a.requestPublicBaseURL(r.RequestCtx)
+	filename := campaign.HeaderMediaFilename
+	if filename == "" {
+		filename = campaign.ID.String() + getExtensionFromMimeType(campaign.HeaderMediaMimeType)
+	}
+
+	token := url.QueryEscape(a.campaignMediaToken(campaign))
+	return fmt.Sprintf("%s/public/campaigns/%s/media/%s?token=%s",
+		baseURL,
+		url.PathEscape(campaign.ID.String()),
+		url.PathEscape(filename),
+		token,
+	)
+}
+
+func (a *App) requestPublicBaseURL(ctx *fasthttp.RequestCtx) string {
+	scheme := firstForwardedValue(string(ctx.Request.Header.Peek("X-Forwarded-Proto")))
+	host := firstForwardedValue(string(ctx.Request.Header.Peek("X-Forwarded-Host")))
+
+	if originScheme, originHost := requestOriginParts(ctx); scheme == "" {
+		scheme = originScheme
+		if host == "" {
+			host = originHost
+		}
+	} else if host == "" {
+		if _, originHost := requestOriginParts(ctx); originHost != "" {
+			host = originHost
+		}
+	}
+
+	if scheme == "" {
+		scheme = string(ctx.URI().Scheme())
+	}
+	if host == "" {
+		host = string(ctx.Host())
+	}
+	if scheme == "" {
+		scheme = "http"
+	}
+	if host == "" {
+		host = "localhost"
+	}
+
+	basePath := sanitizeRedirectPath(a.Config.Server.BasePath)
+	return fmt.Sprintf("%s://%s%s", scheme, host, basePath)
+}
+
+func requestOriginParts(ctx *fasthttp.RequestCtx) (string, string) {
+	for _, raw := range []string{
+		strings.TrimSpace(string(ctx.Request.Header.Peek("Origin"))),
+		strings.TrimSpace(string(ctx.Request.Header.Peek("Referer"))),
+	} {
+		if raw == "" {
+			continue
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			continue
+		}
+		return parsed.Scheme, parsed.Host
+	}
+	return "", ""
+}
+
+func firstForwardedValue(value string) string {
+	if value == "" {
+		return ""
+	}
+	parts := strings.Split(value, ",")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
+}
+
+func (a *App) campaignMediaToken(campaign *models.BulkMessageCampaign) string {
+	mac := hmac.New(sha256.New, []byte(a.Config.JWT.Secret))
+	mac.Write([]byte(campaign.ID.String()))
+	mac.Write([]byte{0})
+	mac.Write([]byte(campaign.OrganizationID.String()))
+	mac.Write([]byte{0})
+	mac.Write([]byte(strings.TrimSpace(campaign.HeaderMediaFilename)))
+	mac.Write([]byte{0})
+	mac.Write([]byte(strings.TrimSpace(campaign.HeaderMediaMimeType)))
+	mac.Write([]byte{0})
+	mac.Write([]byte(strings.TrimSpace(campaign.HeaderMediaLocalPath)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // ServeCampaignMedia serves campaign media files for preview
@@ -1379,6 +1469,50 @@ func (a *App) ServeCampaignMedia(r *fastglue.Request) error {
 	return nil
 }
 
+// ServePublicCampaignMedia serves locally stored campaign media via a signed URL.
+func (a *App) ServePublicCampaignMedia(r *fastglue.Request) error {
+	campaignUUID, err := parsePathUUID(r, "id", "campaign")
+	if err != nil {
+		return nil
+	}
+
+	token := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("token")))
+	if token == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	var campaign models.BulkMessageCampaign
+	if err := a.DB.First(&campaign, "id = ?", campaignUUID).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Campaign not found", nil, "")
+	}
+
+	if token != a.campaignMediaToken(&campaign) {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	if strings.TrimSpace(campaign.HeaderMediaLocalPath) == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "No media found", nil, "")
+	}
+
+	data, contentType, err := a.readStoredMediaFile(campaign.HeaderMediaLocalPath, campaign.HeaderMediaMimeType)
+	if err != nil {
+		status := fasthttp.StatusInternalServerError
+		message := "Failed to read file"
+		if os.IsNotExist(err) {
+			status = fasthttp.StatusNotFound
+			message = "File not found"
+		}
+		a.Log.Error("Failed to serve public campaign media", "campaign_id", campaignUUID, "error", err)
+		return r.SendErrorEnvelope(status, message, nil, "")
+	}
+
+	r.RequestCtx.Response.Header.Set("Content-Type", contentType)
+	r.RequestCtx.Response.Header.Set("Cache-Control", "public, max-age=3600")
+	r.RequestCtx.SetBody(data)
+
+	return nil
+}
+
 func (a *App) readCampaignMediaFile(ctx context.Context, campaign *models.BulkMessageCampaign) ([]byte, string, error) {
 	filePath := strings.TrimSpace(campaign.HeaderMediaLocalPath)
 	if filePath != "" {
@@ -1392,6 +1526,10 @@ func (a *App) readCampaignMediaFile(ctx context.Context, campaign *models.BulkMe
 	}
 
 	if strings.TrimSpace(campaign.HeaderMediaURL) != "" {
+		if a.isLocalCampaignMediaURL(campaign.HeaderMediaURL) {
+			return nil, "", os.ErrNotExist
+		}
+
 		data, _, mimeType, err := a.downloadCampaignHeaderMedia(ctx, campaign.HeaderMediaURL)
 		if err != nil {
 			return nil, "", fmt.Errorf("download campaign media from url: %w", err)
@@ -1443,6 +1581,16 @@ func (a *App) readCampaignMediaFile(ctx context.Context, campaign *models.BulkMe
 	}
 
 	return a.readStoredMediaFile(localPath, campaign.HeaderMediaMimeType)
+}
+
+func (a *App) isLocalCampaignMediaURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+
+	pathPrefix := sanitizeRedirectPath(a.Config.Server.BasePath) + "/public/campaigns/"
+	return strings.HasPrefix(parsed.EscapedPath(), pathPrefix) || strings.HasPrefix(parsed.Path, pathPrefix)
 }
 
 func (a *App) readStoredMediaFile(filePath, storedMimeType string) ([]byte, string, error) {

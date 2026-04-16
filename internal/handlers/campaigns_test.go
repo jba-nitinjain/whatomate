@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"net/textproto"
 	"testing"
 	"time"
@@ -515,6 +516,8 @@ func TestApp_UploadCampaignMedia_InferMimeTypeFromFilename(t *testing.T) {
 	campaign.HeaderMediaURL = "https://example.com/original.pdf"
 	require.NoError(t, app.DB.Save(campaign).Error)
 	req := newMultipartUploadRequest(t, "file", "campaign-brief.pdf", "application/octet-stream", []byte("%PDF-1.4 test campaign media"))
+	testutil.SetHeader(req, "X-Forwarded-Proto", "https")
+	testutil.SetHeader(req, "X-Forwarded-Host", "whatsapp.example.com")
 	testutil.SetAuthContext(req, org.ID, user.ID)
 	testutil.SetPathParam(req, "id", campaign.ID.String())
 
@@ -524,11 +527,55 @@ func TestApp_UploadCampaignMedia_InferMimeTypeFromFilename(t *testing.T) {
 
 	var updated models.BulkMessageCampaign
 	require.NoError(t, app.DB.First(&updated, "id = ?", campaign.ID).Error)
-	assert.Empty(t, updated.HeaderMediaURL)
-	assert.NotEmpty(t, updated.HeaderMediaID)
+	assert.Contains(t, updated.HeaderMediaURL, "https://whatsapp.example.com/public/campaigns/"+campaign.ID.String()+"/media/campaign-brief.pdf?token=")
+	assert.Empty(t, updated.HeaderMediaID)
 	assert.Equal(t, "campaign-brief.pdf", updated.HeaderMediaFilename)
 	assert.Equal(t, "application/pdf", updated.HeaderMediaMimeType)
 	assert.NotEmpty(t, updated.HeaderMediaLocalPath)
+	assert.Len(t, mockServer.uploadedMedia, 0)
+}
+
+func TestApp_ServePublicCampaignMedia_WithSignedURL(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	mockServer := newMockWhatsAppServer()
+	defer mockServer.close()
+
+	app := newMsgTestApp(t, mockServer)
+	app.Queue = mockQueue
+
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("serve-public-campaign-media")), testutil.WithPassword("password"))
+	account := createTestAccount(t, app, org.ID)
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	template.HeaderType = "DOCUMENT"
+	require.NoError(t, app.DB.Save(template).Error)
+
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusDraft)
+	uploadReq := newMultipartUploadRequest(t, "file", "campaign-brief.pdf", "application/octet-stream", []byte("%PDF-1.4 public campaign media"))
+	testutil.SetHeader(uploadReq, "X-Forwarded-Proto", "https")
+	testutil.SetHeader(uploadReq, "X-Forwarded-Host", "whatsapp.example.com")
+	testutil.SetAuthContext(uploadReq, org.ID, user.ID)
+	testutil.SetPathParam(uploadReq, "id", campaign.ID.String())
+
+	err := app.UploadCampaignMedia(uploadReq)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(uploadReq))
+
+	var updated models.BulkMessageCampaign
+	require.NoError(t, app.DB.First(&updated, "id = ?", campaign.ID).Error)
+
+	parsedURL, err := url.Parse(updated.HeaderMediaURL)
+	require.NoError(t, err)
+
+	req := testutil.NewGETRequest(t)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+	testutil.SetQueryParam(req, "token", parsedURL.Query().Get("token"))
+
+	err = app.ServePublicCampaignMedia(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	assert.Equal(t, []byte("%PDF-1.4 public campaign media"), testutil.GetResponseBody(req))
+	assert.Equal(t, "application/pdf", string(req.RequestCtx.Response.Header.Peek("Content-Type")))
 }
 
 func TestApp_ServeCampaignMedia_RedownloadsMissingLocalFile(t *testing.T) {
