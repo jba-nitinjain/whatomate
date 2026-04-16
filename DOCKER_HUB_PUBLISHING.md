@@ -27,7 +27,7 @@ docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile \
   --cache-from type=registry,ref=nikyjain/whatomate:buildcache \
-  --cache-to type=registry,ref=nikyjain/whatomate:buildcache,mode=max \
+  --cache-to type=registry,ref=nikyjain/whatomate:buildcache,mode=max,oci-mediatypes=true,image-manifest=true,compression=gzip \
   -t nikyjain/whatomate:latest \
   --push .
 ```
@@ -67,6 +67,7 @@ make docker-push
 ```
 
 This push also refreshes a registry-backed Buildx cache at `nikyjain/whatomate:buildcache` to speed up later multi-arch publishes.
+The cache exporter must stay on the explicit OCI image-manifest path with gzip compression, because the default exporter settings can fail on Docker Hub with a `400 Bad request` during cache blob commit.
 
 5. Verify the published manifest.
 
@@ -86,7 +87,7 @@ docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile \
   --cache-from type=registry,ref=nikyjain/whatomate:buildcache \
-  --cache-to type=registry,ref=nikyjain/whatomate:buildcache,mode=max \
+  --cache-to type=registry,ref=nikyjain/whatomate:buildcache,mode=max,oci-mediatypes=true,image-manifest=true,compression=gzip \
   -t nikyjain/whatomate:latest \
   -t nikyjain/whatomate:2026-04-09 \
   --push .
@@ -99,6 +100,7 @@ docker buildx build \
 - Do not skip the `latest` tag.
 - Use [docker/Dockerfile](/e:/xampp/htdocs/bu-so/whatomate/docker/Dockerfile) for the app image.
 - Keep the Buildx cache tag at `nikyjain/whatomate:buildcache` unless there is a deliberate reason to rotate it.
+- Keep the cache exporter flags `oci-mediatypes=true,image-manifest=true,compression=gzip` when writing the remote Buildx cache.
 - The local compose file at [docker/docker-compose.yml](/e:/xampp/htdocs/bu-so/whatomate/docker/docker-compose.yml) is for local builds and does not change the Docker Hub publishing target.
 
 ## Fast Checklist

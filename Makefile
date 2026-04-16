@@ -16,6 +16,8 @@ LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIM
 DOCKER_COMPOSE=docker compose -f docker/docker-compose.yml
 DOCKER_IMAGE?=nikyjain/whatomate:latest
 DOCKER_CACHE_IMAGE?=nikyjain/whatomate:buildcache
+DOCKER_CACHE_FROM?=type=registry,ref=$(DOCKER_CACHE_IMAGE)
+DOCKER_CACHE_TO?=type=registry,ref=$(DOCKER_CACHE_IMAGE),mode=max,oci-mediatypes=true,image-manifest=true,compression=gzip
 DOCKER_PLATFORMS?=linux/amd64,linux/arm64
 DOCKER_DOCKERFILE?=docker/Dockerfile
 DOCKER_BUILDER?=multiarch-builder
@@ -89,7 +91,7 @@ docker-restart:
 	$(DOCKER_COMPOSE) restart
 
 docker-push:
-	docker buildx build --builder $(DOCKER_BUILDER) --platform $(DOCKER_PLATFORMS) -f $(DOCKER_DOCKERFILE) --cache-from type=registry,ref=$(DOCKER_CACHE_IMAGE) --cache-to type=registry,ref=$(DOCKER_CACHE_IMAGE),mode=max -t $(DOCKER_IMAGE) --push .
+	docker buildx build --builder $(DOCKER_BUILDER) --platform $(DOCKER_PLATFORMS) -f $(DOCKER_DOCKERFILE) --cache-from $(DOCKER_CACHE_FROM) --cache-to $(DOCKER_CACHE_TO) -t $(DOCKER_IMAGE) --push .
 
 docker-manifest:
 	docker buildx imagetools inspect $(DOCKER_IMAGE)
@@ -165,7 +167,7 @@ help:
 	@echo "  docker-down    - Stop Docker containers"
 	@echo "  docker-logs    - View Docker logs"
 	@echo "  docker-push    - Build and push multi-arch Docker Hub image ($(DOCKER_IMAGE))"
-	@echo "                   with remote Buildx cache ($(DOCKER_CACHE_IMAGE))"
+	@echo "                   with remote OCI Buildx cache ($(DOCKER_CACHE_IMAGE))"
 	@echo "  docker-manifest - Inspect the published Docker image manifest"
 	@echo ""
 	@echo "Other:"
