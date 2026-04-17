@@ -36,6 +36,7 @@ If the local shell does not have Go installed, note that explicitly instead of c
 - External message ingestion supports super-admin routing by `phone_number_id` to the correct organization/account.
 - Legacy misrouted chats can be reviewed from the super-admin-only Settings UI using all message history, with safe moves plus explicit manual approval for merge-required cases.
 - The chat repair backend flows are preview/scan/apply under `/api/admin/chat-repair`; opening the tab remains read-only, and the explicit `Scan Candidates` action auto-applies safe move candidates, including same-location chats whose active messages still drift from the resolved organization/account.
+- WhatsApp onboarding now has a resumable hybrid wizard under Settings → Accounts, backed by `/api/accounts/onboarding/sessions/*` plus super-admin-only app-level Meta config at `/api/settings/meta-onboarding`. Keep new onboarding work session-first and preserve the legacy `/api/accounts` CRUD/manual editor for break-glass maintenance.
 
 ## Docker Publishing Rule
 

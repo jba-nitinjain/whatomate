@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 
 	"github.com/knadh/koanf/v2"
@@ -19,6 +20,7 @@ type Config struct {
 	WhatsApp      WhatsAppConfig      `koanf:"whatsapp"`
 	AI            AIConfig            `koanf:"ai"`
 	Storage       StorageConfig       `koanf:"storage"`
+	Rollbar       RollbarConfig       `koanf:"rollbar"`
 	DefaultAdmin  DefaultAdminConfig  `koanf:"default_admin"`
 	RateLimit     RateLimitConfig     `koanf:"rate_limit"`
 	Cookie        CookieConfig        `koanf:"cookie"`
@@ -117,6 +119,12 @@ type StorageConfig struct {
 	S3Secret  string `koanf:"s3_secret"`
 }
 
+type RollbarConfig struct {
+	AccessToken string `koanf:"access_token"`
+	Environment string `koanf:"environment"`
+	Endpoint    string `koanf:"endpoint"`
+}
+
 type DefaultAdminConfig struct {
 	Email    string `koanf:"email"`
 	Password string `koanf:"password"`
@@ -162,10 +170,24 @@ func Load(configPath string) (*Config, error) {
 		return nil, err
 	}
 
+	applyExternalEnvOverrides(&cfg)
+
 	// Set defaults
 	setDefaults(&cfg)
 
 	return &cfg, nil
+}
+
+func applyExternalEnvOverrides(cfg *Config) {
+	if value := strings.TrimSpace(os.Getenv("ROLLBAR_ACCESS_TOKEN")); value != "" {
+		cfg.Rollbar.AccessToken = value
+	}
+	if value := strings.TrimSpace(os.Getenv("ROLLBAR_ENVIRONMENT")); value != "" {
+		cfg.Rollbar.Environment = value
+	}
+	if value := strings.TrimSpace(os.Getenv("ROLLBAR_ENDPOINT")); value != "" {
+		cfg.Rollbar.Endpoint = value
+	}
 }
 
 func setDefaults(cfg *Config) {
@@ -222,6 +244,9 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Storage.LocalPath == "" {
 		cfg.Storage.LocalPath = "./uploads"
+	}
+	if cfg.Rollbar.Environment == "" {
+		cfg.Rollbar.Environment = cfg.App.Environment
 	}
 	// Default admin credentials (only used during initial setup)
 	if cfg.DefaultAdmin.Email == "" {

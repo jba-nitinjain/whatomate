@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { computed, ref, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { api } from "@/services/api";
+import { api, metaOnboardingService, unwrapApiPayload } from "@/services/api";
+import { useAuthStore } from "@/stores/auth";
 import { useOrganizationsStore } from "@/stores/organizations";
 import { toast } from "vue-sonner";
 import {
@@ -44,6 +45,7 @@ import {
   Store,
   Bell,
   ShieldCheck,
+  Rocket,
 } from "lucide-vue-next";
 
 const { t } = useI18n();
@@ -85,8 +87,11 @@ interface TestResult {
 
 import BusinessProfileDialog from "./BusinessProfileDialog.vue";
 import AccountPhoneSetupDialog from "./AccountPhoneSetupDialog.vue";
+import AccountOnboardingDialog from "./AccountOnboardingDialog.vue";
 
 const organizationsStore = useOrganizationsStore();
+const authStore = useAuthStore();
+const isSuperAdmin = computed(() => authStore.user?.is_super_admin || false);
 
 const accounts = ref<WhatsAppAccount[]>([]);
 const isLoading = ref(true);
@@ -98,6 +103,19 @@ const testResults = ref<Record<string, TestResult>>({});
 const subscribingAccountId = ref<string | null>(null);
 const deleteDialogOpen = ref(false);
 const accountToDelete = ref<WhatsAppAccount | null>(null);
+const isOnboardingDialogOpen = ref(false);
+const isSavingMetaConfig = ref(false);
+const metaConfig = ref({
+  meta_app_id: "",
+  meta_app_secret: "",
+  embedded_signup_config_id: "",
+  graph_api_version: "v21.0",
+  public_webhook_base_url: "",
+  required_scopes: "whatsapp_business_management, whatsapp_business_messaging, business_management",
+  has_app_secret: false,
+  is_configured: false,
+  callback_url: "",
+});
 
 // Business Profile Dialog State
 const isProfileDialogOpen = ref(false);
@@ -138,11 +156,17 @@ watch(
   () => organizationsStore.selectedOrgId,
   () => {
     fetchAccounts();
+    if (isSuperAdmin.value) {
+      fetchMetaConfig();
+    }
   },
 );
 
 onMounted(async () => {
   await fetchAccounts();
+  if (isSuperAdmin.value) {
+    await fetchMetaConfig();
+  }
 });
 
 async function fetchAccounts() {
@@ -156,6 +180,58 @@ async function fetchAccounts() {
     accounts.value = [];
   } finally {
     isLoading.value = false;
+  }
+}
+
+async function fetchMetaConfig() {
+  if (!isSuperAdmin.value) return;
+  try {
+    const response = await metaOnboardingService.getConfig();
+    const config = unwrapApiPayload(response.data).config;
+    metaConfig.value = {
+      meta_app_id: config.meta_app_id || "",
+      meta_app_secret: "",
+      embedded_signup_config_id: config.embedded_signup_config_id || "",
+      graph_api_version: config.graph_api_version || "v21.0",
+      public_webhook_base_url: config.public_webhook_base_url || "",
+      required_scopes: Array.isArray(config.required_scopes)
+        ? config.required_scopes.join(", ")
+        : "",
+      has_app_secret: !!config.has_app_secret,
+      is_configured: !!config.is_configured,
+      callback_url: config.callback_url || "",
+    };
+  } catch (error) {
+    console.error("Failed to load Meta onboarding config", error);
+  }
+}
+
+async function saveMetaConfig() {
+  isSavingMetaConfig.value = true;
+  try {
+    const response = await metaOnboardingService.updateConfig({
+      meta_app_id: metaConfig.value.meta_app_id.trim(),
+      meta_app_secret: metaConfig.value.meta_app_secret.trim() || undefined,
+      embedded_signup_config_id:
+        metaConfig.value.embedded_signup_config_id.trim(),
+      graph_api_version: metaConfig.value.graph_api_version.trim() || "v21.0",
+      public_webhook_base_url:
+        metaConfig.value.public_webhook_base_url.trim(),
+      required_scopes: metaConfig.value.required_scopes
+        .split(",")
+        .map((scope) => scope.trim())
+        .filter(Boolean),
+    });
+    const config = unwrapApiPayload(response.data).config;
+    metaConfig.value.meta_app_secret = "";
+    metaConfig.value.has_app_secret = !!config.has_app_secret;
+    metaConfig.value.is_configured = !!config.is_configured;
+    metaConfig.value.callback_url = config.callback_url || "";
+    toast.success("Meta onboarding configuration saved.");
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, "Failed to save Meta onboarding configuration."));
+  } finally {
+    isSavingMetaConfig.value = false;
   }
 }
 
@@ -366,9 +442,13 @@ const webhookUrl = window.location.origin + basePath + "/api/webhook";
           :label="$t('common.refresh')"
           @refresh="refreshNow(true)"
         />
+        <Button size="sm" @click="isOnboardingDialogOpen = true">
+          <Rocket class="h-4 w-4 mr-2" />
+          Start Onboarding
+        </Button>
         <Button variant="outline" size="sm" @click="openCreateDialog">
           <Plus class="h-4 w-4 mr-2" />
-          {{ $t("accounts.addAccount") }}
+          Manual Account Editor
         </Button>
       </template>
     </PageHeader>
@@ -425,6 +505,91 @@ const webhookUrl = window.location.origin + basePath + "/api/webhook";
     <ScrollArea v-else class="flex-1">
       <div class="p-6">
         <div class="max-w-6xl mx-auto space-y-4">
+          <Card
+            v-if="isSuperAdmin"
+            class="border-white/[0.08] bg-white/[0.02] light:bg-white light:border-gray-200"
+          >
+            <CardContent class="p-5 space-y-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <h3 class="font-semibold text-white light:text-gray-900">
+                    Meta Platform Prerequisites
+                  </h3>
+                  <p class="text-sm text-white/60 light:text-gray-600 mt-1">
+                    Super-admin-only app-level setup for embedded signup, token exchange, and the shared public webhook callback.
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  :class="
+                    metaConfig.is_configured
+                      ? 'border-green-600 text-green-600'
+                      : 'border-amber-600 text-amber-600'
+                  "
+                >
+                  {{ metaConfig.is_configured ? "Configured" : "Action required" }}
+                </Badge>
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-2">
+                <div class="space-y-2">
+                  <Label>Meta App ID</Label>
+                  <Input v-model="metaConfig.meta_app_id" placeholder="Meta App ID" />
+                </div>
+                <div class="space-y-2">
+                  <Label>Embedded Signup Config ID</Label>
+                  <Input
+                    v-model="metaConfig.embedded_signup_config_id"
+                    placeholder="Embedded signup config ID"
+                  />
+                </div>
+                <div class="space-y-2">
+                  <Label>Meta App Secret</Label>
+                  <Input
+                    v-model="metaConfig.meta_app_secret"
+                    type="password"
+                    :placeholder="
+                      metaConfig.has_app_secret
+                        ? 'Leave blank to keep the existing secret'
+                        : 'Meta App Secret'
+                    "
+                  />
+                </div>
+                <div class="space-y-2">
+                  <Label>Graph API Version</Label>
+                  <Input v-model="metaConfig.graph_api_version" placeholder="v21.0" />
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <Label>Public Webhook Base URL</Label>
+                <Input
+                  v-model="metaConfig.public_webhook_base_url"
+                  placeholder="https://app.example.com"
+                />
+                <p class="text-xs text-white/45 light:text-gray-500">
+                  The saved callback URL becomes:
+                  <code class="ml-1">{{ metaConfig.callback_url || "Not available yet" }}</code>
+                </p>
+              </div>
+
+              <div class="space-y-2">
+                <Label>Required scopes</Label>
+                <Input
+                  v-model="metaConfig.required_scopes"
+                  placeholder="whatsapp_business_management, whatsapp_business_messaging, business_management"
+                />
+              </div>
+
+              <div class="flex justify-end">
+                <Button :disabled="isSavingMetaConfig" @click="saveMetaConfig">
+                  <Loader2 v-if="isSavingMetaConfig" class="mr-2 h-4 w-4 animate-spin" />
+                  Save Meta Config
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
           <!-- Webhook URL Info -->
           <Card
             class="border-blue-800 light:border-blue-200 bg-blue-950 light:bg-blue-50"
@@ -799,10 +964,16 @@ const webhookUrl = window.location.origin + basePath + "/api/webhook";
                 {{ $t("accounts.noAccounts") }}
               </p>
               <p class="text-sm mb-4">{{ $t("accounts.noAccountsDesc") }}</p>
-              <Button variant="outline" size="sm" @click="openCreateDialog">
-                <Plus class="h-4 w-4 mr-2" />
-                {{ $t("accounts.addAccount") }}
-              </Button>
+              <div class="flex items-center justify-center gap-3">
+                <Button size="sm" @click="isOnboardingDialogOpen = true">
+                  <Rocket class="h-4 w-4 mr-2" />
+                  Start Onboarding
+                </Button>
+                <Button variant="outline" size="sm" @click="openCreateDialog">
+                  <Plus class="h-4 w-4 mr-2" />
+                  Manual Account Editor
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -1087,6 +1258,11 @@ const webhookUrl = window.location.origin + basePath + "/api/webhook";
       v-model:open="isPhoneSetupDialogOpen"
       :account-id="phoneSetupAccount?.id || null"
       :account-name="phoneSetupAccount?.name || ''"
+    />
+
+    <AccountOnboardingDialog
+      v-model:open="isOnboardingDialogOpen"
+      @accounts-changed="fetchAccounts"
     />
   </div>
 </template>

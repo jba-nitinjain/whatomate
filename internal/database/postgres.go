@@ -57,6 +57,7 @@ func GetMigrationModels() []MigrationModel {
 	return []MigrationModel{
 		// Core models
 		{"Organization", &models.Organization{}},
+		{"SystemSetting", &models.SystemSetting{}},
 		{"Permission", &models.Permission{}},
 		{"CustomRole", &models.CustomRole{}},
 		{"User", &models.User{}},
@@ -68,6 +69,7 @@ func GetMigrationModels() []MigrationModel {
 		{"Webhook", &models.Webhook{}},
 		{"CustomAction", &models.CustomAction{}},
 		{"WhatsAppAccount", &models.WhatsAppAccount{}},
+		{"WhatsAppOnboardingSession", &models.WhatsAppOnboardingSession{}},
 		{"Contact", &models.Contact{}},
 		{"Tag", &models.Tag{}},
 		{"Message", &models.Message{}},
@@ -244,6 +246,8 @@ func getIndexes() []string {
 		`CREATE INDEX IF NOT EXISTS idx_agent_transfers_agent_active ON agent_transfers(agent_id, status) WHERE status = 'active'`,
 		`CREATE INDEX IF NOT EXISTS idx_agent_transfers_team ON agent_transfers(team_id, status) WHERE team_id IS NOT NULL`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_accounts_org_phone ON whatsapp_accounts(organization_id, phone_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_onboarding_sessions_org_status ON whatsapp_onboarding_sessions(organization_id, status, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_onboarding_sessions_org_account ON whatsapp_onboarding_sessions(organization_id, account_id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_templates_account_name_lang ON templates(whats_app_account, name, language)`,
 		`CREATE INDEX IF NOT EXISTS idx_keyword_rules_account ON keyword_rules(whats_app_account, is_enabled, priority DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_chatbot_flows_account ON chatbot_flows(whats_app_account, is_enabled)`,

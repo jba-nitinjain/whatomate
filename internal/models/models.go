@@ -103,6 +103,17 @@ func (Organization) TableName() string {
 	return "organizations"
 }
 
+// SystemSetting stores singleton or app-wide configuration outside tenant scope.
+type SystemSetting struct {
+	BaseModel
+	Key   string `gorm:"size:100;uniqueIndex;not null" json:"key"`
+	Value JSONB  `gorm:"type:jsonb;default:'{}'" json:"value"`
+}
+
+func (SystemSetting) TableName() string {
+	return "system_settings"
+}
+
 // User represents a user in the system
 type User struct {
 	BaseModel
@@ -310,6 +321,37 @@ type WhatsAppAccount struct {
 
 func (WhatsAppAccount) TableName() string {
 	return "whatsapp_accounts"
+}
+
+// WhatsAppOnboardingSession stores resumable onboarding state for a WhatsApp account setup flow.
+type WhatsAppOnboardingSession struct {
+	BaseModel
+	OrganizationID      uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	AccountID           *uuid.UUID `gorm:"type:uuid;index" json:"account_id,omitempty"`
+	Mode                string     `gorm:"size:40;not null" json:"mode"`
+	Status              string     `gorm:"size:40;default:'in_progress'" json:"status"`
+	CurrentStep         string     `gorm:"size:40;default:'preflight'" json:"current_step"`
+	AccountName         string     `gorm:"size:100" json:"account_name"`
+	AppID               string     `gorm:"size:100" json:"app_id"`
+	PhoneID             string     `gorm:"size:100" json:"phone_id"`
+	BusinessID          string     `gorm:"size:100" json:"business_id"`
+	AccessToken         string     `gorm:"type:text" json:"-"`
+	AppSecret           string     `gorm:"type:text" json:"-"`
+	WebhookVerifyToken  string     `gorm:"size:255" json:"webhook_verify_token"`
+	APIVersion          string     `gorm:"size:20;default:'v21.0'" json:"api_version"`
+	StepState           JSONB      `gorm:"type:jsonb;default:'{}'" json:"step_state"`
+	Readiness           JSONB      `gorm:"type:jsonb;default:'{}'" json:"readiness"`
+	Metadata            JSONB      `gorm:"type:jsonb;default:'{}'" json:"metadata"`
+	LastError           string     `gorm:"type:text" json:"last_error"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
+
+	// Relations
+	Organization *Organization    `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	Account      *WhatsAppAccount `gorm:"foreignKey:AccountID" json:"account,omitempty"`
+}
+
+func (WhatsAppOnboardingSession) TableName() string {
+	return "whatsapp_onboarding_sessions"
 }
 
 // ToWAAccount converts the model to the whatsapp client's Account type.

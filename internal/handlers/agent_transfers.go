@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nikyjain/whatomate/internal/assignment"
 	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/observability"
 	"github.com/nikyjain/whatomate/internal/utils"
 	"github.com/nikyjain/whatomate/internal/websocket"
 	"github.com/valyala/fasthttp"
@@ -867,6 +868,11 @@ func (a *App) PickNextTransfer(r *fastglue.Request) error {
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			observability.ReportRecoveredPanic(r, map[string]interface{}{
+				"component":       "agent_transfer_pick_next",
+				"organization_id": orgID.String(),
+				"user_id":         userID.String(),
+			})
 		}
 	}()
 

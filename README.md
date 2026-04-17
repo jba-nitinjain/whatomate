@@ -104,7 +104,7 @@ docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile \
   --cache-from type=registry,ref=nikyjain/whatomate:buildcache \
-  --cache-to type=registry,ref=nikyjain/whatomate:buildcache,mode=max \
+  --cache-to type=registry,ref=nikyjain/whatomate:buildcache,mode=max,oci-mediatypes=true,image-manifest=true,compression=gzip \
   -t nikyjain/whatomate:latest \
   -t nikyjain/whatomate:<tag> \
   --push .
@@ -142,6 +142,13 @@ make build-prod
 ```
 
 See [configuration docs](https://shridarpatil.github.io/whatomate/getting-started/configuration/) for detailed setup options.
+
+Rollbar can be enabled either in `config.toml` under `[rollbar]` or with plain environment variables:
+
+```bash
+export ROLLBAR_ACCESS_TOKEN=your_post_server_item_token
+export ROLLBAR_ENVIRONMENT=production
+```
 
 ## CLI Usage
 

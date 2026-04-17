@@ -2,11 +2,13 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/nikyjain/whatomate/internal/observability"
 	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -113,6 +115,15 @@ func Recovery(log logf.Logger) fastglue.FastMiddleware {
 		defer func() {
 			if err := recover(); err != nil {
 				log.Error("Panic recovered", "error", err, "path", string(r.RequestCtx.Path()))
+				observability.ReportRecoveredPanic(err, map[string]interface{}{
+					"component":       "http_request",
+					"path":            string(r.RequestCtx.Path()),
+					"method":          string(r.RequestCtx.Method()),
+					"query":           string(r.RequestCtx.URI().QueryString()),
+					"user_id":         fmt.Sprint(r.RequestCtx.UserValue(ContextKeyUserID)),
+					"organization_id": fmt.Sprint(r.RequestCtx.UserValue(ContextKeyOrganizationID)),
+					"remote_addr":     r.RequestCtx.RemoteAddr().String(),
+				})
 				r.RequestCtx.SetStatusCode(fasthttp.StatusInternalServerError)
 				r.RequestCtx.SetBodyString(`{"status":"error","message":"Internal server error"}`)
 			}

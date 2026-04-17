@@ -15,6 +15,14 @@ type Account struct {
 	AccessToken string
 }
 
+// EmbeddedSignupTokenExchangeResponse represents the OAuth token exchange response
+// returned after completing Meta embedded signup.
+type EmbeddedSignupTokenExchangeResponse struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type,omitempty"`
+	ExpiresIn   int    `json:"expires_in,omitempty"`
+}
+
 // Button represents an interactive button
 type Button struct {
 	ID    string `json:"id"`

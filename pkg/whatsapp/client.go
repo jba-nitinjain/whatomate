@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"net/textproto"
 	"strings"
 	"time"
@@ -105,6 +106,45 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body interfa
 	}
 
 	return respBody, nil
+}
+
+// ExchangeEmbeddedSignupCode exchanges a Meta embedded-signup code for a business token.
+func (c *Client) ExchangeEmbeddedSignupCode(ctx context.Context, appID, appSecret, code string) (*EmbeddedSignupTokenExchangeResponse, error) {
+	form := url.Values{}
+	form.Set("client_id", appID)
+	form.Set("client_secret", appSecret)
+	form.Set("code", code)
+
+	requestURL := fmt.Sprintf("%s/oauth/access_token", c.getBaseURL())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token exchange request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("token exchange failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read token exchange response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, ParseMetaAPIError(resp.StatusCode, respBody)
+	}
+
+	var result EmbeddedSignupTokenExchangeResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse token exchange response: %w", err)
+	}
+	if result.AccessToken == "" {
+		return nil, fmt.Errorf("token exchange succeeded but no access_token was returned")
+	}
+	return &result, nil
 }
 
 // CredentialsValidationResult contains the result of credentials validation

@@ -50,6 +50,13 @@ s3_region = ""
 s3_key = ""
 s3_secret = ""
 
+# Error monitoring (optional). You can also set plain environment variables:
+# ROLLBAR_ACCESS_TOKEN and ROLLBAR_ENVIRONMENT
+[rollbar]
+access_token = ""
+environment = "development"
+# endpoint = "https://api.rollbar.com/api/1/item/"
+
 # Auth cookie settings (tokens are stored in httpOnly cookies)
 [cookie]
 domain = ""    # Cookie domain (e.g., ".example.com"). Empty = current host only.

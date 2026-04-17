@@ -19,6 +19,7 @@ require (
 	github.com/pion/rtp v1.10.1
 	github.com/pion/webrtc/v4 v4.2.9
 	github.com/redis/go-redis/v9 v9.4.0
+	github.com/rollbar/rollbar-go v1.4.8
 	github.com/stretchr/testify v1.11.1
 	github.com/valyala/fasthttp v1.58.0
 	github.com/xuri/excelize/v2 v2.9.1

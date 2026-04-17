@@ -244,6 +244,16 @@ export interface ApiResponseEnvelope<T> {
 
 export type ApiResponseData<T> = T | ApiResponseEnvelope<T>;
 
+export function isApiResponseEnvelope<T>(
+  value: ApiResponseData<T>,
+): value is ApiResponseEnvelope<T> {
+  return typeof value === "object" && value !== null && "data" in value;
+}
+
+export function unwrapApiPayload<T>(value: ApiResponseData<T>): T {
+  return isApiResponseEnvelope(value) ? value.data : value;
+}
+
 export interface ChatRepairPreviewResult {
   summary: ChatRepairSummary;
   candidates: ChatRepairCandidate[];
@@ -271,6 +281,172 @@ export const chatRepairService = {
 
 export const accountsService = {
   list: () => api.get("/accounts"),
+};
+
+export interface MetaOnboardingConfig {
+  meta_app_id: string;
+  embedded_signup_config_id: string;
+  graph_api_version: string;
+  public_webhook_base_url: string;
+  required_scopes: string[];
+  has_app_secret: boolean;
+  is_configured: boolean;
+  callback_url: string;
+}
+
+export interface OnboardingStepState {
+  status: string;
+  summary?: string;
+  updated_at?: string;
+  details?: Record<string, any>;
+}
+
+export interface OnboardingCheckpointStatus {
+  key: string;
+  label: string;
+  status: string;
+  summary?: string;
+}
+
+export interface OnboardingReadinessStatus {
+  status: string;
+  summary?: string;
+  external_checkpoints?: OnboardingCheckpointStatus[];
+}
+
+export interface WhatsAppOnboardingSession {
+  id: string;
+  organization_id: string;
+  account_id?: string | null;
+  mode: "embedded_signup" | "manual_import";
+  status: string;
+  current_step: string;
+  account_name: string;
+  app_id: string;
+  phone_id: string;
+  business_id: string;
+  webhook_verify_token: string;
+  api_version: string;
+  has_access_token: boolean;
+  has_app_secret: boolean;
+  step_state: Record<string, OnboardingStepState>;
+  readiness: OnboardingReadinessStatus;
+  metadata?: Record<string, any>;
+  last_error?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export const metaOnboardingService = {
+  getConfig: () =>
+    api.get<ApiResponseData<{ config: MetaOnboardingConfig }>>(
+      "/settings/meta-onboarding",
+    ),
+  updateConfig: (data: {
+    meta_app_id: string;
+    meta_app_secret?: string;
+    embedded_signup_config_id: string;
+    graph_api_version: string;
+    public_webhook_base_url: string;
+    required_scopes: string[];
+  }) =>
+    api.put<ApiResponseData<{ config: MetaOnboardingConfig }>>(
+      "/settings/meta-onboarding",
+      data,
+    ),
+};
+
+export const onboardingService = {
+  createSession: (data?: {
+    mode?: "embedded_signup" | "manual_import";
+    account_name?: string;
+  }) =>
+    api.post<ApiResponseData<{ session: WhatsAppOnboardingSession }>>(
+      "/accounts/onboarding/sessions",
+      data ?? {},
+    ),
+  getSession: (id: string) =>
+    api.get<ApiResponseData<{ session: WhatsAppOnboardingSession }>>(
+      `/accounts/onboarding/sessions/${id}`,
+    ),
+  completeEmbeddedSignup: (
+    id: string,
+    data: {
+      account_name?: string;
+      code?: string;
+      access_token?: string;
+      app_id?: string;
+      phone_id: string;
+      business_id: string;
+      webhook_verify_token?: string;
+      api_version?: string;
+      metadata?: Record<string, any>;
+    },
+  ) =>
+    api.post<ApiResponseData<{ session: WhatsAppOnboardingSession }>>(
+      `/accounts/onboarding/sessions/${id}/embedded-signup/complete`,
+      data,
+    ),
+  manualImport: (
+    id: string,
+    data: {
+      account_name?: string;
+      app_id?: string;
+      app_secret?: string;
+      phone_id: string;
+      business_id: string;
+      access_token: string;
+      webhook_verify_token?: string;
+      api_version?: string;
+    },
+  ) =>
+    api.post<ApiResponseData<{ session: WhatsAppOnboardingSession }>>(
+      `/accounts/onboarding/sessions/${id}/manual-import`,
+      data,
+    ),
+  requestCode: (
+    id: string,
+    data: { code_method: "SMS" | "VOICE"; language?: string },
+  ) =>
+    api.post<ApiResponseData<{ session: WhatsAppOnboardingSession }>>(
+      `/accounts/onboarding/sessions/${id}/request-code`,
+      data,
+    ),
+  verifyCode: (id: string, data: { code: string }) =>
+    api.post<ApiResponseData<{ session: WhatsAppOnboardingSession }>>(
+      `/accounts/onboarding/sessions/${id}/verify-code`,
+      data,
+    ),
+  registerPhone: (
+    id: string,
+    data: {
+      pin: string;
+      backup_password?: string;
+      backup_data?: string;
+      data_localization_region?: string;
+      meta_store_retention_minutes?: number | null;
+    },
+  ) =>
+    api.post<ApiResponseData<{ session: WhatsAppOnboardingSession }>>(
+      `/accounts/onboarding/sessions/${id}/register-phone`,
+      data,
+    ),
+  validateWebhook: (id: string) =>
+    api.post<ApiResponseData<{ session: WhatsAppOnboardingSession }>>(
+      `/accounts/onboarding/sessions/${id}/validate-webhook`,
+      {},
+    ),
+  subscribeWebhooks: (id: string) =>
+    api.post<ApiResponseData<{ session: WhatsAppOnboardingSession }>>(
+      `/accounts/onboarding/sessions/${id}/subscribe-webhooks`,
+      {},
+    ),
+  finalize: (id: string) =>
+    api.post<ApiResponseData<{ session: WhatsAppOnboardingSession }>>(
+      `/accounts/onboarding/sessions/${id}/finalize`,
+      {},
+    ),
 };
 
 export interface OrgMismatchRecord {

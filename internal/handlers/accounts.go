@@ -4,10 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/nikyjain/whatomate/internal/crypto"
@@ -318,75 +314,12 @@ func (a *App) TestAccountConnection(r *fastglue.Request) error {
 		return nil
 	}
 
-	// Use the comprehensive validation function
-	if err := a.validateAccountCredentials(account.PhoneID, account.BusinessID, account.AccessToken, account.APIVersion); err != nil {
-		a.Log.Error("Account test failed", "error", err, "account", account.Name)
-		return r.SendEnvelope(map[string]interface{}{
-			"success": false,
-			"error":   "Account credential validation failed. Check your access token and phone ID.",
-		})
-	}
-
-	// Fetch additional details for display
-	url := fmt.Sprintf("%s/%s/%s?fields=display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier",
-		a.Config.WhatsApp.BaseURL, account.APIVersion, account.PhoneID)
-
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	result, err := a.runAccountConnectionCheck(account)
 	if err != nil {
-		a.Log.Error("Failed to create request", "error", err)
+		a.Log.Error("Account test failed", "error", err, "account", account.Name)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to test account", nil, "")
 	}
-	req.Header.Set("Authorization", "Bearer "+account.AccessToken)
-
-	resp, err := a.HTTPClient.Do(req)
-	if err != nil {
-		a.Log.Error("Failed to connect to WhatsApp API", "error", err)
-		return r.SendEnvelope(map[string]interface{}{
-			"success": false,
-			"error":   "Failed to connect to WhatsApp API",
-		})
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != 200 {
-		var errorResp map[string]interface{}
-		_ = json.Unmarshal(body, &errorResp)
-		return r.SendEnvelope(map[string]interface{}{
-			"success": false,
-			"error":   "API error",
-			"details": errorResp,
-		})
-	}
-
-	var result map[string]interface{}
-	_ = json.Unmarshal(body, &result)
-
-	// Check if this is a test/sandbox number
-	accountMode, _ := result["account_mode"].(string)
-	isTestNumber := accountMode == "SANDBOX"
-
-	// Prepare response
-	response := map[string]interface{}{
-		"success":                  true,
-		"display_phone_number":     result["display_phone_number"],
-		"verified_name":            result["verified_name"],
-		"quality_rating":           result["quality_rating"],
-		"messaging_limit_tier":     result["messaging_limit_tier"],
-		"code_verification_status": result["code_verification_status"],
-		"account_mode":             result["account_mode"],
-		"is_test_number":           isTestNumber,
-	}
-
-	// Add warning for test/sandbox numbers or expired verification
-	if isTestNumber {
-		response["warning"] = "This is a test/sandbox number. Not suitable for production use."
-	} else if verificationStatus, ok := result["code_verification_status"].(string); ok && verificationStatus == "EXPIRED" {
-		response["warning"] = "Phone verification has expired. Consider re-verifying at: https://business.facebook.com/wa/manage/phone-numbers/"
-	}
-
-	return r.SendEnvelope(response)
+	return r.SendEnvelope(result)
 }
 
 // Helper functions

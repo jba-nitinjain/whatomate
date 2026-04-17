@@ -18,6 +18,7 @@ import (
 	"github.com/nikyjain/whatomate/internal/frontend"
 	"github.com/nikyjain/whatomate/internal/handlers"
 	"github.com/nikyjain/whatomate/internal/middleware"
+	"github.com/nikyjain/whatomate/internal/observability"
 	"github.com/nikyjain/whatomate/internal/queue"
 	"github.com/nikyjain/whatomate/internal/storage"
 	"github.com/nikyjain/whatomate/internal/tts"
@@ -140,6 +141,9 @@ func runServer(args []string) {
 		})
 	}
 
+	observability.ConfigureRollbar(cfg, lo, Version)
+	defer observability.Close()
+
 	// Connect to PostgreSQL
 	db, err := database.NewPostgres(&cfg.Database, cfg.App.Debug)
 	if err != nil {
@@ -173,7 +177,18 @@ func runServer(args []string) {
 
 	// Initialize WebSocket hub
 	wsHub := websocket.NewHub(lo)
-	go wsHub.Run()
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				observability.ReportRecoveredPanic(recovered, map[string]interface{}{
+					"component": "websocket_hub",
+				})
+				observability.Flush()
+				panic(recovered)
+			}
+		}()
+		wsHub.Run()
+	}()
 	lo.Info("WebSocket hub started")
 
 	// Initialize app with dependencies
@@ -394,6 +409,9 @@ func runWorker(args []string) {
 		})
 	}
 
+	observability.ConfigureRollbar(cfg, lo, Version)
+	defer observability.Close()
+
 	// Connect to PostgreSQL
 	db, err := database.NewPostgres(&cfg.Database, cfg.App.Debug)
 	if err != nil {
@@ -428,6 +446,16 @@ func runWorker(args []string) {
 		workers[i] = w
 
 		go func(workerNum int) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					observability.ReportRecoveredPanic(recovered, map[string]interface{}{
+						"component":  "worker",
+						"worker_num": workerNum,
+					})
+					observability.Flush()
+					panic(recovered)
+				}
+			}()
 			lo.Info("Worker started", "worker_num", workerNum)
 			errCh <- w.Run(ctx)
 		}(i + 1)
@@ -597,6 +625,16 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	// Accounts
 	g.GET("/api/accounts", app.ListAccounts)
 	g.POST("/api/accounts", app.CreateAccount)
+	g.POST("/api/accounts/onboarding/sessions", app.CreateWhatsAppOnboardingSession)
+	g.GET("/api/accounts/onboarding/sessions/{id}", app.GetWhatsAppOnboardingSession)
+	g.POST("/api/accounts/onboarding/sessions/{id}/embedded-signup/complete", app.CompleteEmbeddedSignupOnboarding)
+	g.POST("/api/accounts/onboarding/sessions/{id}/manual-import", app.ManualImportWhatsAppOnboarding)
+	g.POST("/api/accounts/onboarding/sessions/{id}/request-code", app.RequestOnboardingPhoneCode)
+	g.POST("/api/accounts/onboarding/sessions/{id}/verify-code", app.VerifyOnboardingPhoneCode)
+	g.POST("/api/accounts/onboarding/sessions/{id}/register-phone", app.RegisterOnboardingPhone)
+	g.POST("/api/accounts/onboarding/sessions/{id}/validate-webhook", app.ValidateOnboardingWebhook)
+	g.POST("/api/accounts/onboarding/sessions/{id}/subscribe-webhooks", app.SubscribeOnboardingWebhooks)
+	g.POST("/api/accounts/onboarding/sessions/{id}/finalize", app.FinalizeWhatsAppOnboarding)
 	g.GET("/api/accounts/{id}", app.GetAccount)
 	g.PUT("/api/accounts/{id}", app.UpdateAccount)
 	g.DELETE("/api/accounts/{id}", app.DeleteAccount)
@@ -789,6 +827,8 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/settings/sso", app.GetSSOSettings)
 	g.PUT("/api/settings/sso/{provider}", app.UpdateSSOProvider)
 	g.DELETE("/api/settings/sso/{provider}", app.DeleteSSOProvider)
+	g.GET("/api/settings/meta-onboarding", app.GetMetaOnboardingConfig)
+	g.PUT("/api/settings/meta-onboarding", app.UpdateMetaOnboardingConfig)
 
 	// Webhooks
 	g.GET("/api/webhooks", app.ListWebhooks)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/fasthttp/websocket"
 	"github.com/google/uuid"
+	"github.com/nikyjain/whatomate/internal/observability"
 )
 
 const (
@@ -81,6 +82,11 @@ func (c *Client) ReadPump() {
 	defer func() {
 		if r := recover(); r != nil {
 			c.hub.log.Error("Recovered from panic in ReadPump", "error", r, "user_id", c.userID)
+			observability.ReportRecoveredPanic(r, map[string]interface{}{
+				"component":       "websocket_read_pump",
+				"user_id":         c.userID.String(),
+				"organization_id": c.organizationID.String(),
+			})
 		}
 		if c.authenticated {
 			c.hub.unregister <- c // Hub will close c.send
@@ -136,6 +142,11 @@ func (c *Client) WritePump() {
 	defer func() {
 		if r := recover(); r != nil {
 			c.hub.log.Error("Recovered from panic in WritePump", "error", r, "user_id", c.userID)
+			observability.ReportRecoveredPanic(r, map[string]interface{}{
+				"component":       "websocket_write_pump",
+				"user_id":         c.userID.String(),
+				"organization_id": c.organizationID.String(),
+			})
 		}
 		ticker.Stop()
 		if c.conn != nil {
