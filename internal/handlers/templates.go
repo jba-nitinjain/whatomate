@@ -654,9 +654,17 @@ func (a *App) UploadTemplateMedia(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account not found", nil, "")
 	}
 
-	// Check if account has app_id configured
-	if account.AppID == "" {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account does not have app_id configured. Please update the account settings.", nil, "")
+	effectiveAppID := strings.TrimSpace(account.AppID)
+	if effectiveAppID == "" {
+		metaCfg, cfgErr := a.getMetaOnboardingConfig()
+		if cfgErr != nil {
+			a.Log.Error("Failed to load Meta onboarding config for template media upload", "error", cfgErr, "account", account.Name)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load Meta configuration", nil, "")
+		}
+		effectiveAppID = strings.TrimSpace(metaCfg.MetaAppID)
+	}
+	if effectiveAppID == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account does not have app_id configured, and no app-level meta_app_id fallback is set. Please update the account settings or Meta onboarding settings.", nil, "")
 	}
 
 	// Get the uploaded file
@@ -698,8 +706,9 @@ func (a *App) UploadTemplateMedia(r *fastglue.Request) error {
 		}
 	}
 
-	// Create whatsapp account with AppID
+	// Create whatsapp account with the effective AppID used for upload sessions.
 	waAccount := a.toWhatsAppAccount(account)
+	waAccount.AppID = effectiveAppID
 
 	// Perform resumable upload to get handle
 	ctx := context.Background()

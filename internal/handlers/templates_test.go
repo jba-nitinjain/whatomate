@@ -1,9 +1,12 @@
 package handlers_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"testing"
 
 	"github.com/google/uuid"
@@ -139,6 +142,73 @@ func newTemplateTestApp(t *testing.T, server *httptest.Server) *handlers.App {
 	log := testutil.NopLogger()
 	waClient := whatsapp.NewWithBaseURL(log, server.URL)
 	return newTestApp(t, withWhatsApp(waClient))
+}
+
+func newTemplateMediaUploadRequest(t *testing.T, fieldName, filename, contentType string, data []byte) *fastglue.Request {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	partHeader := textproto.MIMEHeader{}
+	partHeader.Set("Content-Disposition", `form-data; name="`+fieldName+`"; filename="`+filename+`"`)
+	if contentType != "" {
+		partHeader.Set("Content-Type", contentType)
+	}
+
+	part, err := writer.CreatePart(partHeader)
+	require.NoError(t, err)
+	_, err = part.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	req := testutil.NewRequest(t)
+	req.RequestCtx.Request.Header.SetMethod("POST")
+	req.RequestCtx.Request.Header.SetContentType(writer.FormDataContentType())
+	req.RequestCtx.Request.SetBody(body.Bytes())
+	return req
+}
+
+func upsertMetaOnboardingConfigForTest(t *testing.T, app *handlers.App, metaAppID string) {
+	t.Helper()
+
+	require.NoError(t, app.DB.Unscoped().Where("key = ?", "meta_onboarding_config").Delete(&models.SystemSetting{}).Error)
+	if metaAppID == "" {
+		return
+	}
+
+	setting := &models.SystemSetting{
+		BaseModel: models.BaseModel{ID: uuid.New()},
+		Key:       "meta_onboarding_config",
+		Value: models.JSONB{
+			"meta_app_id": metaAppID,
+		},
+	}
+	require.NoError(t, app.DB.Create(setting).Error)
+}
+
+func newMockTemplateMediaUploadServer(t *testing.T, expectedAppID string) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v18.0/"+expectedAppID+"/uploads":
+			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"id": "upload-session-123",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v18.0/upload-session-123":
+			assert.Equal(t, "OAuth test-token", r.Header.Get("Authorization"))
+			assert.Equal(t, "0", r.Header.Get("file_offset"))
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"h": "4::sample-template-handle",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
 }
 
 // --- ListTemplates Tests ---
@@ -1204,4 +1274,56 @@ func TestApp_SyncTemplates_RefreshesExistingTemplateData(t *testing.T) {
 	assert.Equal(t, "Track order {{order_id}}", updated.BodyContent)
 	require.Len(t, updated.Buttons, 1)
 	require.NotEmpty(t, updated.SampleValues)
+}
+
+func TestApp_UploadTemplateMedia_FallsBackToAppLevelMetaAppID(t *testing.T) {
+	server := newMockTemplateMediaUploadServer(t, "platform-app-123")
+	defer server.Close()
+
+	app := newTemplateTestApp(t, server)
+	upsertMetaOnboardingConfigForTest(t, app, "platform-app-123")
+
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+
+	req := newTemplateMediaUploadRequest(t, "file", "sample.jpg", "image/jpeg", []byte("fake-image-data"))
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetQueryParam(req, "account", account.Name)
+
+	err := app.UploadTemplateMedia(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Handle   string `json:"handle"`
+		Filename string `json:"filename"`
+		MimeType string `json:"mime_type"`
+		Size     int    `json:"size"`
+	}
+	testutil.ParseEnvelopeResponse(t, req, &resp)
+	assert.Equal(t, "4::sample-template-handle", resp.Handle)
+	assert.Equal(t, "sample.jpg", resp.Filename)
+	assert.Equal(t, "image/jpeg", resp.MimeType)
+	assert.Equal(t, len([]byte("fake-image-data")), resp.Size)
+}
+
+func TestApp_UploadTemplateMedia_RequiresAppIDWhenNoFallbackExists(t *testing.T) {
+	server := newMockTemplateMediaUploadServer(t, "unused-app-id")
+	defer server.Close()
+
+	app := newTemplateTestApp(t, server)
+	upsertMetaOnboardingConfigForTest(t, app, "")
+
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+
+	req := newTemplateMediaUploadRequest(t, "file", "sample.jpg", "image/jpeg", []byte("fake-image-data"))
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetQueryParam(req, "account", account.Name)
+
+	err := app.UploadTemplateMedia(req)
+	require.NoError(t, err)
+	testutil.AssertErrorResponse(t, req, fasthttp.StatusBadRequest, "no app-level meta_app_id fallback is set")
 }
