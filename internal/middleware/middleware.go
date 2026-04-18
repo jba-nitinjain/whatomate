@@ -26,6 +26,7 @@ const (
 	ContextKeyIsSuperAdmin   = "is_super_admin"
 	ContextKeyUser           = "user"
 	ContextKeyOrganization   = "organization"
+	ContextKeyPanicReported  = "rollbar_panic_reported"
 )
 
 // JWTClaims represents JWT claims
@@ -124,6 +125,7 @@ func Recovery(log logf.Logger) fastglue.FastMiddleware {
 					"organization_id": fmt.Sprint(r.RequestCtx.UserValue(ContextKeyOrganizationID)),
 					"remote_addr":     r.RequestCtx.RemoteAddr().String(),
 				})
+				r.RequestCtx.SetUserValue(ContextKeyPanicReported, true)
 				r.RequestCtx.SetStatusCode(fasthttp.StatusInternalServerError)
 				r.RequestCtx.SetBodyString(`{"status":"error","message":"Internal server error"}`)
 			}

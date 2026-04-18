@@ -147,8 +147,13 @@ Rollbar can be enabled either in `config.toml` under `[rollbar]` or with plain e
 
 ```bash
 export ROLLBAR_ACCESS_TOKEN=your_post_server_item_token
+export ROLLBAR_CLIENT_ACCESS_TOKEN=your_post_client_item_token
 export ROLLBAR_ENVIRONMENT=production
 ```
+
+- `ROLLBAR_ACCESS_TOKEN` reports backend panics and API request failures.
+- `ROLLBAR_CLIENT_ACCESS_TOKEN` is optional and enables browser-side Vue/Axios error reporting in the embedded frontend.
+- For standalone frontend development, the browser token can also be set through `frontend/.env` using `VITE_ROLLBAR_ACCESS_TOKEN`.
 
 ## CLI Usage
 

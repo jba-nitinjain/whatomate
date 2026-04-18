@@ -120,9 +120,10 @@ type StorageConfig struct {
 }
 
 type RollbarConfig struct {
-	AccessToken string `koanf:"access_token"`
-	Environment string `koanf:"environment"`
-	Endpoint    string `koanf:"endpoint"`
+	AccessToken       string `koanf:"access_token"`
+	ClientAccessToken string `koanf:"client_access_token"`
+	Environment       string `koanf:"environment"`
+	Endpoint          string `koanf:"endpoint"`
 }
 
 type DefaultAdminConfig struct {
@@ -181,6 +182,9 @@ func Load(configPath string) (*Config, error) {
 func applyExternalEnvOverrides(cfg *Config) {
 	if value := strings.TrimSpace(os.Getenv("ROLLBAR_ACCESS_TOKEN")); value != "" {
 		cfg.Rollbar.AccessToken = value
+	}
+	if value := strings.TrimSpace(os.Getenv("ROLLBAR_CLIENT_ACCESS_TOKEN")); value != "" {
+		cfg.Rollbar.ClientAccessToken = value
 	}
 	if value := strings.TrimSpace(os.Getenv("ROLLBAR_ENVIRONMENT")); value != "" {
 		cfg.Rollbar.Environment = value

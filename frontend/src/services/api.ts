@@ -3,6 +3,7 @@ import axios, {
   type AxiosError,
   type InternalAxiosRequestConfig,
 } from "axios";
+import { reportApiError } from "@/services/rollbar";
 
 // Get base path from server-injected config or fallback
 const basePath = ((window as any).__BASE_PATH__ ?? "").replace(/\/$/, "");
@@ -93,6 +94,7 @@ api.interceptors.response.use(
     const originalRequest = error.config as InternalAxiosRequestConfig & {
       _retry?: boolean;
     };
+    let refreshAttempted = false;
 
     // Skip token refresh logic for auth endpoints
     const isAuthEndpoint = originalRequest?.url?.startsWith("/auth/");
@@ -103,6 +105,7 @@ api.interceptors.response.use(
       !originalRequest._retry &&
       !isAuthEndpoint
     ) {
+      refreshAttempted = true;
       originalRequest._retry = true;
 
       // If a refresh is already in flight, queue this request to wait for it
@@ -145,6 +148,11 @@ api.interceptors.response.use(
         window.location.href = basePath + "/login";
       }
     }
+
+    reportApiError(error, {
+      refresh_attempted: refreshAttempted,
+      is_auth_endpoint: isAuthEndpoint,
+    });
 
     return Promise.reject(error);
   },

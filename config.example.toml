@@ -51,9 +51,10 @@ s3_key = ""
 s3_secret = ""
 
 # Error monitoring (optional). You can also set plain environment variables:
-# ROLLBAR_ACCESS_TOKEN and ROLLBAR_ENVIRONMENT
+# ROLLBAR_ACCESS_TOKEN, ROLLBAR_CLIENT_ACCESS_TOKEN, and ROLLBAR_ENVIRONMENT
 [rollbar]
 access_token = ""
+client_access_token = "" # Optional post_client_item token for browser-side Vue/Axios errors
 environment = "development"
 # endpoint = "https://api.rollbar.com/api/1/item/"
 

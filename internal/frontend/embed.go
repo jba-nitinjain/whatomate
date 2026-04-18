@@ -1,6 +1,7 @@
 package frontend
 
 import (
+	"encoding/json"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -37,10 +38,24 @@ var distFS embed.FS
 // cachedIndexHTML stores the modified index.html with injected base path
 var cachedIndexHTML []byte
 
+// RollbarRuntimeConfig contains the safe browser-side Rollbar settings exposed
+// to the embedded frontend at runtime.
+type RollbarRuntimeConfig struct {
+	Enabled     bool   `json:"enabled"`
+	AccessToken string `json:"access_token,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	CodeVersion string `json:"code_version,omitempty"`
+}
+
+// RuntimeConfig contains frontend runtime settings injected into index.html.
+type RuntimeConfig struct {
+	Rollbar RollbarRuntimeConfig `json:"rollbar"`
+}
+
 // Handler returns a fasthttp handler that serves the embedded frontend files
 // basePath should be empty string for root deployment or "/subpath" for subdirectory
 // If frontend is not embedded, returns a handler that shows a helpful message
-func Handler(basePath string) fasthttp.RequestHandler {
+func Handler(basePath string, runtimeConfig RuntimeConfig) fasthttp.RequestHandler {
 	// Normalize base path
 	basePath = strings.TrimSuffix(basePath, "/")
 
@@ -65,9 +80,18 @@ func Handler(basePath string) fasthttp.RequestHandler {
 	baseTag := fmt.Sprintf(`<head><base href="%s">`, baseHref)
 	modifiedHTML := strings.Replace(string(indexContent), "<head>", baseTag, 1)
 
-	// Inject base path script before </head>
-	basePathScript := fmt.Sprintf(`<script>window.__BASE_PATH__ = "%s";</script></head>`, basePath)
-	cachedIndexHTML = []byte(strings.Replace(modifiedHTML, "</head>", basePathScript, 1))
+	runtimeJSON, err := json.Marshal(runtimeConfig)
+	if err != nil {
+		return notEmbeddedHandler("Frontend runtime config failed: " + err.Error())
+	}
+
+	// Inject runtime config before </head>.
+	runtimeScript := fmt.Sprintf(
+		`<script>window.__BASE_PATH__ = %q; window.__ROLLBAR__ = %s;</script></head>`,
+		basePath,
+		runtimeJSON,
+	)
+	cachedIndexHTML = []byte(strings.Replace(modifiedHTML, "</head>", runtimeScript, 1))
 
 	// Create file server
 	fileServer := http.FileServer(http.FS(distSubFS))

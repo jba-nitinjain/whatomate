@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '@/services/api'
+import { clearRollbarPerson, setRollbarPerson } from '@/services/rollbar'
 
 export interface UserSettings {
   email_notifications?: boolean
@@ -53,10 +54,12 @@ export const useAuthStore = defineStore('auth', () => {
   function setAuth(authData: { user: User }) {
     user.value = authData.user
     localStorage.setItem('user', JSON.stringify(authData.user))
+    setRollbarPerson(authData.user)
   }
 
   function clearAuth() {
     user.value = null
+    clearRollbarPerson()
 
     // Clean up localStorage (including legacy token keys)
     localStorage.removeItem('user')
@@ -89,6 +92,7 @@ export const useAuthStore = defineStore('auth', () => {
           return false
         }
         user.value = parsed
+        setRollbarPerson(parsed)
         return true
       } catch {
         clearAuth()
@@ -105,6 +109,7 @@ export const useAuthStore = defineStore('auth', () => {
       const freshUser = response.data.data
       user.value = freshUser
       localStorage.setItem('user', JSON.stringify(freshUser))
+      setRollbarPerson(freshUser)
       return true
     } catch {
       // If unauthorized, clear auth

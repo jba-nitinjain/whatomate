@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -273,7 +274,7 @@ func runServer(args []string) {
 
 	// Create server with CORS wrapper
 	server := &fasthttp.Server{
-		Handler:            corsWrapper(g.Handler(), allowedOrigins),
+		Handler:            middleware.ReportAPIErrors(corsWrapper(g.Handler(), allowedOrigins), cfg.Server.BasePath),
 		ReadTimeout:        time.Duration(cfg.Server.ReadTimeout) * time.Second,
 		WriteTimeout:       time.Duration(cfg.Server.WriteTimeout) * time.Second,
 		MaxRequestBodySize: 15 * 1024 * 1024,
@@ -892,7 +893,14 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	// Serve embedded frontend (SPA)
 	if frontend.IsEmbedded() {
 		lo.Info("Serving embedded frontend", "base_path", basePath)
-		frontendHandler := frontend.Handler(basePath)
+		frontendHandler := frontend.Handler(basePath, frontend.RuntimeConfig{
+			Rollbar: frontend.RollbarRuntimeConfig{
+				Enabled:     strings.TrimSpace(cfg.Rollbar.ClientAccessToken) != "",
+				AccessToken: strings.TrimSpace(cfg.Rollbar.ClientAccessToken),
+				Environment: strings.TrimSpace(cfg.Rollbar.Environment),
+				CodeVersion: Version,
+			},
+		})
 		// Catch-all for frontend routes
 		g.GET("/{path:*}", func(r *fastglue.Request) error {
 			frontendHandler(r.RequestCtx)
