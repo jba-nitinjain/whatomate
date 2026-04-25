@@ -2525,8 +2525,8 @@ async function addRecipientsFromCSV() {
 
     <!-- Add Recipients Dialog -->
     <Dialog v-model:open="showAddRecipientsDialog">
-      <DialogContent class="sm:max-w-[700px] max-h-[85vh]">
-        <DialogHeader>
+      <DialogContent class="w-[calc(100vw-2rem)] sm:max-w-[760px] max-h-[calc(100dvh-2rem)] overflow-hidden flex flex-col gap-0 p-0">
+        <DialogHeader class="shrink-0 px-6 py-5 pr-12">
           <DialogTitle>{{ $t('campaigns.addRecipients') }}</DialogTitle>
           <DialogDescription>
             {{ $t('campaigns.addRecipientsTo', { name: selectedCampaign?.name }) }}
@@ -2536,33 +2536,36 @@ async function addRecipientsFromCSV() {
           </DialogDescription>
         </DialogHeader>
 
-        <!-- Template Preview -->
-        <div v-if="selectedTemplate?.body_content" class="mb-4 p-3 bg-muted/50 rounded-lg border">
-          <div class="flex items-center gap-2 mb-2">
-            <MessageSquare class="h-4 w-4 text-muted-foreground" />
-            <span class="text-sm font-medium">{{ $t('campaigns.templatePreview') }}</span>
+        <div class="min-h-0 flex-1 overflow-y-auto px-6 pb-4">
+          <!-- Template Preview -->
+          <div v-if="selectedTemplate?.body_content" class="mb-4 rounded-lg border bg-muted/50">
+            <div class="flex items-center gap-2 border-b px-3 py-2">
+              <MessageSquare class="h-4 w-4 text-muted-foreground" />
+              <span class="text-sm font-medium">{{ $t('campaigns.templatePreview') }}</span>
+            </div>
+            <div class="max-h-[30dvh] overflow-y-auto px-3 py-3">
+              <p class="text-sm whitespace-pre-wrap" v-html="highlightTemplateParams(selectedTemplate.body_content)"></p>
+            </div>
           </div>
-          <p class="text-sm whitespace-pre-wrap" v-html="highlightTemplateParams(selectedTemplate.body_content)"></p>
-        </div>
 
-        <Tabs v-model="addRecipientsTab" class="w-full">
-          <TabsList class="grid w-full grid-cols-3">
-            <TabsTrigger value="manual">
-              <UserPlus class="h-4 w-4 mr-2" />
-              {{ $t('campaigns.manualEntry') }}
-            </TabsTrigger>
-            <TabsTrigger value="csv">
-              <FileSpreadsheet class="h-4 w-4 mr-2" />
-              {{ $t('campaigns.uploadCsv') }}
-            </TabsTrigger>
-            <TabsTrigger value="contacts">
-              <Users class="h-4 w-4 mr-2" />
-              Contacts & Groups
-            </TabsTrigger>
-          </TabsList>
+          <Tabs v-model="addRecipientsTab" class="w-full">
+            <TabsList class="grid w-full grid-cols-3">
+              <TabsTrigger value="manual" class="min-w-0">
+                <UserPlus class="h-4 w-4 mr-2 shrink-0" />
+                <span class="truncate">{{ $t('campaigns.manualEntry') }}</span>
+              </TabsTrigger>
+              <TabsTrigger value="csv" class="min-w-0">
+                <FileSpreadsheet class="h-4 w-4 mr-2 shrink-0" />
+                <span class="truncate">{{ $t('campaigns.uploadCsv') }}</span>
+              </TabsTrigger>
+              <TabsTrigger value="contacts" class="min-w-0">
+                <Users class="h-4 w-4 mr-2 shrink-0" />
+                <span class="truncate">Contacts & Groups</span>
+              </TabsTrigger>
+            </TabsList>
 
-          <!-- Manual Entry Tab -->
-          <TabsContent value="manual" class="mt-4">
+            <!-- Manual Entry Tab -->
+            <TabsContent value="manual" class="mt-4">
             <div class="space-y-4">
               <div class="bg-muted p-3 rounded-lg text-sm">
                 <p class="font-medium mb-2">{{ $t('campaigns.formatOneLine') }}</p>
@@ -2577,8 +2580,8 @@ async function addRecipientsFromCSV() {
                   id="recipients"
                   v-model="recipientsInput"
                   :placeholder="recipientPlaceholder"
-                  :rows="8"
-                  class="font-mono text-sm"
+                  :rows="6"
+                  class="min-h-[140px] font-mono text-sm"
                   :disabled="isAddingRecipients"
                 />
                 <!-- Validation status -->
@@ -2612,10 +2615,10 @@ async function addRecipientsFromCSV() {
                 </Button>
               </div>
             </div>
-          </TabsContent>
+            </TabsContent>
 
-          <!-- CSV Upload Tab -->
-          <TabsContent value="csv" class="mt-4">
+            <!-- CSV Upload Tab -->
+            <TabsContent value="csv" class="mt-4">
             <div class="space-y-4">
               <!-- CSV Format Info -->
               <div class="bg-muted p-3 rounded-lg text-sm">
@@ -2781,9 +2784,9 @@ async function addRecipientsFromCSV() {
                 <p>{{ $t('campaigns.selectCsvToPreview') }}</p>
               </div>
             </div>
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent value="contacts" class="mt-4">
+            <TabsContent value="contacts" class="mt-4">
             <div class="space-y-4">
               <div class="rounded-lg border bg-muted/50 p-3 text-sm">
                 <p class="font-medium">Import from contacts or contact groups</p>
@@ -2897,10 +2900,11 @@ async function addRecipientsFromCSV() {
                 </Button>
               </div>
             </div>
-          </TabsContent>
-        </Tabs>
+            </TabsContent>
+          </Tabs>
+        </div>
 
-        <DialogFooter class="border-t pt-4 mt-4">
+        <DialogFooter class="shrink-0 border-t px-6 py-4">
           <Button variant="outline" size="sm" @click="showAddRecipientsDialog = false" :disabled="isAddingRecipients">
             {{ $t('common.cancel') }}
           </Button>
