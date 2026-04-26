@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/nikyjain/whatomate/internal/assignment"
 	"github.com/nikyjain/whatomate/internal/calling"
 	"github.com/nikyjain/whatomate/internal/config"
@@ -26,6 +25,7 @@ import (
 	"github.com/nikyjain/whatomate/internal/websocket"
 	"github.com/nikyjain/whatomate/internal/worker"
 	"github.com/nikyjain/whatomate/pkg/whatsapp"
+	"github.com/redis/go-redis/v9"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 	"github.com/zerodha/logf"
@@ -724,6 +724,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/campaigns/{id}/pause", app.PauseCampaign)
 	g.POST("/api/campaigns/{id}/cancel", app.CancelCampaign)
 	g.POST("/api/campaigns/{id}/retry-failed", app.RetryFailed)
+	g.POST("/api/campaigns/{id}/resend", app.ResendCampaign)
 	g.GET("/api/campaigns/{id}/progress", app.GetCampaign)
 	g.GET("/api/campaigns/{id}/report.xlsx", app.ExportCampaignReport)
 	g.POST("/api/campaigns/{id}/recipients/import", app.ImportRecipients)

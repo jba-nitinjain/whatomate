@@ -56,6 +56,7 @@ func GetOrCreateContact(db *gorm.DB, orgID uuid.UUID, phoneNumber, profileName s
 		OrganizationID: orgID,
 		PhoneNumber:    normalizedPhone,
 		ProfileName:    profileName,
+		IsActive:       true,
 	}
 	if err := db.Create(&contact).Error; err != nil {
 		// Race condition: another goroutine may have created the contact

@@ -326,24 +326,24 @@ func (WhatsAppAccount) TableName() string {
 // WhatsAppOnboardingSession stores resumable onboarding state for a WhatsApp account setup flow.
 type WhatsAppOnboardingSession struct {
 	BaseModel
-	OrganizationID      uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
-	AccountID           *uuid.UUID `gorm:"type:uuid;index" json:"account_id,omitempty"`
-	Mode                string     `gorm:"size:40;not null" json:"mode"`
-	Status              string     `gorm:"size:40;default:'in_progress'" json:"status"`
-	CurrentStep         string     `gorm:"size:40;default:'preflight'" json:"current_step"`
-	AccountName         string     `gorm:"size:100" json:"account_name"`
-	AppID               string     `gorm:"size:100" json:"app_id"`
-	PhoneID             string     `gorm:"size:100" json:"phone_id"`
-	BusinessID          string     `gorm:"size:100" json:"business_id"`
-	AccessToken         string     `gorm:"type:text" json:"-"`
-	AppSecret           string     `gorm:"type:text" json:"-"`
-	WebhookVerifyToken  string     `gorm:"size:255" json:"webhook_verify_token"`
-	APIVersion          string     `gorm:"size:20;default:'v21.0'" json:"api_version"`
-	StepState           JSONB      `gorm:"type:jsonb;default:'{}'" json:"step_state"`
-	Readiness           JSONB      `gorm:"type:jsonb;default:'{}'" json:"readiness"`
-	Metadata            JSONB      `gorm:"type:jsonb;default:'{}'" json:"metadata"`
-	LastError           string     `gorm:"type:text" json:"last_error"`
-	CompletedAt         *time.Time `json:"completed_at,omitempty"`
+	OrganizationID     uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	AccountID          *uuid.UUID `gorm:"type:uuid;index" json:"account_id,omitempty"`
+	Mode               string     `gorm:"size:40;not null" json:"mode"`
+	Status             string     `gorm:"size:40;default:'in_progress'" json:"status"`
+	CurrentStep        string     `gorm:"size:40;default:'preflight'" json:"current_step"`
+	AccountName        string     `gorm:"size:100" json:"account_name"`
+	AppID              string     `gorm:"size:100" json:"app_id"`
+	PhoneID            string     `gorm:"size:100" json:"phone_id"`
+	BusinessID         string     `gorm:"size:100" json:"business_id"`
+	AccessToken        string     `gorm:"type:text" json:"-"`
+	AppSecret          string     `gorm:"type:text" json:"-"`
+	WebhookVerifyToken string     `gorm:"size:255" json:"webhook_verify_token"`
+	APIVersion         string     `gorm:"size:20;default:'v21.0'" json:"api_version"`
+	StepState          JSONB      `gorm:"type:jsonb;default:'{}'" json:"step_state"`
+	Readiness          JSONB      `gorm:"type:jsonb;default:'{}'" json:"readiness"`
+	Metadata           JSONB      `gorm:"type:jsonb;default:'{}'" json:"metadata"`
+	LastError          string     `gorm:"type:text" json:"last_error"`
+	CompletedAt        *time.Time `json:"completed_at,omitempty"`
 
 	// Relations
 	Organization *Organization    `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
@@ -384,6 +384,7 @@ type Contact struct {
 	Tags               JSONBArray `gorm:"type:jsonb;default:'[]'" json:"tags"`
 	Metadata           JSONB      `gorm:"type:jsonb;default:'{}'" json:"metadata"`
 	LastInboundAt      *time.Time `json:"last_inbound_at,omitempty"` // When customer last sent a message (for 24h window tracking)
+	IsActive           bool       `gorm:"default:true" json:"is_active"`
 
 	// Chatbot SLA tracking
 	ChatbotLastMessageAt *time.Time `json:"chatbot_last_message_at,omitempty"` // When chatbot last sent a message

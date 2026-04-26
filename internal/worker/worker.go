@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -97,6 +98,13 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 		w.incrementCampaignCount(job.CampaignID, "failed_count")
 		return nil // Don't retry
 	}
+	if !contact.IsActive {
+		w.Log.Info("Skipping inactive contact for campaign recipient", "campaign_id", job.CampaignID, "contact_id", contact.ID, "recipient_id", job.RecipientID)
+		w.updateRecipientStatus(job.RecipientID, models.MessageStatusFailed, "", "Contact is inactive")
+		w.incrementCampaignCount(job.CampaignID, "failed_count")
+		w.checkCampaignCompletion(ctx, job.CampaignID, job.OrganizationID)
+		return nil
+	}
 
 	// Build recipient for sending
 	recipient := &models.BulkMessageRecipient{
@@ -138,6 +146,7 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 		w.Log.Error("Failed to send message", "error", err, "recipient", job.PhoneNumber)
 		message.Status = models.MessageStatusFailed
 		message.ErrorMessage = err.Error()
+		w.markContactInactiveIfUndeliverable(contact, err)
 		w.updateRecipientStatus(job.RecipientID, models.MessageStatusFailed, "", err.Error())
 		w.incrementCampaignCount(job.CampaignID, "failed_count")
 	} else {
@@ -171,6 +180,24 @@ func (w *Worker) updateRecipientStatus(recipientID uuid.UUID, status models.Mess
 		updates["error_message"] = errorMsg
 	}
 	w.DB.Model(&models.BulkMessageRecipient{}).Where("id = ?", recipientID).Updates(updates)
+}
+
+func (w *Worker) markContactInactiveIfUndeliverable(contact *models.Contact, err error) {
+	if contact == nil || err == nil || !isUndeliverableMessageError(err) {
+		return
+	}
+
+	if dbErr := w.DB.Model(contact).Update("is_active", false).Error; dbErr != nil {
+		w.Log.Error("Failed to mark undeliverable contact inactive", "error", dbErr, "contact_id", contact.ID)
+		return
+	}
+	contact.IsActive = false
+	w.Log.Info("Marked contact inactive after undeliverable message", "contact_id", contact.ID, "phone", contact.PhoneNumber)
+}
+
+func isUndeliverableMessageError(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "message undeliverable") || strings.Contains(message, "131026")
 }
 
 // incrementCampaignCount increments a campaign counter atomically

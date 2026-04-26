@@ -689,6 +689,7 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 				BaseModel:      models.BaseModel{ID: uuid.New()},
 				OrganizationID: orgID,
 				PhoneNumber:    phoneNumber,
+				IsActive:       true,
 			}
 			if err := a.DB.Create(&c).Error; err != nil {
 				a.Log.Error("Failed to create contact", "error", err, "phone", phoneNumber)

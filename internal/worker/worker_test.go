@@ -779,6 +779,90 @@ func TestWorker_HandleRecipientJob_WhatsAppError(t *testing.T) {
 	assert.Equal(t, 1, updatedCampaign.FailedCount)
 }
 
+func TestWorker_HandleRecipientJob_UndeliverableMarksContactInactive(t *testing.T) {
+	w := testWorker(t)
+	org, account, _, campaign, recipient := createTestCampaignData(t, w)
+
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
+			"error": map[string]interface{}{
+				"message": "Message Undeliverable.",
+				"code":    131026,
+			},
+		})
+	}))
+	defer server.Close()
+
+	require.NoError(t, w.DB.Model(account).Update("api_version", "v21.0").Error)
+	w.WhatsApp = whatsapp.NewWithBaseURL(w.Log, server.URL)
+
+	job := &queue.RecipientJob{
+		CampaignID:     campaign.ID,
+		RecipientID:    recipient.ID,
+		OrganizationID: org.ID,
+		PhoneNumber:    recipient.PhoneNumber,
+		RecipientName:  recipient.RecipientName,
+		TemplateParams: recipient.TemplateParams,
+	}
+
+	err := w.HandleRecipientJob(context.Background(), job)
+	require.NoError(t, err)
+
+	var contact models.Contact
+	require.NoError(t, w.DB.Where("organization_id = ? AND phone_number = ?", org.ID, recipient.PhoneNumber).First(&contact).Error)
+	assert.False(t, contact.IsActive)
+}
+
+func TestWorker_HandleRecipientJob_SkipsInactiveContact(t *testing.T) {
+	w := testWorker(t)
+	org, account, _, campaign, recipient := createTestCampaignData(t, w)
+
+	require.NoError(t, w.DB.Create(&models.Contact{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: org.ID,
+		PhoneNumber:    recipient.PhoneNumber,
+		ProfileName:    "Inactive Contact",
+		IsActive:       false,
+	}).Error)
+
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		called = true
+		rw.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
+			"messages": []map[string]interface{}{{"id": "wamid.should-not-send"}},
+		})
+	}))
+	defer server.Close()
+
+	require.NoError(t, w.DB.Model(account).Update("api_version", "v21.0").Error)
+	w.WhatsApp = whatsapp.NewWithBaseURL(w.Log, server.URL)
+
+	job := &queue.RecipientJob{
+		CampaignID:     campaign.ID,
+		RecipientID:    recipient.ID,
+		OrganizationID: org.ID,
+		PhoneNumber:    recipient.PhoneNumber,
+		RecipientName:  recipient.RecipientName,
+		TemplateParams: recipient.TemplateParams,
+	}
+
+	err := w.HandleRecipientJob(context.Background(), job)
+	require.NoError(t, err)
+	assert.False(t, called)
+
+	var updatedRecipient models.BulkMessageRecipient
+	require.NoError(t, w.DB.First(&updatedRecipient, recipient.ID).Error)
+	assert.Equal(t, models.MessageStatusFailed, updatedRecipient.Status)
+	assert.Equal(t, "Contact is inactive", updatedRecipient.ErrorMessage)
+
+	var messageCount int64
+	require.NoError(t, w.DB.Model(&models.Message{}).Where("contact_id IN (SELECT id FROM contacts WHERE phone_number = ?)", recipient.PhoneNumber).Count(&messageCount).Error)
+	assert.EqualValues(t, 0, messageCount)
+}
+
 func TestWorker_HandleRecipientJob_CreatesContact(t *testing.T) {
 	w := testWorker(t)
 	org, account, _, campaign, recipient := createTestCampaignData(t, w)

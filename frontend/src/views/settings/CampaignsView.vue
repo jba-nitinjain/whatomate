@@ -75,7 +75,8 @@ import {
   CalendarIcon,
   MessageSquare,
   ImageIcon,
-  FileText
+  FileText,
+  Copy
 } from 'lucide-vue-next'
 import { formatDate } from '@/lib/utils'
 import { useDebounceFn } from '@vueuse/core'
@@ -1055,10 +1056,30 @@ async function retryFailed(campaign: Campaign) {
   try {
     const response = await campaignsService.retryFailed(campaign.id)
     const result = response.data.data
-    toast.success(t('campaigns.retryingFailed', { count: result?.retry_count || 0 }))
+    const skipped = result?.skipped_inactive_count || 0
+    const description = skipped > 0 ? `${skipped} inactive contact(s) skipped` : undefined
+    toast.success(t('campaigns.retryingFailed', { count: result?.retry_count || 0 }), { description })
     await fetchCampaigns()
   } catch (error: any) {
     toast.error(getErrorMessage(error, t('campaigns.retryFailedError')))
+  }
+}
+
+function canResendCampaign(campaign: Campaign): boolean {
+  return ['completed', 'failed', 'cancelled', 'paused'].includes(campaign.status)
+}
+
+async function resendCampaign(campaign: Campaign) {
+  try {
+    const response = await campaignsService.resend(campaign.id)
+    const result = response.data.data
+    const queued = result?.queued_count || 0
+    const skipped = result?.skipped_inactive_count || 0
+    const description = skipped > 0 ? `${skipped} inactive contact(s) skipped` : undefined
+    toast.success(`Resent ${queued} recipient(s) as a new campaign`, { description })
+    await fetchCampaigns()
+  } catch (error: any) {
+    toast.error(getErrorMessage(error, 'Failed to resend campaign'))
   }
 }
 
@@ -2242,6 +2263,16 @@ async function addRecipientListToCampaign(
                       title="Retry Failed"
                     >
                       <RefreshCw class="h-4 w-4" />
+                    </Button>
+                    <Button
+                      v-if="canResendCampaign(campaign)"
+                      variant="ghost"
+                      size="icon"
+                      class="h-8 w-8"
+                      @click="resendCampaign(campaign)"
+                      title="Resend as New Campaign"
+                    >
+                      <Copy class="h-4 w-4" />
                     </Button>
                     <Button
                       v-if="campaign.status === 'running' || campaign.status === 'paused' || campaign.status === 'processing' || campaign.status === 'queued'"

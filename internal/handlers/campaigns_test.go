@@ -7,8 +7,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"net/textproto"
+	"net/url"
 	"testing"
 	"time"
 
@@ -20,8 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
-	"github.com/zerodha/fastglue"
 	"github.com/xuri/excelize/v2"
+	"github.com/zerodha/fastglue"
 )
 
 func newMultipartUploadRequest(t *testing.T, fieldName, filename, contentType string, data []byte) *fastglue.Request {
@@ -1290,6 +1290,53 @@ func TestApp_RetryFailed_Success(t *testing.T) {
 	assert.Equal(t, string(models.CampaignStatusProcessing), resp.Data.Status)
 }
 
+func TestApp_RetryFailed_SkipsInactiveContacts(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("retry-inactive")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("retry-inactive-account"))
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusCompleted)
+	inactiveRecipient := createTestRecipient(t, app, campaign.ID, "1112223333", models.MessageStatusFailed)
+	retryableRecipient := createTestRecipient(t, app, campaign.ID, "4445556666", models.MessageStatusFailed)
+	require.NoError(t, app.DB.Create(&models.Contact{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: org.ID,
+		PhoneNumber:    inactiveRecipient.PhoneNumber,
+		ProfileName:    "Inactive Contact",
+		IsActive:       false,
+	}).Error)
+
+	req := testutil.NewJSONRequest(t, nil)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+
+	err := app.RetryFailed(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	assert.Len(t, mockQueue.Jobs, 1)
+	assert.Equal(t, retryableRecipient.PhoneNumber, mockQueue.Jobs[0].PhoneNumber)
+
+	var inactiveAfter models.BulkMessageRecipient
+	require.NoError(t, app.DB.First(&inactiveAfter, inactiveRecipient.ID).Error)
+	assert.Equal(t, models.MessageStatusFailed, inactiveAfter.Status)
+
+	var retryableAfter models.BulkMessageRecipient
+	require.NoError(t, app.DB.First(&retryableAfter, retryableRecipient.ID).Error)
+	assert.Equal(t, models.MessageStatusPending, retryableAfter.Status)
+
+	var resp struct {
+		Data struct {
+			RetryCount           int `json:"retry_count"`
+			SkippedInactiveCount int `json:"skipped_inactive_count"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+	assert.Equal(t, 1, resp.Data.RetryCount)
+	assert.Equal(t, 1, resp.Data.SkippedInactiveCount)
+}
+
 func TestApp_RetryFailed_NoFailedRecipients(t *testing.T) {
 	mockQueue := testutil.NewMockQueue()
 	app := newTestApp(t, withQueue(mockQueue))
@@ -1307,6 +1354,82 @@ func TestApp_RetryFailed_NoFailedRecipients(t *testing.T) {
 	err := app.RetryFailed(req)
 	require.NoError(t, err)
 	assert.Equal(t, fasthttp.StatusBadRequest, testutil.GetResponseStatusCode(req))
+}
+
+// --- ResendCampaign Tests ---
+
+func TestApp_ResendCampaign_CreatesNewCampaignAndQueuesActiveRecipients(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("resend-campaign")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("resend-account"))
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	source := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusCompleted)
+	activeRecipient := createTestRecipient(t, app, source.ID, "1112223333", models.MessageStatusSent)
+	inactiveRecipient := createTestRecipient(t, app, source.ID, "4445556666", models.MessageStatusFailed)
+	require.NoError(t, app.DB.Model(source).Update("total_recipients", 2).Error)
+	require.NoError(t, app.DB.Create(&models.Contact{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: org.ID,
+		PhoneNumber:    inactiveRecipient.PhoneNumber,
+		ProfileName:    "Inactive Contact",
+		IsActive:       false,
+	}).Error)
+
+	req := testutil.NewJSONRequest(t, nil)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", source.ID.String())
+
+	err := app.ResendCampaign(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	assert.Len(t, mockQueue.Jobs, 1)
+	assert.Equal(t, activeRecipient.PhoneNumber, mockQueue.Jobs[0].PhoneNumber)
+
+	var campaigns []models.BulkMessageCampaign
+	require.NoError(t, app.DB.Where("organization_id = ?", org.ID).Order("created_at ASC").Find(&campaigns).Error)
+	require.Len(t, campaigns, 2)
+	newCampaign := campaigns[1]
+	assert.NotEqual(t, source.ID, newCampaign.ID)
+	assert.Equal(t, models.CampaignStatusProcessing, newCampaign.Status)
+	assert.Equal(t, 1, newCampaign.TotalRecipients)
+	assert.NotNil(t, newCampaign.StartedAt)
+
+	var newRecipients []models.BulkMessageRecipient
+	require.NoError(t, app.DB.Where("campaign_id = ?", newCampaign.ID).Find(&newRecipients).Error)
+	require.Len(t, newRecipients, 1)
+	assert.Equal(t, activeRecipient.PhoneNumber, newRecipients[0].PhoneNumber)
+
+	var resp struct {
+		Data struct {
+			QueuedCount          int `json:"queued_count"`
+			SkippedInactiveCount int `json:"skipped_inactive_count"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+	assert.Equal(t, 1, resp.Data.QueuedCount)
+	assert.Equal(t, 1, resp.Data.SkippedInactiveCount)
+}
+
+func TestApp_ResendCampaign_RejectsProcessingCampaign(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("resend-processing")), testutil.WithPassword("password"))
+	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("resend-processing-account"))
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	source := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusProcessing)
+	createTestRecipient(t, app, source.ID, "1112223333", models.MessageStatusPending)
+
+	req := testutil.NewJSONRequest(t, nil)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", source.ID.String())
+
+	err := app.ResendCampaign(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusBadRequest, testutil.GetResponseStatusCode(req))
+	assert.Len(t, mockQueue.Jobs, 0)
 }
 
 func TestApp_RetryFailed_InvalidStatus(t *testing.T) {

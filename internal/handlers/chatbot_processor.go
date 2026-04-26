@@ -273,12 +273,22 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 		}
 	}
 
+	defaultFlowCommand := a.applyDefaultContactFlow(contact, msg.Type, messageText)
+
 	// Save incoming message to messages table (always, even if chatbot is disabled)
 	var replyToWAMID string
 	if msg.Context != nil && msg.Context.ID != "" {
 		replyToWAMID = msg.Context.ID
 	}
 	a.saveIncomingMessage(account, contact, msg.ID, messageType, messageText, mediaInfo, replyToWAMID)
+
+	if defaultFlowCommand != "" {
+		a.Log.Info("Handled default contact flow command",
+			"command", defaultFlowCommand,
+			"contact_id", contact.ID,
+			"phone_number", contact.PhoneNumber)
+		return
+	}
 
 	// Clear chatbot tracking since client has replied
 	a.ClearContactChatbotTracking(contact.ID)
@@ -710,7 +720,6 @@ func (a *App) sendAndSaveFlowMessage(account *models.WhatsAppAccount, contact *m
 	}, ChatbotSendOptions())
 	return err
 }
-
 
 // getOrCreateSession finds an active session or creates a new one
 // Returns the session and a boolean indicating if it's a new session
@@ -2187,6 +2196,44 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+func (a *App) applyDefaultContactFlow(contact *models.Contact, messageType, messageText string) string {
+	command := defaultContactFlowCommand(messageType, messageText)
+	if command == "" {
+		return ""
+	}
+
+	isActive := command == "start"
+	if contact.IsActive == isActive {
+		return command
+	}
+
+	if err := a.DB.Model(contact).Update("is_active", isActive).Error; err != nil {
+		a.Log.Error("Failed to update contact default flow status",
+			"error", err,
+			"command", command,
+			"contact_id", contact.ID,
+			"phone_number", contact.PhoneNumber)
+		return command
+	}
+	contact.IsActive = isActive
+	return command
+}
+
+func defaultContactFlowCommand(messageType, messageText string) string {
+	if messageType != "text" {
+		return ""
+	}
+
+	switch strings.ToLower(strings.TrimSpace(messageText)) {
+	case "start":
+		return "start"
+	case "stop":
+		return "stop"
+	default:
+		return ""
+	}
 }
 
 // MediaInfo holds media-related information for an incoming message

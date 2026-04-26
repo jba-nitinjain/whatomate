@@ -688,6 +688,7 @@ export const campaignsService = {
   pause: (id: string) => api.post(`/campaigns/${id}/pause`),
   cancel: (id: string) => api.post(`/campaigns/${id}/cancel`),
   retryFailed: (id: string) => api.post(`/campaigns/${id}/retry-failed`),
+  resend: (id: string) => api.post(`/campaigns/${id}/resend`),
   exportReport: (id: string) =>
     api.get(`/campaigns/${id}/report.xlsx`, { responseType: "blob" }),
   // Recipients

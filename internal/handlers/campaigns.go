@@ -780,9 +780,32 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "No failed messages to retry", nil, "")
 	}
 
+	inactivePhones, err := a.loadInactiveContactPhoneSet(orgID, campaignRecipientPhones(failedRecipients))
+	if err != nil {
+		a.Log.Error("Failed to load inactive contacts for retry", "error", err, "campaign_id", id)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load inactive contacts", nil, "")
+	}
+
+	retryableRecipients := make([]models.BulkMessageRecipient, 0, len(failedRecipients))
+	for _, recipient := range failedRecipients {
+		if _, inactive := inactivePhones[normalizeCampaignRecipientPhone(recipient.PhoneNumber)]; inactive {
+			continue
+		}
+		retryableRecipients = append(retryableRecipients, recipient)
+	}
+	skippedInactiveCount := len(failedRecipients) - len(retryableRecipients)
+	if len(retryableRecipients) == 0 {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "No retryable failed messages found", nil, "")
+	}
+
+	retryableRecipientIDs := make([]uuid.UUID, 0, len(retryableRecipients))
+	for _, recipient := range retryableRecipients {
+		retryableRecipientIDs = append(retryableRecipientIDs, recipient.ID)
+	}
+
 	// Reset failed recipients to pending
 	if err := a.DB.Model(&models.BulkMessageRecipient{}).
-		Where("campaign_id = ? AND status = ?", id, models.MessageStatusFailed).
+		Where("campaign_id = ? AND status = ? AND id IN ?", id, models.MessageStatusFailed, retryableRecipientIDs).
 		Updates(map[string]interface{}{
 			"status":        models.MessageStatusPending,
 			"error_message": "",
@@ -792,13 +815,20 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 	}
 
 	// Reset failed messages in messages table to pending
-	if err := a.DB.Model(&models.Message{}).
-		Where("metadata->>'campaign_id' = ? AND status = ?", id.String(), models.MessageStatusFailed).
-		Updates(map[string]interface{}{
-			"status":        models.MessageStatusPending,
-			"error_message": "",
-		}).Error; err != nil {
-		a.Log.Error("Failed to reset failed messages", "error", err)
+	retryableContactIDs, err := a.loadContactIDsByPhones(orgID, campaignRecipientPhones(retryableRecipients))
+	if err != nil {
+		a.Log.Error("Failed to load retryable contacts", "error", err, "campaign_id", id)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load retryable contacts", nil, "")
+	}
+	if len(retryableContactIDs) > 0 {
+		if err := a.DB.Model(&models.Message{}).
+			Where("metadata->>'campaign_id' = ? AND status = ? AND contact_id IN ?", id.String(), models.MessageStatusFailed, retryableContactIDs).
+			Updates(map[string]interface{}{
+				"status":        models.MessageStatusPending,
+				"error_message": "",
+			}).Error; err != nil {
+			a.Log.Error("Failed to reset failed messages", "error", err)
+		}
 	}
 
 	// Recalculate campaign stats from messages table
@@ -819,11 +849,11 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update campaign", nil, "")
 	}
 
-	a.Log.Info("Retrying failed messages", "campaign_id", id, "failed_count", len(failedRecipients))
+	a.Log.Info("Retrying failed messages", "campaign_id", id, "failed_count", len(retryableRecipients), "skipped_inactive", skippedInactiveCount)
 
 	// Enqueue failed recipients as individual jobs for parallel processing
-	jobs := make([]*queue.RecipientJob, len(failedRecipients))
-	for i, recipient := range failedRecipients {
+	jobs := make([]*queue.RecipientJob, len(retryableRecipients))
+	for i, recipient := range retryableRecipients {
 		jobs[i] = &queue.RecipientJob{
 			CampaignID:     id,
 			RecipientID:    recipient.ID,
@@ -842,9 +872,123 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 	a.Log.Info("Failed recipients enqueued for retry", "campaign_id", id, "count", len(jobs))
 
 	return r.SendEnvelope(map[string]interface{}{
-		"message":     "Retrying failed messages",
-		"retry_count": len(failedRecipients),
-		"status":      models.CampaignStatusProcessing,
+		"message":                "Retrying failed messages",
+		"retry_count":            len(retryableRecipients),
+		"skipped_inactive_count": skippedInactiveCount,
+		"status":                 models.CampaignStatusProcessing,
+	})
+}
+
+// ResendCampaign duplicates a finished campaign and starts the duplicate as a new tracked run.
+func (a *App) ResendCampaign(r *fastglue.Request) error {
+	orgID, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	id, err := parsePathUUID(r, "id", "campaign")
+	if err != nil {
+		return nil
+	}
+
+	var source models.BulkMessageCampaign
+	if err := a.DB.Where("id = ? AND organization_id = ?", id, orgID).
+		Preload("Template").
+		First(&source).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Campaign not found", nil, "")
+	}
+
+	if !canResendCampaign(source.Status) {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Campaign cannot be resent in current state", nil, "")
+	}
+
+	if err := a.validateCampaignReadyForStart(&source); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
+
+	var sourceRecipients []models.BulkMessageRecipient
+	if err := a.DB.Where("campaign_id = ?", source.ID).Order("created_at ASC").Find(&sourceRecipients).Error; err != nil {
+		a.Log.Error("Failed to load campaign recipients for resend", "error", err, "campaign_id", id)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load campaign recipients", nil, "")
+	}
+	if len(sourceRecipients) == 0 {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Campaign has no recipients to resend", nil, "")
+	}
+
+	inactivePhones, err := a.loadInactiveContactPhoneSet(orgID, campaignRecipientPhones(sourceRecipients))
+	if err != nil {
+		a.Log.Error("Failed to load inactive contacts for resend", "error", err, "campaign_id", id)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load inactive contacts", nil, "")
+	}
+
+	newCampaign := models.BulkMessageCampaign{
+		BaseModel:            models.BaseModel{ID: uuid.New()},
+		OrganizationID:       orgID,
+		WhatsAppAccount:      source.WhatsAppAccount,
+		Name:                 nextResendCampaignName(source.Name),
+		TemplateID:           source.TemplateID,
+		HeaderMediaURL:       source.HeaderMediaURL,
+		HeaderMediaID:        source.HeaderMediaID,
+		HeaderMediaFilename:  source.HeaderMediaFilename,
+		HeaderMediaMimeType:  source.HeaderMediaMimeType,
+		HeaderMediaLocalPath: source.HeaderMediaLocalPath,
+		Status:               models.CampaignStatusDraft,
+		CreatedBy:            userID,
+	}
+
+	newRecipients := make([]models.BulkMessageRecipient, 0, len(sourceRecipients))
+	seenPhones := make(map[string]struct{}, len(sourceRecipients))
+	skippedInactiveCount := 0
+	for _, recipient := range sourceRecipients {
+		phone := normalizeCampaignRecipientPhone(recipient.PhoneNumber)
+		if phone == "" {
+			continue
+		}
+		if _, seen := seenPhones[phone]; seen {
+			continue
+		}
+		seenPhones[phone] = struct{}{}
+		if _, inactive := inactivePhones[phone]; inactive {
+			skippedInactiveCount++
+			continue
+		}
+		newRecipients = append(newRecipients, models.BulkMessageRecipient{
+			BaseModel:      models.BaseModel{ID: uuid.New()},
+			CampaignID:     newCampaign.ID,
+			PhoneNumber:    phone,
+			RecipientName:  strings.TrimSpace(recipient.RecipientName),
+			TemplateParams: recipient.TemplateParams,
+			Status:         models.MessageStatusPending,
+		})
+	}
+
+	if len(newRecipients) == 0 {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "No active recipients found to resend", nil, "")
+	}
+	newCampaign.TotalRecipients = len(newRecipients)
+
+	if err := a.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&newCampaign).Error; err != nil {
+			return err
+		}
+		return tx.CreateInBatches(&newRecipients, campaignRecipientCreateBatchSize).Error
+	}); err != nil {
+		a.Log.Error("Failed to create resend campaign", "error", err, "campaign_id", id)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create resend campaign", nil, "")
+	}
+
+	if err := a.enqueueCampaignRecipients(r.RequestCtx, &newCampaign, newRecipients, time.Now(), models.CampaignStatusDraft); err != nil {
+		a.Log.Error("Failed to queue resend campaign", "error", err, "campaign_id", newCampaign.ID)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to queue resend campaign", nil, "")
+	}
+
+	a.Log.Info("Campaign resent as new campaign", "source_campaign_id", id, "new_campaign_id", newCampaign.ID, "recipients", len(newRecipients), "skipped_inactive", skippedInactiveCount)
+
+	return r.SendEnvelope(map[string]interface{}{
+		"message":                "Campaign resent as a new campaign",
+		"campaign":               campaignToResponse(newCampaign, source.Template),
+		"queued_count":           len(newRecipients),
+		"skipped_inactive_count": skippedInactiveCount,
 	})
 }
 
@@ -1027,6 +1171,156 @@ func normalizeCampaignRecipientPhone(phone string) string {
 	return phone
 }
 
+func campaignRecipientPhones(recipients []models.BulkMessageRecipient) []string {
+	phones := make([]string, 0, len(recipients))
+	for _, recipient := range recipients {
+		if phone := normalizeCampaignRecipientPhone(recipient.PhoneNumber); phone != "" {
+			phones = append(phones, phone)
+		}
+	}
+	return phones
+}
+
+func campaignToResponse(campaign models.BulkMessageCampaign, template *models.Template) CampaignResponse {
+	response := CampaignResponse{
+		ID:                  campaign.ID,
+		Name:                campaign.Name,
+		WhatsAppAccount:     campaign.WhatsAppAccount,
+		TemplateID:          campaign.TemplateID,
+		HeaderMediaURL:      campaign.HeaderMediaURL,
+		HeaderMediaID:       campaign.HeaderMediaID,
+		HeaderMediaFilename: campaign.HeaderMediaFilename,
+		HeaderMediaMimeType: campaign.HeaderMediaMimeType,
+		Status:              campaign.Status,
+		TotalRecipients:     campaign.TotalRecipients,
+		SentCount:           campaign.SentCount,
+		DeliveredCount:      campaign.DeliveredCount,
+		ReadCount:           campaign.ReadCount,
+		FailedCount:         campaign.FailedCount,
+		ScheduledAt:         campaign.ScheduledAt,
+		StartedAt:           campaign.StartedAt,
+		CompletedAt:         campaign.CompletedAt,
+		CreatedAt:           campaign.CreatedAt,
+		UpdatedAt:           campaign.UpdatedAt,
+	}
+	if template != nil {
+		response.TemplateName = template.Name
+	}
+	return response
+}
+
+func canResendCampaign(status models.CampaignStatus) bool {
+	switch status {
+	case models.CampaignStatusCompleted,
+		models.CampaignStatusFailed,
+		models.CampaignStatusCancelled,
+		models.CampaignStatusPaused:
+		return true
+	default:
+		return false
+	}
+}
+
+func nextResendCampaignName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "Campaign"
+	}
+	return name + " - Resend " + time.Now().Format("2006-01-02 15:04")
+}
+
+func (a *App) loadInactiveContactPhoneSet(orgID uuid.UUID, phones []string) (map[string]struct{}, error) {
+	inactivePhones := make(map[string]struct{})
+	uniquePhones := make([]string, 0, len(phones))
+	seen := make(map[string]struct{}, len(phones))
+	for _, phone := range phones {
+		phone = normalizeCampaignRecipientPhone(phone)
+		if phone == "" {
+			continue
+		}
+		if _, exists := seen[phone]; exists {
+			continue
+		}
+		seen[phone] = struct{}{}
+		uniquePhones = append(uniquePhones, phone)
+	}
+	if len(uniquePhones) == 0 {
+		return inactivePhones, nil
+	}
+
+	for start := 0; start < len(uniquePhones); start += campaignRecipientCreateBatchSize {
+		end := start + campaignRecipientCreateBatchSize
+		if end > len(uniquePhones) {
+			end = len(uniquePhones)
+		}
+		batch := uniquePhones[start:end]
+		phoneVariants := make([]string, 0, len(batch)*2)
+		for _, phone := range batch {
+			phoneVariants = append(phoneVariants, phone, "+"+phone)
+		}
+
+		var contacts []models.Contact
+		if err := a.DB.
+			Select("phone_number").
+			Where("organization_id = ? AND is_active = ? AND phone_number IN ?", orgID, false, phoneVariants).
+			Find(&contacts).Error; err != nil {
+			return nil, err
+		}
+		for _, contact := range contacts {
+			if phone := normalizeCampaignRecipientPhone(contact.PhoneNumber); phone != "" {
+				inactivePhones[phone] = struct{}{}
+			}
+		}
+	}
+
+	return inactivePhones, nil
+}
+
+func (a *App) loadContactIDsByPhones(orgID uuid.UUID, phones []string) ([]uuid.UUID, error) {
+	contactIDs := make([]uuid.UUID, 0, len(phones))
+	uniquePhones := make([]string, 0, len(phones))
+	seen := make(map[string]struct{}, len(phones))
+	for _, phone := range phones {
+		phone = normalizeCampaignRecipientPhone(phone)
+		if phone == "" {
+			continue
+		}
+		if _, exists := seen[phone]; exists {
+			continue
+		}
+		seen[phone] = struct{}{}
+		uniquePhones = append(uniquePhones, phone)
+	}
+	if len(uniquePhones) == 0 {
+		return contactIDs, nil
+	}
+
+	for start := 0; start < len(uniquePhones); start += campaignRecipientCreateBatchSize {
+		end := start + campaignRecipientCreateBatchSize
+		if end > len(uniquePhones) {
+			end = len(uniquePhones)
+		}
+		batch := uniquePhones[start:end]
+		phoneVariants := make([]string, 0, len(batch)*2)
+		for _, phone := range batch {
+			phoneVariants = append(phoneVariants, phone, "+"+phone)
+		}
+
+		var contacts []models.Contact
+		if err := a.DB.
+			Select("id").
+			Where("organization_id = ? AND phone_number IN ?", orgID, phoneVariants).
+			Find(&contacts).Error; err != nil {
+			return nil, err
+		}
+		for _, contact := range contacts {
+			contactIDs = append(contactIDs, contact.ID)
+		}
+	}
+
+	return contactIDs, nil
+}
+
 func canImportRecipientsToCampaign(status models.CampaignStatus) bool {
 	switch status {
 	case models.CampaignStatusDraft,
@@ -1128,7 +1422,7 @@ func (a *App) loadCampaignImportContacts(orgID uuid.UUID, contactIDs []string, t
 
 		if len(parsedIDs) > 0 {
 			var directContacts []models.Contact
-			if err := a.DB.Where("organization_id = ? AND id IN ?", orgID, parsedIDs).Find(&directContacts).Error; err != nil {
+			if err := a.DB.Where("organization_id = ? AND is_active = ? AND id IN ?", orgID, true, parsedIDs).Find(&directContacts).Error; err != nil {
 				return nil, err
 			}
 			for _, contact := range directContacts {
@@ -1146,7 +1440,7 @@ func (a *App) loadCampaignImportContacts(orgID uuid.UUID, contactIDs []string, t
 	}
 
 	if len(cleanTags) > 0 {
-		query := a.DB.Where("organization_id = ?", orgID)
+		query := a.DB.Where("organization_id = ? AND is_active = ?", orgID, true)
 		conditions := make([]string, 0, len(cleanTags))
 		args := make([]any, 0, len(cleanTags))
 		for _, tagName := range cleanTags {

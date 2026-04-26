@@ -1000,6 +1000,64 @@ func TestEvaluateExpression_Parentheses(t *testing.T) {
 	assert.False(t, evaluateExpression("(a == '9' OR b == '9') AND c == '3'", data))
 }
 
+// =============================================================================
+// default contact flow
+// =============================================================================
+
+func TestDefaultContactFlowCommand(t *testing.T) {
+	tests := []struct {
+		name        string
+		messageType string
+		messageText string
+		want        string
+	}{
+		{name: "start exact", messageType: "text", messageText: "start", want: "start"},
+		{name: "start mixed case trimmed", messageType: "text", messageText: " START ", want: "start"},
+		{name: "stop exact", messageType: "text", messageText: "stop", want: "stop"},
+		{name: "stop mixed case trimmed", messageType: "text", messageText: " Stop ", want: "stop"},
+		{name: "non text ignored", messageType: "button_reply", messageText: "stop", want: ""},
+		{name: "sentence ignored", messageType: "text", messageText: "please stop", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, defaultContactFlowCommand(tt.messageType, tt.messageText))
+		})
+	}
+}
+
+func TestApplyDefaultContactFlow_StopMarksContactInactive(t *testing.T) {
+	app := newProcessorTestApp(t)
+	org, _ := createProcessorTestOrg(t, app)
+	contact := testutil.CreateTestContact(t, app.DB, org.ID)
+
+	command := app.applyDefaultContactFlow(contact, "text", "STOP")
+
+	assert.Equal(t, "stop", command)
+	assert.False(t, contact.IsActive)
+
+	var updated models.Contact
+	require.NoError(t, app.DB.First(&updated, contact.ID).Error)
+	assert.False(t, updated.IsActive)
+}
+
+func TestApplyDefaultContactFlow_StartMarksContactActive(t *testing.T) {
+	app := newProcessorTestApp(t)
+	org, _ := createProcessorTestOrg(t, app)
+	contact := testutil.CreateTestContact(t, app.DB, org.ID)
+	require.NoError(t, app.DB.Model(contact).Update("is_active", false).Error)
+	contact.IsActive = false
+
+	command := app.applyDefaultContactFlow(contact, "text", "start")
+
+	assert.Equal(t, "start", command)
+	assert.True(t, contact.IsActive)
+
+	var updated models.Contact
+	require.NoError(t, app.DB.First(&updated, contact.ID).Error)
+	assert.True(t, updated.IsActive)
+}
+
 func TestEvaluateExpression_EmptyExpression(t *testing.T) {
 	assert.False(t, evaluateExpression("", map[string]interface{}{}))
 }

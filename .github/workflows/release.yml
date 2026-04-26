@@ -11,13 +11,21 @@ jobs:
     permissions:
       contents: write
       packages: write
+    env:
+      DOCKER_IMAGE: nikyjain/whatomate
+      DOCKER_CACHE_IMAGE: nikyjain/whatomate:buildcache
+      GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/whatomate
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
@@ -32,6 +40,23 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch images
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version_tag="${RELEASE_TAG#v}"
+          docker buildx build \
+            --builder "${{ steps.buildx.outputs.name }}" \
+            --platform linux/amd64,linux/arm64 \
+            -f docker/Dockerfile \
+            --cache-from "type=registry,ref=${DOCKER_CACHE_IMAGE}" \
+            --cache-to "type=registry,ref=${DOCKER_CACHE_IMAGE},mode=max,oci-mediatypes=true,image-manifest=true,compression=gzip" \
+            -t "${DOCKER_IMAGE}:latest" \
+            -t "${DOCKER_IMAGE}:${version_tag}" \
+            -t "${GHCR_IMAGE}:latest" \
+            -t "${GHCR_IMAGE}:${version_tag}" \
+            --push .
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -53,5 +78,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCKER_ORG: shridh0r
-          GITHUB_ORG: ${{ github.repository_owner }}

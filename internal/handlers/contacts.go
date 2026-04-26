@@ -39,6 +39,7 @@ type ContactResponse struct {
 	WhatsAppAccount    string     `json:"whatsapp_account,omitempty"`
 	LastInboundAt      *time.Time `json:"last_inbound_at,omitempty"`
 	ServiceWindowOpen  bool       `json:"service_window_open"`
+	IsActive           bool       `json:"is_active"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
@@ -194,7 +195,7 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 			PhoneNumber:        phoneNumber,
 			Name:               profileName,
 			ProfileName:        profileName,
-			Status:             "active",
+			Status:             contactStatusLabel(c.IsActive),
 			Tags:               tags,
 			Metadata:           c.Metadata,
 			LastMessageAt:      c.LastMessageAt,
@@ -204,6 +205,7 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 			WhatsAppAccount:    c.WhatsAppAccount,
 			LastInboundAt:      c.LastInboundAt,
 			ServiceWindowOpen:  serviceWindowOpen,
+			IsActive:           c.IsActive,
 			CreatedAt:          c.CreatedAt,
 			UpdatedAt:          c.UpdatedAt,
 		}
@@ -278,7 +280,7 @@ func (a *App) GetContact(r *fastglue.Request) error {
 		PhoneNumber:        phoneNumber,
 		Name:               profileName,
 		ProfileName:        profileName,
-		Status:             "active",
+		Status:             contactStatusLabel(contact.IsActive),
 		Tags:               tags,
 		Metadata:           contact.Metadata,
 		LastMessageAt:      contact.LastMessageAt,
@@ -286,11 +288,19 @@ func (a *App) GetContact(r *fastglue.Request) error {
 		UnreadCount:        int(unreadCount),
 		AssignedUserID:     contact.AssignedUserID,
 		WhatsAppAccount:    contact.WhatsAppAccount,
+		IsActive:           contact.IsActive,
 		CreatedAt:          contact.CreatedAt,
 		UpdatedAt:          contact.UpdatedAt,
 	}
 
 	return r.SendEnvelope(response)
+}
+
+func contactStatusLabel(isActive bool) string {
+	if isActive {
+		return "active"
+	}
+	return "inactive"
 }
 
 // GetMessages returns messages for a contact
@@ -1372,6 +1382,7 @@ func (a *App) CreateContact(r *fastglue.Request) error {
 		PhoneNumber:     normalizedPhone,
 		ProfileName:     req.ProfileName,
 		WhatsAppAccount: req.WhatsAppAccount,
+		IsActive:        true,
 	}
 
 	if req.Tags != nil {
@@ -1571,7 +1582,7 @@ func (a *App) buildContactResponse(contact *models.Contact, orgID uuid.UUID) Con
 		PhoneNumber:        phoneNumber,
 		Name:               profileName,
 		ProfileName:        profileName,
-		Status:             "active",
+		Status:             contactStatusLabel(contact.IsActive),
 		Tags:               tags,
 		Metadata:           contact.Metadata,
 		LastMessageAt:      contact.LastMessageAt,
@@ -1581,6 +1592,7 @@ func (a *App) buildContactResponse(contact *models.Contact, orgID uuid.UUID) Con
 		WhatsAppAccount:    contact.WhatsAppAccount,
 		LastInboundAt:      contact.LastInboundAt,
 		ServiceWindowOpen:  serviceWindowOpen,
+		IsActive:           contact.IsActive,
 		CreatedAt:          contact.CreatedAt,
 		UpdatedAt:          contact.UpdatedAt,
 	}
