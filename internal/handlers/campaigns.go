@@ -75,6 +75,8 @@ type CampaignRecipientImportRequest struct {
 	TagNames   []string           `json:"tag_names"`
 }
 
+const campaignRecipientCreateBatchSize = 500
+
 // ListCampaigns implements campaign listing
 func (a *App) ListCampaigns(r *fastglue.Request) error {
 	orgID, err := a.getOrgID(r)
@@ -928,7 +930,7 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 		})
 	}
 
-	if err := a.DB.Create(&recipients).Error; err != nil {
+	if err := a.DB.CreateInBatches(&recipients, campaignRecipientCreateBatchSize).Error; err != nil {
 		a.Log.Error("Failed to add recipients", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to add recipients", nil, "")
 	}

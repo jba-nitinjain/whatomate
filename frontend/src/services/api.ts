@@ -703,7 +703,7 @@ export const campaignsService = {
       contact_ids?: string[];
       tag_names?: string[];
     },
-  ) => api.post(`/campaigns/${id}/recipients/import`, data),
+  ) => api.post(`/campaigns/${id}/recipients/import`, data, { timeout: 120000 }),
   deleteRecipient: (campaignId: string, recipientId: string) =>
     api.delete(`/campaigns/${campaignId}/recipients/${recipientId}`),
   // Media

@@ -515,6 +515,8 @@ interface ManualInputValidation {
   invalidLines: { lineNumber: number; reason: string }[]
 }
 
+const recipientImportBatchSize = 1000
+
 const manualInputValidation = computed((): ManualInputValidation => {
   const params = templateParamNames.value
   const lines = recipientsInput.value.trim().split('\n').filter(line => line.trim())
@@ -1319,8 +1321,7 @@ async function addRecipients() {
 
   isAddingRecipients.value = true
   try {
-    const response = await campaignsService.addRecipients(selectedCampaign.value.id, { recipients: recipientsList })
-    const result = response.data.data
+    const result = await addRecipientListToCampaign(selectedCampaign.value.id, recipientsList)
     toast.success(t('campaigns.addedRecipients', { count: result?.added_count || recipientsList.length }))
     showAddRecipientsDialog.value = false
     recipientsInput.value = ''
@@ -1756,8 +1757,7 @@ async function addRecipientsFromCSV() {
 
   isAddingRecipients.value = true
   try {
-    const response = await campaignsService.addRecipients(selectedCampaign.value.id, { recipients: recipientsList })
-    const result = response.data.data
+    const result = await addRecipientListToCampaign(selectedCampaign.value.id, recipientsList)
     toast.success(t('campaigns.addedRecipients', { count: result?.added_count || recipientsList.length }))
     showAddRecipientsDialog.value = false
     csvFile.value = null
@@ -1768,6 +1768,38 @@ async function addRecipientsFromCSV() {
     toast.error(getErrorMessage(error, t('campaigns.addRecipientsFailed')))
   } finally {
     isAddingRecipients.value = false
+  }
+}
+
+async function addRecipientListToCampaign(
+  campaignId: string,
+  recipients: Array<{ phone_number: string; recipient_name?: string; template_params?: Record<string, any> }>
+) {
+  if (recipients.length <= recipientImportBatchSize) {
+    const response = await campaignsService.addRecipients(campaignId, { recipients })
+    return response.data.data
+  }
+
+  let addedCount = 0
+  let queuedCount = 0
+  let totalRecipients = 0
+  let sendStarted = false
+
+  for (let i = 0; i < recipients.length; i += recipientImportBatchSize) {
+    const batch = recipients.slice(i, i + recipientImportBatchSize)
+    const response = await campaignsService.addRecipients(campaignId, { recipients: batch })
+    const result = response.data.data || {}
+    addedCount += result.added_count || 0
+    queuedCount += result.queued_count || 0
+    totalRecipients = result.total_recipients || totalRecipients
+    sendStarted = sendStarted || !!result.send_started
+  }
+
+  return {
+    added_count: addedCount,
+    queued_count: queuedCount,
+    total_recipients: totalRecipients,
+    send_started: sendStarted
   }
 }
 </script>
