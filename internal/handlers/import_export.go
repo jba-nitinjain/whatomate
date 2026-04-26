@@ -29,13 +29,25 @@ type ExportConfig struct {
 
 // ImportConfig defines allowed tables and their importable columns
 type ImportConfig struct {
-	Model            interface{}
-	Resource         string // For permission check
-	RequiredColumns  []string
-	OptionalColumns  []string
-	ColumnTransform  map[string]func(string) (interface{}, error)
-	UniqueColumn     string // Column to check for duplicates (e.g., "phone_number")
-	BeforeCreate     func(db *gorm.DB, orgID uuid.UUID, record map[string]interface{}) error
+	Model           interface{}
+	Resource        string // For permission check
+	RequiredColumns []string
+	OptionalColumns []string
+	ColumnTransform map[string]func(string) (interface{}, error)
+	UniqueColumn    string // Column to check for duplicates (e.g., "phone_number")
+	BeforeCreate    func(db *gorm.DB, orgID uuid.UUID, record map[string]interface{}) error
+}
+
+const (
+	importMaxCSVSize       = 10 << 20
+	importProcessBatchSize = 1000
+	importCreateBatchSize  = 500
+	importMaxErrorMessages = 100
+)
+
+type importRecord struct {
+	rowNum int
+	values map[string]interface{}
 }
 
 // Supported export/import configurations
@@ -411,9 +423,11 @@ func (a *App) ImportData(r *fastglue.Request) error {
 	}
 	defer file.Close() //nolint:errcheck
 
-	// Limit CSV file size to 10MB
-	const maxCSVSize = 10 << 20
-	limitedReader := io.LimitReader(file, maxCSVSize+1)
+	if fileHeader.Size > importMaxCSVSize {
+		return r.SendErrorEnvelope(fasthttp.StatusRequestEntityTooLarge, "CSV file must be 10MB or smaller", nil, "")
+	}
+
+	limitedReader := io.LimitReader(file, importMaxCSVSize+1)
 
 	// Parse CSV
 	reader := csv.NewReader(limitedReader)
@@ -465,10 +479,25 @@ func (a *App) ImportData(r *fastglue.Request) error {
 		}
 	}
 
-	// Process rows (limit to 10,000)
-	const maxImportRows = 10000
 	var created, updated, skipped, errors int
 	var errorMessages []string
+	pendingRecords := make([]importRecord, 0, importProcessBatchSize)
+
+	flushBatch := func() {
+		if len(pendingRecords) == 0 {
+			return
+		}
+
+		bCreated, bUpdated, bSkipped, bErrors, bMessages := a.processImportBatch(config, orgID, pendingRecords, updateOnDup)
+		created += bCreated
+		updated += bUpdated
+		skipped += bSkipped
+		errors += bErrors
+		for _, msg := range bMessages {
+			errorMessages = appendImportError(errorMessages, msg)
+		}
+		pendingRecords = pendingRecords[:0]
+	}
 
 	rowNum := 1
 	for {
@@ -477,13 +506,9 @@ func (a *App) ImportData(r *fastglue.Request) error {
 			break
 		}
 		rowNum++
-		if rowNum > maxImportRows+1 { // +1 for header row
-			errorMessages = append(errorMessages, fmt.Sprintf("Import limited to %d rows", maxImportRows))
-			break
-		}
 		if err != nil {
 			errors++
-			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: failed to parse", rowNum))
+			errorMessages = appendImportError(errorMessages, fmt.Sprintf("Row %d: failed to parse", rowNum))
 			continue
 		}
 
@@ -501,7 +526,7 @@ func (a *App) ImportData(r *fastglue.Request) error {
 			// Validate field length
 			if len(val) > 10000 {
 				hasError = true
-				errorMessages = append(errorMessages, fmt.Sprintf("Row %d: %s exceeds max length", rowNum, col))
+				errorMessages = appendImportError(errorMessages, fmt.Sprintf("Row %d: %s exceeds max length", rowNum, col))
 				break
 			}
 
@@ -510,7 +535,7 @@ func (a *App) ImportData(r *fastglue.Request) error {
 				transformed, err := transform(val)
 				if err != nil {
 					hasError = true
-					errorMessages = append(errorMessages, fmt.Sprintf("Row %d: %s - %s", rowNum, col, err.Error()))
+					errorMessages = appendImportError(errorMessages, fmt.Sprintf("Row %d: %s - %s", rowNum, col, err.Error()))
 					break
 				}
 				if transformed != nil {
@@ -530,7 +555,7 @@ func (a *App) ImportData(r *fastglue.Request) error {
 		for _, reqCol := range config.RequiredColumns {
 			if _, ok := recordMap[reqCol]; !ok {
 				hasError = true
-				errorMessages = append(errorMessages, fmt.Sprintf("Row %d: missing required field '%s'", rowNum, reqCol))
+				errorMessages = appendImportError(errorMessages, fmt.Sprintf("Row %d: missing required field '%s'", rowNum, reqCol))
 				break
 			}
 		}
@@ -540,84 +565,21 @@ func (a *App) ImportData(r *fastglue.Request) error {
 			continue
 		}
 
-		// Check for duplicate based on unique column
-		if config.UniqueColumn != "" {
-			uniqueVal := recordMap[config.UniqueColumn]
-			var existing interface{}
-
-			// Use reflection to create a new instance of the model type
-			modelType := reflect.TypeOf(config.Model).Elem()
-			existing = reflect.New(modelType).Interface()
-
-			err := a.DB.Where("organization_id = ? AND "+config.UniqueColumn+" = ?", orgID, uniqueVal).First(existing).Error
-			if err == nil {
-				// Record exists
-				if updateOnDup {
-					// Update existing record
-					delete(recordMap, "organization_id")
-					delete(recordMap, config.UniqueColumn)
-					if len(recordMap) > 0 {
-						if err := a.DB.Model(existing).Updates(recordMap).Error; err != nil {
-							errors++
-							errorMessages = append(errorMessages, fmt.Sprintf("Row %d: failed to update", rowNum))
-						} else {
-							updated++
-						}
-					} else {
-						skipped++
-					}
-				} else {
-					skipped++
-				}
-				continue
-			}
-		}
-
 		// Run BeforeCreate hook if defined
 		if config.BeforeCreate != nil {
 			if err := config.BeforeCreate(a.DB, orgID, recordMap); err != nil {
 				errors++
-				errorMessages = append(errorMessages, fmt.Sprintf("Row %d: %s", rowNum, err.Error()))
+				errorMessages = appendImportError(errorMessages, fmt.Sprintf("Row %d: %s", rowNum, err.Error()))
 				continue
 			}
 		}
 
-		// Create new record using model type
-		recordMap["id"] = uuid.New()
-
-		// Create instance of the model type and populate it via reflection
-		modelType := reflect.TypeOf(config.Model).Elem()
-		newRecordVal := reflect.New(modelType).Elem()
-
-		// Populate struct fields from recordMap
-		for key, val := range recordMap {
-			// Convert snake_case to PascalCase for struct field names
-			fieldName := snakeToPascal(key)
-			field := newRecordVal.FieldByName(fieldName)
-			if !field.IsValid() || !field.CanSet() {
-				continue
-			}
-
-			// Set the value based on type
-			if val != nil {
-				valReflect := reflect.ValueOf(val)
-				if valReflect.Type().AssignableTo(field.Type()) {
-					field.Set(valReflect)
-				} else if valReflect.Type().ConvertibleTo(field.Type()) {
-					field.Set(valReflect.Convert(field.Type()))
-				}
-			}
+		pendingRecords = append(pendingRecords, importRecord{rowNum: rowNum, values: recordMap})
+		if len(pendingRecords) >= importProcessBatchSize {
+			flushBatch()
 		}
-
-		// Use GORM to create the populated struct - this handles PostgreSQL properly
-		newRecord := newRecordVal.Addr().Interface()
-		if err := a.DB.Create(newRecord).Error; err != nil {
-			errors++
-			errorMessages = append(errorMessages, fmt.Sprintf("Row %d: failed to create - %s", rowNum, err.Error()))
-			continue
-		}
-		created++
 	}
+	flushBatch()
 
 	return r.SendEnvelope(map[string]interface{}{
 		"created":  created,
@@ -626,6 +588,185 @@ func (a *App) ImportData(r *fastglue.Request) error {
 		"errors":   errors,
 		"messages": errorMessages,
 	})
+}
+
+func (a *App) processImportBatch(config ImportConfig, orgID uuid.UUID, records []importRecord, updateOnDup bool) (created, updated, skipped, errors int, errorMessages []string) {
+	modelType := reflect.TypeOf(config.Model).Elem()
+	existingByUnique := make(map[string]interface{})
+
+	if config.UniqueColumn != "" {
+		uniqueValues := make([]interface{}, 0, len(records))
+		seenUnique := make(map[string]bool, len(records))
+		for _, record := range records {
+			uniqueVal := record.values[config.UniqueColumn]
+			uniqueKey := importUniqueKey(uniqueVal)
+			if !seenUnique[uniqueKey] {
+				seenUnique[uniqueKey] = true
+				uniqueValues = append(uniqueValues, uniqueVal)
+			}
+		}
+
+		if len(uniqueValues) > 0 {
+			sliceType := reflect.SliceOf(modelType)
+			existingSlicePtr := reflect.New(sliceType)
+			if err := a.DB.Where("organization_id = ? AND "+config.UniqueColumn+" IN ?", orgID, uniqueValues).Find(existingSlicePtr.Interface()).Error; err != nil {
+				for _, record := range records {
+					errors++
+					errorMessages = appendImportError(errorMessages, fmt.Sprintf("Row %d: failed to check duplicate", record.rowNum))
+				}
+				return
+			}
+
+			existingSlice := existingSlicePtr.Elem()
+			uniqueField := snakeToPascal(config.UniqueColumn)
+			for i := 0; i < existingSlice.Len(); i++ {
+				item := existingSlice.Index(i)
+				field := item.FieldByName(uniqueField)
+				if field.IsValid() {
+					existingByUnique[importUniqueKey(field.Interface())] = item.Addr().Interface()
+				}
+			}
+		}
+	}
+
+	createRecords := make([]importRecord, 0, len(records))
+	pendingCreateByUnique := make(map[string]int, len(records))
+	updateRecords := make([]importRecord, 0)
+	updateTargets := make([]interface{}, 0)
+
+	for _, record := range records {
+		if config.UniqueColumn != "" {
+			uniqueKey := importUniqueKey(record.values[config.UniqueColumn])
+			if existing, ok := existingByUnique[uniqueKey]; ok {
+				if updateOnDup {
+					updateRecords = append(updateRecords, record)
+					updateTargets = append(updateTargets, existing)
+				} else {
+					skipped++
+				}
+				continue
+			}
+
+			if createIndex, ok := pendingCreateByUnique[uniqueKey]; ok {
+				if updateOnDup {
+					updateMap := buildImportUpdateMap(record.values, config.UniqueColumn)
+					if len(updateMap) > 0 {
+						for key, val := range updateMap {
+							createRecords[createIndex].values[key] = val
+						}
+						updated++
+					} else {
+						skipped++
+					}
+				} else {
+					skipped++
+				}
+				continue
+			}
+
+			pendingCreateByUnique[uniqueKey] = len(createRecords)
+		}
+
+		createRecords = append(createRecords, record)
+	}
+
+	if len(createRecords) > 0 {
+		if err := a.createImportRecords(modelType, createRecords); err != nil {
+			for _, record := range createRecords {
+				newRecord := buildImportModel(modelType, record.values)
+				if err := a.DB.Create(newRecord).Error; err != nil {
+					errors++
+					errorMessages = appendImportError(errorMessages, fmt.Sprintf("Row %d: failed to create - %s", record.rowNum, err.Error()))
+				} else {
+					created++
+				}
+			}
+		} else {
+			created += len(createRecords)
+		}
+	}
+
+	for i, record := range updateRecords {
+		updateMap := buildImportUpdateMap(record.values, config.UniqueColumn)
+		if len(updateMap) == 0 {
+			skipped++
+			continue
+		}
+
+		if err := a.DB.Model(updateTargets[i]).Updates(updateMap).Error; err != nil {
+			errors++
+			errorMessages = appendImportError(errorMessages, fmt.Sprintf("Row %d: failed to update", record.rowNum))
+		} else {
+			updated++
+		}
+	}
+
+	return
+}
+
+func (a *App) createImportRecords(modelType reflect.Type, records []importRecord) error {
+	sliceType := reflect.SliceOf(modelType)
+	slicePtr := reflect.New(sliceType)
+	sliceVal := slicePtr.Elem()
+	sliceVal.Set(reflect.MakeSlice(sliceType, 0, len(records)))
+
+	for _, record := range records {
+		newRecord := buildImportModelValue(modelType, record.values)
+		sliceVal.Set(reflect.Append(sliceVal, newRecord))
+	}
+
+	return a.DB.Transaction(func(tx *gorm.DB) error {
+		return tx.CreateInBatches(slicePtr.Interface(), importCreateBatchSize).Error
+	})
+}
+
+func buildImportModel(modelType reflect.Type, recordMap map[string]interface{}) interface{} {
+	newRecordVal := buildImportModelValue(modelType, recordMap)
+	return newRecordVal.Addr().Interface()
+}
+
+func buildImportModelValue(modelType reflect.Type, recordMap map[string]interface{}) reflect.Value {
+	recordMap["id"] = uuid.New()
+	newRecordVal := reflect.New(modelType).Elem()
+
+	for key, val := range recordMap {
+		fieldName := snakeToPascal(key)
+		field := newRecordVal.FieldByName(fieldName)
+		if !field.IsValid() || !field.CanSet() || val == nil {
+			continue
+		}
+
+		valReflect := reflect.ValueOf(val)
+		if valReflect.Type().AssignableTo(field.Type()) {
+			field.Set(valReflect)
+		} else if valReflect.Type().ConvertibleTo(field.Type()) {
+			field.Set(valReflect.Convert(field.Type()))
+		}
+	}
+
+	return newRecordVal
+}
+
+func buildImportUpdateMap(recordMap map[string]interface{}, uniqueColumn string) map[string]interface{} {
+	updateMap := make(map[string]interface{})
+	for key, val := range recordMap {
+		if key == "id" || key == "organization_id" || key == uniqueColumn {
+			continue
+		}
+		updateMap[key] = val
+	}
+	return updateMap
+}
+
+func importUniqueKey(value interface{}) string {
+	return fmt.Sprintf("%v", value)
+}
+
+func appendImportError(messages []string, msg string) []string {
+	if len(messages) < importMaxErrorMessages {
+		return append(messages, msg)
+	}
+	return messages
 }
 
 // GetExportConfig returns the export configuration for a table

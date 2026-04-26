@@ -574,6 +574,7 @@ export const dataService = {
     }
     return api.post<ImportResult>("/import", formData, {
       headers: { "Content-Type": "multipart/form-data" },
+      timeout: 120000,
     });
   },
 };
