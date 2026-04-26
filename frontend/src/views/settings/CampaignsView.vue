@@ -289,6 +289,8 @@ const recipientsInput = ref('')
 const recipientSearchQuery = ref('')
 const recipientFilterStatus = ref('all')
 const lastLoadedRecipientsCampaignId = ref<string | null>(null)
+const campaignTimingTick = ref(Date.now())
+let campaignTimingInterval: number | null = null
 
 const activeCampaignStatuses = new Set(['scheduled', 'queued', 'processing', 'running', 'paused'])
 const recipientStatusOrder = ['pending', 'queued', 'processing', 'sent', 'delivered', 'read', 'failed', 'cancelled']
@@ -328,6 +330,9 @@ const selectedCampaignMetrics = computed(() => {
   const campaign = selectedCampaign.value
   const processed = getCampaignProcessedCount(campaign)
   const pending = Math.max(campaign.total_recipients - processed, 0)
+  const elapsedMs = getCampaignElapsedMs(campaign)
+  const totalDurationMs = getCampaignTotalDurationMs(campaign)
+  const estimatedRemainingMs = getCampaignEstimatedRemainingMs(campaign)
 
   return {
     processed,
@@ -336,6 +341,10 @@ const selectedCampaignMetrics = computed(() => {
     deliveryRate: getPercentage(campaign.delivered_count, campaign.total_recipients),
     readRate: getPercentage(campaign.read_count, campaign.total_recipients),
     failureRate: getPercentage(campaign.failed_count, campaign.total_recipients),
+    elapsedLabel: formatDuration(elapsedMs),
+    totalDurationLabel: totalDurationMs === null ? '-' : formatDuration(totalDurationMs),
+    speedLabel: formatCampaignSpeed(campaign),
+    estimatedRemainingLabel: estimatedRemainingMs === null ? '-' : formatDuration(estimatedRemainingMs),
   }
 })
 
@@ -627,6 +636,10 @@ const { refreshNow: refreshCampaignRealtimeNow } = useViewRefresh(
 )
 
 onMounted(async () => {
+  campaignTimingInterval = window.setInterval(() => {
+    campaignTimingTick.value = Date.now()
+  }, 1000)
+
   await Promise.all([
     fetchCampaigns(),
     fetchAccounts()
@@ -638,10 +651,15 @@ onMounted(async () => {
   unsubscribeCampaignStats = wsService.onCampaignStatsUpdate((payload) => {
     const campaign = campaigns.value.find(c => c.id === payload.campaign_id)
     if (campaign) {
+      if (typeof payload.total_recipients === 'number') {
+        campaign.total_recipients = payload.total_recipients
+      }
       campaign.sent_count = payload.sent_count
       campaign.delivered_count = payload.delivered_count
       campaign.read_count = payload.read_count
       campaign.failed_count = payload.failed_count
+      campaign.started_at = payload.started_at ?? campaign.started_at
+      campaign.completed_at = payload.completed_at ?? undefined
       if (payload.status) {
         campaign.status = payload.status
       }
@@ -651,10 +669,15 @@ onMounted(async () => {
       return
     }
 
+    if (typeof payload.total_recipients === 'number') {
+      activeCampaign.total_recipients = payload.total_recipients
+    }
     activeCampaign.sent_count = payload.sent_count
     activeCampaign.delivered_count = payload.delivered_count
     activeCampaign.read_count = payload.read_count
     activeCampaign.failed_count = payload.failed_count
+    activeCampaign.started_at = payload.started_at ?? activeCampaign.started_at
+    activeCampaign.completed_at = payload.completed_at ?? undefined
     if (payload.status) {
       activeCampaign.status = payload.status
     }
@@ -666,6 +689,10 @@ onMounted(async () => {
 onUnmounted(() => {
   if (unsubscribeCampaignStats) {
     unsubscribeCampaignStats()
+  }
+  if (campaignTimingInterval) {
+    window.clearInterval(campaignTimingInterval)
+    campaignTimingInterval = null
   }
 })
 
@@ -1112,6 +1139,67 @@ function formatPercentage(value: number): string {
 function getProgressPercentage(campaign: Campaign): number {
   if (campaign.total_recipients === 0) return 0
   return Math.round((getCampaignProcessedCount(campaign) / campaign.total_recipients) * 100)
+}
+
+function parseCampaignTimestamp(value?: string): number | null {
+  if (!value) return null
+  const timestamp = new Date(value).getTime()
+  return Number.isNaN(timestamp) ? null : timestamp
+}
+
+function getCampaignElapsedMs(campaign: Campaign): number {
+  void campaignTimingTick.value
+  const startedAt = parseCampaignTimestamp(campaign.started_at)
+  if (startedAt === null) return 0
+
+  const completedAt = parseCampaignTimestamp(campaign.completed_at)
+  const endAt = completedAt ?? campaignTimingTick.value
+  return Math.max(endAt - startedAt, 0)
+}
+
+function getCampaignTotalDurationMs(campaign: Campaign): number | null {
+  const startedAt = parseCampaignTimestamp(campaign.started_at)
+  const completedAt = parseCampaignTimestamp(campaign.completed_at)
+  if (startedAt === null || completedAt === null) return null
+  return Math.max(completedAt - startedAt, 0)
+}
+
+function getCampaignSpeedPerMinute(campaign: Campaign): number {
+  const elapsedMs = getCampaignElapsedMs(campaign)
+  const processed = getCampaignProcessedCount(campaign)
+  if (elapsedMs < 1000 || processed === 0) return 0
+  return processed / (elapsedMs / 60000)
+}
+
+function formatCampaignSpeed(campaign: Campaign): string {
+  const speed = getCampaignSpeedPerMinute(campaign)
+  if (speed <= 0) return '-'
+  const formatted = speed < 10 ? speed.toFixed(1) : Math.round(speed).toString()
+  return `${formatted}/min`
+}
+
+function getCampaignEstimatedRemainingMs(campaign: Campaign): number | null {
+  if (!activeCampaignStatuses.has(campaign.status)) return null
+  const pending = Math.max(campaign.total_recipients - getCampaignProcessedCount(campaign), 0)
+  const elapsedMs = getCampaignElapsedMs(campaign)
+  const processed = getCampaignProcessedCount(campaign)
+  if (pending === 0 || elapsedMs < 1000 || processed === 0) return null
+  return Math.round((pending / processed) * elapsedMs)
+}
+
+function formatDuration(ms: number): string {
+  if (ms <= 0) return '-'
+
+  const totalSeconds = Math.max(1, Math.round(ms / 1000))
+  const days = Math.floor(totalSeconds / 86400)
+  const hours = Math.floor((totalSeconds % 86400) / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
 }
 
 // Standalone media upload from table action
@@ -2058,6 +2146,10 @@ async function addRecipientListToCampaign(
                       <span class="text-blue-600" title="Read">{{ campaign.read_count }}</span>
                       <span v-if="campaign.failed_count > 0" class="text-destructive" title="Failed">{{ campaign.failed_count }}</span>
                     </div>
+                    <div v-if="campaign.started_at" class="flex items-center gap-3 text-xs text-muted-foreground">
+                      <span title="Elapsed time"><Clock class="h-3 w-3 inline mr-0.5" />{{ formatDuration(getCampaignElapsedMs(campaign)) }}</span>
+                      <span title="Processing speed">{{ formatCampaignSpeed(campaign) }}</span>
+                    </div>
                   </div>
                 </template>
                 <template #cell-created_at="{ item: campaign }">
@@ -2241,7 +2333,7 @@ async function addRecipientListToCampaign(
               </div>
             </div>
 
-            <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div class="rounded-xl border bg-muted/30 p-4">
                 <p class="text-xs uppercase tracking-wide text-muted-foreground">Recipients</p>
                 <p class="mt-2 text-2xl font-semibold">{{ selectedCampaign.total_recipients }}</p>
@@ -2250,6 +2342,18 @@ async function addRecipientListToCampaign(
                 <p class="text-xs uppercase tracking-wide text-muted-foreground">Processed</p>
                 <p class="mt-2 text-2xl font-semibold">{{ selectedCampaignMetrics?.processed || 0 }}</p>
                 <p class="mt-1 text-xs text-muted-foreground">{{ formatPercentage(selectedCampaignMetrics?.progressRate || 0) }}</p>
+              </div>
+              <div class="rounded-xl border bg-muted/30 p-4">
+                <p class="text-xs uppercase tracking-wide text-muted-foreground">Elapsed</p>
+                <p class="mt-2 text-2xl font-semibold">{{ selectedCampaignMetrics?.elapsedLabel || '-' }}</p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  {{ selectedCampaignMetrics && selectedCampaignMetrics.estimatedRemainingLabel !== '-' ? `${selectedCampaignMetrics.estimatedRemainingLabel} remaining` : 'No estimate' }}
+                </p>
+              </div>
+              <div class="rounded-xl border bg-muted/30 p-4">
+                <p class="text-xs uppercase tracking-wide text-muted-foreground">Speed</p>
+                <p class="mt-2 text-2xl font-semibold">{{ selectedCampaignMetrics?.speedLabel || '-' }}</p>
+                <p class="mt-1 text-xs text-muted-foreground">processed recipients</p>
               </div>
               <div class="rounded-xl border bg-muted/30 p-4">
                 <p class="text-xs uppercase tracking-wide text-muted-foreground">Sent</p>
@@ -2303,6 +2407,14 @@ async function addRecipientListToCampaign(
                       <p class="text-xs uppercase tracking-wide text-muted-foreground">Pending recipients</p>
                       <p class="mt-1 text-lg font-semibold">{{ selectedCampaignMetrics?.pending || 0 }}</p>
                     </div>
+                    <div class="rounded-lg bg-muted/40 p-3">
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Average speed</p>
+                      <p class="mt-1 text-lg font-semibold">{{ selectedCampaignMetrics?.speedLabel || '-' }}</p>
+                    </div>
+                    <div class="rounded-lg bg-muted/40 p-3">
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Estimated remaining</p>
+                      <p class="mt-1 text-lg font-semibold">{{ selectedCampaignMetrics?.estimatedRemainingLabel || '-' }}</p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2329,6 +2441,18 @@ async function addRecipientListToCampaign(
                   <div class="flex items-start justify-between gap-4">
                     <dt class="text-muted-foreground">Completed</dt>
                     <dd class="text-right">{{ selectedCampaign.completed_at ? formatDate(selectedCampaign.completed_at) : '-' }}</dd>
+                  </div>
+                  <div class="flex items-start justify-between gap-4">
+                    <dt class="text-muted-foreground">Elapsed</dt>
+                    <dd class="text-right">{{ selectedCampaignMetrics?.elapsedLabel || '-' }}</dd>
+                  </div>
+                  <div class="flex items-start justify-between gap-4">
+                    <dt class="text-muted-foreground">Total time</dt>
+                    <dd class="text-right">{{ selectedCampaignMetrics?.totalDurationLabel || '-' }}</dd>
+                  </div>
+                  <div class="flex items-start justify-between gap-4">
+                    <dt class="text-muted-foreground">Average speed</dt>
+                    <dd class="text-right">{{ selectedCampaignMetrics?.speedLabel || '-' }}</dd>
                   </div>
                   <div class="flex items-start justify-between gap-4">
                     <dt class="text-muted-foreground">Media</dt>

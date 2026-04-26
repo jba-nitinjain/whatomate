@@ -3,10 +3,11 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/redis/go-redis/v9"
 	"github.com/zerodha/logf"
 )
 
@@ -17,13 +18,16 @@ const (
 
 // CampaignStatsUpdate represents a campaign stats update message
 type CampaignStatsUpdate struct {
-	CampaignID     string               `json:"campaign_id"`
-	OrganizationID uuid.UUID            `json:"organization_id"`
-	Status         models.CampaignStatus `json:"status"`
-	SentCount      int                  `json:"sent_count"`
-	DeliveredCount int                  `json:"delivered_count"`
-	ReadCount      int                  `json:"read_count"`
-	FailedCount    int                  `json:"failed_count"`
+	CampaignID      string                `json:"campaign_id"`
+	OrganizationID  uuid.UUID             `json:"organization_id"`
+	Status          models.CampaignStatus `json:"status"`
+	TotalRecipients int                   `json:"total_recipients"`
+	SentCount       int                   `json:"sent_count"`
+	DeliveredCount  int                   `json:"delivered_count"`
+	ReadCount       int                   `json:"read_count"`
+	FailedCount     int                   `json:"failed_count"`
+	StartedAt       *time.Time            `json:"started_at,omitempty"`
+	CompletedAt     *time.Time            `json:"completed_at,omitempty"`
 }
 
 // Publisher publishes messages to Redis pub/sub channels

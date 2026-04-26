@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/nikyjain/whatomate/internal/config"
 	"github.com/nikyjain/whatomate/internal/contactutil"
 	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/nikyjain/whatomate/internal/queue"
 	"github.com/nikyjain/whatomate/internal/templateutil"
 	"github.com/nikyjain/whatomate/pkg/whatsapp"
+	"github.com/redis/go-redis/v9"
 	"github.com/zerodha/logf"
 	"gorm.io/gorm"
 )
@@ -188,13 +188,16 @@ func (w *Worker) publishCampaignStats(ctx context.Context, campaignID, organizat
 	}
 
 	_ = w.Publisher.PublishCampaignStats(ctx, &queue.CampaignStatsUpdate{
-		CampaignID:     campaignID.String(),
-		OrganizationID: organizationID,
-		Status:         campaign.Status,
-		SentCount:      campaign.SentCount,
-		DeliveredCount: campaign.DeliveredCount,
-		ReadCount:      campaign.ReadCount,
-		FailedCount:    campaign.FailedCount,
+		CampaignID:      campaignID.String(),
+		OrganizationID:  organizationID,
+		Status:          campaign.Status,
+		TotalRecipients: campaign.TotalRecipients,
+		SentCount:       campaign.SentCount,
+		DeliveredCount:  campaign.DeliveredCount,
+		ReadCount:       campaign.ReadCount,
+		FailedCount:     campaign.FailedCount,
+		StartedAt:       campaign.StartedAt,
+		CompletedAt:     campaign.CompletedAt,
 	})
 }
 
@@ -223,18 +226,23 @@ func (w *Worker) checkCampaignCompletion(ctx context.Context, campaignID, organi
 			"status":       models.CampaignStatusCompleted,
 			"completed_at": now,
 		})
+		campaign.Status = models.CampaignStatusCompleted
+		campaign.CompletedAt = &now
 
 		w.Log.Info("Campaign completed", "campaign_id", campaignID, "sent", campaign.SentCount, "failed", campaign.FailedCount)
 
 		// Publish completion status
 		_ = w.Publisher.PublishCampaignStats(ctx, &queue.CampaignStatsUpdate{
-			CampaignID:     campaignID.String(),
-			OrganizationID: organizationID,
-			Status:         models.CampaignStatusCompleted,
-			SentCount:      campaign.SentCount,
-			DeliveredCount: campaign.DeliveredCount,
-			ReadCount:      campaign.ReadCount,
-			FailedCount:    campaign.FailedCount,
+			CampaignID:      campaignID.String(),
+			OrganizationID:  organizationID,
+			Status:          campaign.Status,
+			TotalRecipients: campaign.TotalRecipients,
+			SentCount:       campaign.SentCount,
+			DeliveredCount:  campaign.DeliveredCount,
+			ReadCount:       campaign.ReadCount,
+			FailedCount:     campaign.FailedCount,
+			StartedAt:       campaign.StartedAt,
+			CompletedAt:     campaign.CompletedAt,
 		})
 	} else {
 		// Publish current stats

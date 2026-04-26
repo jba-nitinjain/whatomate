@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/nikyjain/whatomate/internal/assignment"
 	"github.com/nikyjain/whatomate/internal/calling"
 	"github.com/nikyjain/whatomate/internal/config"
@@ -16,6 +15,7 @@ import (
 	"github.com/nikyjain/whatomate/internal/tts"
 	"github.com/nikyjain/whatomate/internal/websocket"
 	"github.com/nikyjain/whatomate/pkg/whatsapp"
+	"github.com/redis/go-redis/v9"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 	"github.com/zerodha/logf"
@@ -24,16 +24,16 @@ import (
 
 // App holds all dependencies for handlers
 type App struct {
-	Config            *config.Config
-	DB                *gorm.DB
-	Redis             *redis.Client
-	Log               logf.Logger
-	WhatsApp          *whatsapp.Client
-	WSHub             *websocket.Hub
-	Queue             queue.Queue
-	CampaignSubCancel context.CancelFunc
+	Config                  *config.Config
+	DB                      *gorm.DB
+	Redis                   *redis.Client
+	Log                     logf.Logger
+	WhatsApp                *whatsapp.Client
+	WSHub                   *websocket.Hub
+	Queue                   queue.Queue
+	CampaignSubCancel       context.CancelFunc
 	ScheduledCampaignCancel context.CancelFunc
-	ChatRetentionCancel context.CancelFunc
+	ChatRetentionCancel     context.CancelFunc
 	// HTTPClient is a shared HTTP client with connection pooling for external API calls
 	HTTPClient *http.Client
 	// Assigner provides shared team-based agent assignment (used by both chat and call transfers)
@@ -160,12 +160,15 @@ func (a *App) StartCampaignStatsSubscriber() error {
 		a.WSHub.BroadcastToOrg(update.OrganizationID, websocket.WSMessage{
 			Type: websocket.TypeCampaignStatsUpdate,
 			Payload: map[string]interface{}{
-				"campaign_id":     update.CampaignID,
-				"status":          update.Status,
-				"sent_count":      update.SentCount,
-				"delivered_count": update.DeliveredCount,
-				"read_count":      update.ReadCount,
-				"failed_count":    update.FailedCount,
+				"campaign_id":      update.CampaignID,
+				"status":           update.Status,
+				"total_recipients": update.TotalRecipients,
+				"sent_count":       update.SentCount,
+				"delivered_count":  update.DeliveredCount,
+				"read_count":       update.ReadCount,
+				"failed_count":     update.FailedCount,
+				"started_at":       update.StartedAt,
+				"completed_at":     update.CompletedAt,
 			},
 		})
 	})

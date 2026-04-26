@@ -630,9 +630,17 @@ func (a *App) loadPendingCampaignRecipients(campaignID uuid.UUID) ([]models.Bulk
 }
 
 func (a *App) enqueueCampaignRecipients(ctx context.Context, campaign *models.BulkMessageCampaign, recipients []models.BulkMessageRecipient, now time.Time, fallbackStatus models.CampaignStatus) error {
+	previousStartedAt := campaign.StartedAt
+	previousCompletedAt := campaign.CompletedAt
+	startedAt := now
+	if previousStartedAt != nil {
+		startedAt = *previousStartedAt
+	}
+
 	updates := map[string]interface{}{
-		"status":     models.CampaignStatusProcessing,
-		"started_at": now,
+		"status":       models.CampaignStatusProcessing,
+		"started_at":   startedAt,
+		"completed_at": nil,
 	}
 	if err := a.DB.Model(campaign).Updates(updates).Error; err != nil {
 		return err
@@ -654,8 +662,15 @@ func (a *App) enqueueCampaignRecipients(ctx context.Context, campaign *models.Bu
 		revert := map[string]interface{}{
 			"status": fallbackStatus,
 		}
-		if fallbackStatus != models.CampaignStatusProcessing {
+		if previousStartedAt != nil {
+			revert["started_at"] = *previousStartedAt
+		} else {
 			revert["started_at"] = nil
+		}
+		if previousCompletedAt != nil {
+			revert["completed_at"] = *previousCompletedAt
+		} else {
+			revert["completed_at"] = nil
 		}
 		a.DB.Model(campaign).Updates(revert)
 		return err
@@ -789,8 +804,17 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 	// Recalculate campaign stats from messages table
 	a.recalculateCampaignStats(id)
 
-	// Update campaign status to processing
-	if err := a.DB.Model(campaign).Update("status", models.CampaignStatusProcessing).Error; err != nil {
+	// Update campaign status to processing. A retry after completion/failed starts a new
+	// measured sending run, while paused campaigns keep their original start time.
+	now := time.Now()
+	updates := map[string]interface{}{
+		"status":       models.CampaignStatusProcessing,
+		"completed_at": nil,
+	}
+	if campaign.Status == models.CampaignStatusCompleted || campaign.Status == models.CampaignStatusFailed || campaign.StartedAt == nil {
+		updates["started_at"] = now
+	}
+	if err := a.DB.Model(campaign).Updates(updates).Error; err != nil {
 		a.Log.Error("Failed to update campaign status", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update campaign", nil, "")
 	}
@@ -1752,12 +1776,15 @@ func (a *App) incrementCampaignStat(campaignID string, status string) {
 		a.WSHub.BroadcastToOrg(campaign.OrganizationID, websocket.WSMessage{
 			Type: websocket.TypeCampaignStatsUpdate,
 			Payload: map[string]interface{}{
-				"campaign_id":     campaignID,
-				"status":          campaign.Status,
-				"sent_count":      campaign.SentCount,
-				"delivered_count": campaign.DeliveredCount,
-				"read_count":      campaign.ReadCount,
-				"failed_count":    campaign.FailedCount,
+				"campaign_id":      campaignID,
+				"status":           campaign.Status,
+				"total_recipients": campaign.TotalRecipients,
+				"sent_count":       campaign.SentCount,
+				"delivered_count":  campaign.DeliveredCount,
+				"read_count":       campaign.ReadCount,
+				"failed_count":     campaign.FailedCount,
+				"started_at":       campaign.StartedAt,
+				"completed_at":     campaign.CompletedAt,
 			},
 		})
 	}
