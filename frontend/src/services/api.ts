@@ -490,7 +490,9 @@ export const contactsService = {
     page?: number;
     limit?: number;
     tags?: string;
+    whatsapp_account?: string;
     unread_only?: boolean;
+    is_active?: boolean;
   }) => api.get("/contacts", { params }),
   get: (id: string) => api.get(`/contacts/${id}`),
   create: (data: any) => api.post("/contacts", data),

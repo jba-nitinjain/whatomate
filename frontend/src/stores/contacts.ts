@@ -14,6 +14,7 @@ export interface Contact {
   last_message_at?: string
   last_inbound_at?: string
   service_window_open?: boolean
+  is_active: boolean
   unread_count: number
   assigned_user_id?: string
   whatsapp_account?: string
@@ -112,7 +113,7 @@ export const useContactsStore = defineStore('contacts', () => {
     })
   })
 
-  async function fetchContacts(params?: { search?: string; page?: number; limit?: number; tags?: string; unread_only?: boolean }) {
+  async function fetchContacts(params?: { search?: string; page?: number; limit?: number; tags?: string; whatsapp_account?: string; unread_only?: boolean; is_active?: boolean }) {
     isLoading.value = true
     try {
       const tagsParam = selectedTags.value.length > 0 ? selectedTags.value.join(',') : undefined

@@ -248,6 +248,69 @@ func TestApp_ListContacts(t *testing.T) {
 		assert.Equal(t, unreadContact.ID, resp.Data.Contacts[0].ID)
 		assert.Equal(t, int64(1), resp.Data.Total)
 	})
+
+	t.Run("filter by active status", func(t *testing.T) {
+		app := newTestApp(t)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		activeContact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithPhoneNumber("+1111111111"))
+		inactiveContact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithPhoneNumber("+2222222222"))
+		require.NoError(t, app.DB.Model(inactiveContact).Update("is_active", false).Error)
+
+		req := testutil.NewGETRequest(t)
+		testutil.SetAuthContext(req, org.ID, user.ID)
+		testutil.SetQueryParam(req, "is_active", "false")
+
+		err := app.ListContacts(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		var resp struct {
+			Data struct {
+				Contacts []handlers.ContactResponse `json:"contacts"`
+				Total    int64                      `json:"total"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+		require.Len(t, resp.Data.Contacts, 1)
+		assert.Equal(t, inactiveContact.ID, resp.Data.Contacts[0].ID)
+		assert.Equal(t, int64(1), resp.Data.Total)
+		assert.False(t, resp.Data.Contacts[0].IsActive)
+		assert.NotEqual(t, activeContact.ID, resp.Data.Contacts[0].ID)
+	})
+
+	t.Run("filter by WhatsApp account", func(t *testing.T) {
+		app := newTestApp(t)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		accountA := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+		accountB := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+		contactA := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(accountA.Name))
+		contactB := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(accountB.Name))
+
+		req := testutil.NewGETRequest(t)
+		testutil.SetAuthContext(req, org.ID, user.ID)
+		testutil.SetQueryParam(req, "whatsapp_account", accountB.Name)
+
+		err := app.ListContacts(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		var resp struct {
+			Data struct {
+				Contacts []handlers.ContactResponse `json:"contacts"`
+				Total    int64                      `json:"total"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+		require.Len(t, resp.Data.Contacts, 1)
+		assert.Equal(t, contactB.ID, resp.Data.Contacts[0].ID)
+		assert.Equal(t, accountB.Name, resp.Data.Contacts[0].WhatsAppAccount)
+		assert.Equal(t, int64(1), resp.Data.Total)
+		assert.NotEqual(t, contactA.ID, resp.Data.Contacts[0].ID)
+	})
 }
 
 // --- GetContact Tests ---
@@ -664,6 +727,37 @@ func TestApp_AssignContact(t *testing.T) {
 }
 
 // --- GetMessages Tests ---
+
+func TestApp_UpdateContact_IsActive(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+	contact := testutil.CreateTestContact(t, app.DB, org.ID)
+
+	req := testutil.NewJSONRequest(t, map[string]interface{}{
+		"is_active": false,
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", contact.ID.String())
+
+	err := app.UpdateContact(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data handlers.ContactResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+	assert.False(t, resp.Data.IsActive)
+	assert.Equal(t, "inactive", resp.Data.Status)
+
+	var updatedContact models.Contact
+	require.NoError(t, app.DB.Where("id = ?", contact.ID).First(&updatedContact).Error)
+	assert.False(t, updatedContact.IsActive)
+}
 
 func TestApp_GetMessages(t *testing.T) {
 	t.Parallel()

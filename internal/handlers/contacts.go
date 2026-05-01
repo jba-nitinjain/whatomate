@@ -94,7 +94,9 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 	pg := parsePagination(r)
 	search := string(r.RequestCtx.QueryArgs().Peek("search"))
 	tagsParam := string(r.RequestCtx.QueryArgs().Peek("tags"))
+	whatsAppAccount := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("whatsapp_account")))
 	unreadOnly := parseTruthyQueryArg(string(r.RequestCtx.QueryArgs().Peek("unread_only")))
+	activeOnly, hasActiveFilter := parseOptionalBoolQueryArg(string(r.RequestCtx.QueryArgs().Peek("is_active")))
 
 	var contacts []models.Contact
 	query := a.ScopeToOrg(a.DB, userID, orgID)
@@ -112,6 +114,9 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 		searchPattern := "%" + search + "%"
 		// Use ILIKE for case-insensitive search on profile_name
 		query = query.Where("phone_number LIKE ? OR profile_name ILIKE ?", searchPattern, searchPattern)
+	}
+	if whatsAppAccount != "" {
+		query = query.Where("whats_app_account = ?", whatsAppAccount)
 	}
 
 	// Filter by tags (comma-separated, matches contacts that have ANY of the specified tags)
@@ -147,6 +152,9 @@ func (a *App) ListContacts(r *fastglue.Request) error {
 			models.DirectionIncoming,
 			models.MessageStatusRead,
 		)
+	}
+	if hasActiveFilter {
+		query = query.Where("is_active = ?", activeOnly)
 	}
 
 	// Order by last message time (most recent first)
@@ -225,6 +233,17 @@ func parseTruthyQueryArg(value string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func parseOptionalBoolQueryArg(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on", "active":
+		return true, true
+	case "0", "false", "no", "off", "inactive":
+		return false, true
+	default:
+		return false, false
 	}
 }
 
@@ -1412,6 +1431,7 @@ type UpdateContactRequest struct {
 	Tags            []string        `json:"tags"`
 	Metadata        *map[string]any `json:"metadata"`
 	AssignedUserID  *uuid.UUID      `json:"assigned_user_id"`
+	IsActive        *bool           `json:"is_active"`
 }
 
 // UpdateContact updates an existing contact
@@ -1468,6 +1488,9 @@ func (a *App) UpdateContact(r *fastglue.Request) error {
 			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Assigned user not found", nil, "")
 		}
 		updates["assigned_user_id"] = req.AssignedUserID
+	}
+	if req.IsActive != nil {
+		updates["is_active"] = *req.IsActive
 	}
 
 	if len(updates) == 0 {

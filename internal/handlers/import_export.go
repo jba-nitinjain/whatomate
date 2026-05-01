@@ -57,7 +57,7 @@ var exportConfigs = map[string]ExportConfig{
 		Resource: "contacts",
 		AllowedColumns: []string{
 			"phone_number", "profile_name", "whats_app_account", "tags",
-			"assigned_user_id", "last_message_at", "created_at", "updated_at",
+			"assigned_user_id", "last_message_at", "is_active", "created_at", "updated_at",
 		},
 		DefaultColumns: []string{"phone_number", "profile_name", "tags"},
 		ColumnLabels: map[string]string{
@@ -67,6 +67,7 @@ var exportConfigs = map[string]ExportConfig{
 			"tags":              "Tags",
 			"assigned_user_id":  "Assigned User ID",
 			"last_message_at":   "Last Message At",
+			"is_active":         "Active",
 			"created_at":        "Created At",
 			"updated_at":        "Updated At",
 		},
@@ -256,6 +257,17 @@ func (a *App) ExportData(r *fastglue.Request) error {
 		}
 		if len(conditions) > 0 {
 			query = query.Where("("+strings.Join(conditions, " OR ")+")", args...)
+		}
+	}
+
+	if req.Table == "contacts" {
+		if account, ok := req.Filters["whatsapp_account"]; ok && strings.TrimSpace(account) != "" {
+			query = query.Where("whats_app_account = ?", strings.TrimSpace(account))
+		}
+		if activeValue, ok := req.Filters["is_active"]; ok {
+			if activeOnly, hasActiveFilter := parseOptionalBoolQueryArg(activeValue); hasActiveFilter {
+				query = query.Where("is_active = ?", activeOnly)
+			}
 		}
 	}
 

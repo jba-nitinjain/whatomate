@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { TagBadge } from '@/components/ui/tag-badge'
+import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { PageHeader, SearchInput, DataTable, CrudFormDialog, DeleteConfirmDialog, CreateContactDialog, ImportExportDialog, RefreshButton, type Column } from '@/components/shared'
@@ -48,6 +49,7 @@ interface Contact {
   last_message_at: string | null
   last_message_preview: string
   unread_count: number
+  is_active: boolean
   created_at: string
   updated_at: string
 }
@@ -57,9 +59,10 @@ interface ContactFormData {
   profile_name: string
   whatsapp_account: string
   tags: string[]
+  is_active: boolean
 }
 
-const defaultFormData: ContactFormData = { phone_number: '', profile_name: '', whatsapp_account: '', tags: [] }
+const defaultFormData: ContactFormData = { phone_number: '', profile_name: '', whatsapp_account: '', tags: [], is_active: true }
 
 const contacts = ref<Contact[]>([])
 const availableTags = ref<Tag[]>([])
@@ -73,7 +76,11 @@ const deleteDialogOpen = ref(false)
 const contactToDelete = ref<Contact | null>(null)
 const formData = ref<ContactFormData>({ ...defaultFormData })
 const searchQuery = ref('')
+const activeFilter = ref<'all' | 'active' | 'inactive'>('all')
+const accountFilter = ref('all')
+const selectedFilterTags = ref<string[]>([])
 const tagSelectorOpen = ref(false)
+const filterTagSelectorOpen = ref(false)
 
 // Pagination state
 const currentPage = ref(1)
@@ -84,9 +91,18 @@ const pageSize = 20
 const sortKey = ref('last_message_at')
 const sortDirection = ref<'asc' | 'desc'>('desc')
 
+const filterTagsParam = computed(() => selectedFilterTags.value.length > 0 ? selectedFilterTags.value.join(',') : undefined)
+const exportFilters = computed<Record<string, string>>(() => ({
+  ...(searchQuery.value ? { search: searchQuery.value } : {}),
+  ...(activeFilter.value !== 'all' ? { is_active: String(activeFilter.value === 'active') } : {}),
+  ...(accountFilter.value !== 'all' ? { whatsapp_account: accountFilter.value } : {}),
+  ...(filterTagsParam.value ? { tags: filterTagsParam.value } : {})
+}))
+
 const columns = computed<Column<Contact>[]>(() => [
   { key: 'profile_name', label: t('contacts.name'), sortable: true },
   { key: 'phone_number', label: t('contacts.phoneNumber'), sortable: true },
+  { key: 'status', label: t('common.status') },
   { key: 'tags', label: t('contacts.tags') },
   { key: 'last_message_at', label: t('contacts.lastMessage'), sortable: true },
   { key: 'created_at', label: t('contacts.created'), sortable: true },
@@ -103,7 +119,8 @@ function openEditDialog(contact: Contact) {
     phone_number: contact.phone_number,
     profile_name: contact.profile_name || '',
     whatsapp_account: contact.whatsapp_account || '',
-    tags: contact.tags || []
+    tags: contact.tags || [],
+    is_active: contact.is_active
   }
   isEditDialogOpen.value = true
 }
@@ -139,6 +156,9 @@ async function fetchContacts() {
   try {
     const response = await contactsService.list({
       search: searchQuery.value || undefined,
+      is_active: activeFilter.value === 'all' ? undefined : activeFilter.value === 'active',
+      whatsapp_account: accountFilter.value === 'all' ? undefined : accountFilter.value,
+      tags: filterTagsParam.value,
       page: currentPage.value,
       limit: pageSize
     })
@@ -182,6 +202,18 @@ const debouncedSearch = useDebounceFn(() => {
 }, 300)
 
 watch(searchQuery, () => debouncedSearch())
+watch(activeFilter, () => {
+  currentPage.value = 1
+  fetchContacts()
+})
+watch(accountFilter, () => {
+  currentPage.value = 1
+  fetchContacts()
+})
+watch(selectedFilterTags, () => {
+  currentPage.value = 1
+  fetchContacts()
+}, { deep: true })
 
 function handlePageChange(page: number) {
   currentPage.value = page
@@ -201,7 +233,8 @@ async function updateContact() {
     await contactsService.update(editingContact.value.id, {
       profile_name: formData.value.profile_name,
       whatsapp_account: formData.value.whatsapp_account,
-      tags: formData.value.tags
+      tags: formData.value.tags,
+      is_active: formData.value.is_active
     })
     toast.success(t('common.updatedSuccess', { resource: t('resources.Contact') }))
     closeEditDialog()
@@ -242,6 +275,23 @@ function removeTag(tagName: string) {
   formData.value.tags = formData.value.tags.filter(t => t !== tagName)
 }
 
+function toggleFilterTag(tagName: string) {
+  const index = selectedFilterTags.value.indexOf(tagName)
+  if (index === -1) {
+    selectedFilterTags.value.push(tagName)
+  } else {
+    selectedFilterTags.value.splice(index, 1)
+  }
+}
+
+function removeFilterTag(tagName: string) {
+  selectedFilterTags.value = selectedFilterTags.value.filter(t => t !== tagName)
+}
+
+function isFilterTagSelected(tagName: string): boolean {
+  return selectedFilterTags.value.includes(tagName)
+}
+
 function isTagSelected(tagName: string): boolean {
   return formData.value.tags.includes(tagName)
 }
@@ -280,7 +330,78 @@ function getDisplayName(contact: Contact): string {
                   <CardTitle>{{ $t('contacts.allContacts') }}</CardTitle>
                   <CardDescription>{{ $t('contacts.allContactsDesc') }}</CardDescription>
                 </div>
-                <SearchInput v-model="searchQuery" :placeholder="$t('contacts.searchContacts') + '...'" class="w-64" />
+                <div class="flex flex-wrap items-center gap-2">
+                  <Select v-model="activeFilter">
+                    <SelectTrigger class="w-[150px]">
+                      <SelectValue :placeholder="$t('common.status')" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{{ $t('common.all') }}</SelectItem>
+                      <SelectItem value="active">{{ $t('common.active') }}</SelectItem>
+                      <SelectItem value="inactive">{{ $t('common.inactive') }}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select v-if="availableAccounts.length > 0" v-model="accountFilter">
+                    <SelectTrigger class="w-[190px]">
+                      <SelectValue :placeholder="$t('contacts.whatsappAccount')" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{{ $t('common.all') }}</SelectItem>
+                      <SelectItem v-for="account in availableAccounts" :key="account.id" :value="account.name">
+                        {{ account.name }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Popover v-if="availableTags.length > 0" v-model:open="filterTagSelectorOpen">
+                    <PopoverTrigger as-child>
+                      <Button variant="outline" class="w-[160px] justify-between">
+                        <span v-if="selectedFilterTags.length === 0">{{ $t('contacts.tags') }}</span>
+                        <span v-else>{{ selectedFilterTags.length }} {{ $t('contacts.tagsSelected') }}</span>
+                        <ChevronsUpDown class="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent class="w-[300px] p-0" @interact-outside="(e) => e.preventDefault()">
+                      <Command>
+                        <CommandInput :placeholder="$t('contacts.searchTags')" />
+                        <CommandList>
+                          <CommandEmpty>{{ $t('contacts.noTagsFound') }}</CommandEmpty>
+                          <CommandGroup>
+                            <CommandItem
+                              v-for="tag in availableTags"
+                              :key="tag.name"
+                              :value="tag.name"
+                              class="flex items-center gap-2 cursor-pointer"
+                              @select.prevent="toggleFilterTag(tag.name)"
+                            >
+                              <div class="flex items-center gap-2 flex-1">
+                                <span :class="['w-2 h-2 rounded-full', getTagColorClass(tag.color).split(' ')[0]]"></span>
+                                <span>{{ tag.name }}</span>
+                              </div>
+                              <Check v-if="isFilterTagSelected(tag.name)" class="h-4 w-4 text-primary" />
+                            </CommandItem>
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  <SearchInput v-model="searchQuery" :placeholder="$t('contacts.searchContacts') + '...'" class="w-64" />
+                </div>
+              </div>
+              <div v-if="selectedFilterTags.length > 0" class="flex flex-wrap gap-1 pt-3">
+                <TagBadge
+                  v-for="tagName in selectedFilterTags"
+                  :key="tagName"
+                  :color="getTagDetails(tagName)?.color"
+                >
+                  {{ tagName }}
+                  <button
+                    type="button"
+                    class="ml-1 rounded-full hover:bg-black/10 dark:hover:bg-white/10 p-0.5 transition-colors"
+                    @click.stop="removeFilterTag(tagName)"
+                  >
+                    <X class="h-3 w-3" />
+                  </button>
+                </TagBadge>
               </div>
             </CardHeader>
             <CardContent>
@@ -308,6 +429,11 @@ function getDisplayName(contact: Contact): string {
                 </template>
                 <template #cell-phone_number="{ item: contact }">
                   <code class="text-sm">{{ contact.phone_number }}</code>
+                </template>
+                <template #cell-status="{ item: contact }">
+                  <Badge :variant="contact.is_active ? 'default' : 'secondary'" class="text-xs">
+                    {{ contact.is_active ? $t('common.active') : $t('common.inactive') }}
+                  </Badge>
                 </template>
                 <template #cell-tags="{ item: contact }">
                   <div class="flex flex-wrap gap-1">
@@ -370,6 +496,15 @@ function getDisplayName(contact: Contact): string {
         <div class="space-y-2">
           <Label>{{ $t('contacts.profileName') }}</Label>
           <Input v-model="formData.profile_name" :placeholder="$t('contacts.namePlaceholder')" />
+        </div>
+        <div class="flex items-center justify-between rounded-md border p-3">
+          <div class="space-y-0.5">
+            <Label>{{ $t('common.status') }}</Label>
+            <p class="text-sm text-muted-foreground">
+              {{ formData.is_active ? $t('common.active') : $t('common.inactive') }}
+            </p>
+          </div>
+          <Switch v-model:checked="formData.is_active" />
         </div>
         <div v-if="availableAccounts.length > 0" class="space-y-2">
           <Label>{{ $t('contacts.whatsappAccount') }}</Label>
@@ -450,7 +585,7 @@ function getDisplayName(contact: Contact): string {
       v-model:open="isImportExportOpen"
       table="contacts"
       :table-label="$t('contacts.title')"
-      :filters="searchQuery ? { search: searchQuery } : undefined"
+      :filters="exportFilters"
       :can-import="canImportContacts"
       :can-export="canExportContacts"
       @imported="onImported"
