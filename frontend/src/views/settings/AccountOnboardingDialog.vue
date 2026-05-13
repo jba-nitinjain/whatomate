@@ -387,7 +387,7 @@ async function launchEmbeddedSignup() {
       loginOptions.scope = scopes;
     }
     FB.login(
-      async (response: any) => {
+      (response: any) => {
         window.removeEventListener("message", messageHandler);
         const code = response?.authResponse?.code;
         if (!code) {
@@ -396,7 +396,7 @@ async function launchEmbeddedSignup() {
           );
           return;
         }
-        await saveEmbeddedSignupResult(code);
+        void saveEmbeddedSignupResult(code);
       },
       loginOptions,
     );
