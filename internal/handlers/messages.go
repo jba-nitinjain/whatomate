@@ -562,8 +562,9 @@ type SendTemplateMessageRequest struct {
 	//   1. header_media_id  — pre-uploaded WhatsApp media ID (skip upload)
 	//   2. header_media_url — URL to fetch the media from (server downloads & uploads to WhatsApp)
 	//   3. multipart header_file — raw file upload via multipart/form-data
-	HeaderMediaID  string `json:"header_media_id"`  // Already-uploaded WhatsApp media ID
-	HeaderMediaURL string `json:"header_media_url"` // URL to download media from
+	HeaderMediaID       string `json:"header_media_id"`       // Already-uploaded WhatsApp media ID
+	HeaderMediaURL      string `json:"header_media_url"`      // URL to download media from
+	HeaderMediaFilename string `json:"header_media_filename"` // Optional: filename to display in WhatsApp document header (used when uploading from URL or multipart)
 }
 
 // SendTemplateMessage sends a template message to a contact or phone number.
@@ -609,6 +610,9 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 				return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid template_params JSON", nil, "")
 			}
 		}
+		if v := form.Value["header_media_filename"]; len(v) > 0 {
+			req.HeaderMediaFilename = v[0]
+		}
 		// Read header media file
 		if files := form.File["header_file"]; len(files) > 0 {
 			fh := files[0]
@@ -624,6 +628,10 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 			headerFileMimeType = fh.Header.Get("Content-Type")
 			if headerFileMimeType == "" {
 				headerFileMimeType = "application/octet-stream"
+			}
+			// If the client didn't supply an explicit filename, fall back to multipart filename.
+			if req.HeaderMediaFilename == "" && fh.Filename != "" {
+				req.HeaderMediaFilename = fh.Filename
 			}
 		}
 	} else {
@@ -782,7 +790,20 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		// Upload to WhatsApp if we have raw data (options 2 & 3)
 		if len(headerMediaData) > 0 {
 			waAcct := a.toWhatsAppAccount(account)
-			mediaID, err := a.WhatsApp.UploadMedia(context.Background(), waAcct, headerMediaData, headerMimeType, "header")
+			// Build a sensible filename: explicit > URL basename > "header".
+			uploadFilename := strings.TrimSpace(req.HeaderMediaFilename)
+			if uploadFilename == "" && req.HeaderMediaURL != "" {
+				if parsedURL, err := url.Parse(req.HeaderMediaURL); err == nil {
+					base := path.Base(parsedURL.Path)
+					if base != "" && base != "/" && base != "." {
+						uploadFilename = base
+					}
+				}
+			}
+			if uploadFilename == "" {
+				uploadFilename = "header"
+			}
+			mediaID, err := a.WhatsApp.UploadMedia(context.Background(), waAcct, headerMediaData, headerMimeType, uploadFilename)
 			if err != nil {
 				a.Log.Error("Failed to upload template header media", "error", err)
 				return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to upload header media to WhatsApp", nil, "")
