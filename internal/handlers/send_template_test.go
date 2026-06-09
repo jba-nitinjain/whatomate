@@ -748,6 +748,70 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		assert.Equal(t, "ORD-42", params[0].(map[string]interface{})["text"])
 	})
 
+	t.Run("template with quick reply payload stores callback metadata and sends payload component", func(t *testing.T) {
+		t.Parallel()
+		mockServer := newMockWhatsAppServer()
+		defer mockServer.close()
+
+		app := newMsgTestApp(t, mockServer)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		account := createTestAccount(t, app, org.ID)
+		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
+
+		tpl := &models.Template{
+			BaseModel:       models.BaseModel{ID: uuid.New()},
+			OrganizationID:  org.ID,
+			WhatsAppAccount: account.Name,
+			Name:            "invoice_btn_tpl_" + uuid.New().String()[:8],
+			DisplayName:     "Invoice Button Template",
+			Language:        "en",
+			Status:          string(models.TemplateStatusApproved),
+			BodyContent:     "Please approve invoice",
+			Buttons: models.JSONBArray{
+				map[string]interface{}{"type": "QUICK_REPLY", "text": "Confirm"},
+				map[string]interface{}{"type": "QUICK_REPLY", "text": "Reject"},
+			},
+		}
+		require.NoError(t, app.DB.Create(tpl).Error)
+
+		req := testutil.NewJSONRequest(t, map[string]interface{}{
+			"contact_id":    contact.ID.String(),
+			"template_name": tpl.Name,
+			"button_payloads": map[string]string{
+				"0": "invoice_code=INV-1001&action=confirm",
+				"1": "invoice_code=INV-1001&action=reject",
+			},
+			"response_callback_url":          "https://invoice.example.com/response",
+			"response_callback_bearer_token": "secret-token",
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+
+		err := app.SendTemplateMessage(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		app.WaitForBackgroundTasks()
+
+		require.Len(t, mockServer.sentMessages, 1)
+		templateData := mockServer.sentMessages[0]["template"].(map[string]interface{})
+		components := templateData["components"].([]interface{})
+		require.Len(t, components, 2)
+		buttonComp := components[0].(map[string]interface{})
+		assert.Equal(t, "quick_reply", buttonComp["sub_type"])
+		params := buttonComp["parameters"].([]interface{})
+		require.Len(t, params, 1)
+		assert.Equal(t, "invoice_code=INV-1001&action=confirm", params[0].(map[string]interface{})["payload"])
+
+		var dbMsg models.Message
+		require.NoError(t, app.DB.Where("contact_id = ? AND message_type = ?", contact.ID, models.MessageTypeTemplate).First(&dbMsg).Error)
+		assert.Equal(t, "https://invoice.example.com/response", dbMsg.Metadata["response_callback_url"])
+		assert.Equal(t, "secret-token", dbMsg.Metadata["response_callback_bearer_token"])
+		payloads := dbMsg.Metadata["button_payloads"].(map[string]interface{})
+		assert.Equal(t, "invoice_code=INV-1001&action=confirm", payloads["0"])
+	})
+
 	t.Run("template without buttons has no interactive_data", func(t *testing.T) {
 		t.Parallel()
 		mockServer := newMockWhatsAppServer()

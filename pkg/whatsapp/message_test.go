@@ -505,3 +505,32 @@ func TestBuildTemplateComponents_DocumentLinkIncludesFilename(t *testing.T) {
 	assert.Equal(t, "https://cdn.example.com/files/campaign-brief.pdf?download=1", document["link"])
 	assert.Equal(t, "campaign-brief.pdf", document["filename"])
 }
+
+func TestBuildTemplateComponents_QuickReplyPayload(t *testing.T) {
+	t.Parallel()
+
+	components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(
+		nil,
+		nil,
+		map[int]string{
+			0: "invoice_code=INV-1001&action=confirm",
+			1: "invoice_code=INV-1001&action=reject",
+		},
+		[]interface{}{
+			map[string]interface{}{"type": "QUICK_REPLY", "text": "Confirm"},
+			map[string]interface{}{"type": "QUICK_REPLY", "text": "Reject"},
+		},
+		"",
+		"",
+		"",
+	)
+
+	require.Len(t, components, 2)
+	assert.Equal(t, "button", components[0]["type"])
+	assert.Equal(t, "quick_reply", components[0]["sub_type"])
+	assert.Equal(t, "0", components[0]["index"])
+	params := components[0]["parameters"].([]map[string]interface{})
+	require.Len(t, params, 1)
+	assert.Equal(t, "payload", params[0]["type"])
+	assert.Equal(t, "invoice_code=INV-1001&action=confirm", params[0]["payload"])
+}

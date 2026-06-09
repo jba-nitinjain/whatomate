@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -280,7 +281,10 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 	if msg.Context != nil && msg.Context.ID != "" {
 		replyToWAMID = msg.Context.ID
 	}
-	a.saveIncomingMessage(account, contact, msg.ID, messageType, messageText, mediaInfo, replyToWAMID)
+	savedMessage := a.saveIncomingMessage(account, contact, msg.ID, messageType, messageText, mediaInfo, replyToWAMID)
+	if savedMessage != nil && buttonID != "" {
+		go a.handleTemplateButtonResponseCallback(account, contact, savedMessage, buttonID)
+	}
 
 	if defaultFlowCommand != "" {
 		a.Log.Info("Handled default contact flow command",
@@ -2244,7 +2248,7 @@ type MediaInfo struct {
 }
 
 // saveIncomingMessage saves an incoming message to the messages table
-func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *models.Contact, whatsappMsgID, msgType, content string, mediaInfo *MediaInfo, replyToWAMID string) {
+func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *models.Contact, whatsappMsgID, msgType, content string, mediaInfo *MediaInfo, replyToWAMID string) *models.Message {
 	now := time.Now()
 
 	message := models.Message{
@@ -2279,7 +2283,7 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 
 	if err := a.DB.Create(&message).Error; err != nil {
 		a.Log.Error("Failed to save incoming message", "error", err)
-		return
+		return nil
 	}
 
 	// Update contact's last message info
@@ -2315,6 +2319,156 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 		WhatsAppAccount: account.Name,
 		Direction:       models.DirectionIncoming,
 	})
+
+	return &message
+}
+
+type templateButtonCallbackPayload struct {
+	InvoiceCode               string    `json:"invoice_code,omitempty"`
+	Action                    string    `json:"action,omitempty"`
+	ButtonPayload             string    `json:"button_payload"`
+	ButtonID                  string    `json:"button_id"`
+	ButtonText                string    `json:"button_text"`
+	ContactID                 string    `json:"contact_id"`
+	ContactPhone              string    `json:"contact_phone"`
+	ContactName               string    `json:"contact_name,omitempty"`
+	WhatsAppAccount           string    `json:"whatsapp_account"`
+	IncomingMessageID         string    `json:"incoming_message_id"`
+	IncomingWhatsAppMessageID string    `json:"incoming_whatsapp_message_id"`
+	OriginalMessageID         string    `json:"original_message_id"`
+	OriginalWhatsAppMessageID string    `json:"original_whatsapp_message_id"`
+	Timestamp                 time.Time `json:"timestamp"`
+}
+
+func (a *App) handleTemplateButtonResponseCallback(account *models.WhatsAppAccount, contact *models.Contact, incoming *models.Message, buttonID string) {
+	if incoming.ReplyToMessageID == nil {
+		return
+	}
+
+	var original models.Message
+	if err := a.DB.First(&original, *incoming.ReplyToMessageID).Error; err != nil {
+		a.Log.Warn("Template button callback original message not found", "reply_to_message_id", incoming.ReplyToMessageID, "error", err)
+		return
+	}
+
+	callbackURL, _ := original.Metadata["response_callback_url"].(string)
+	if strings.TrimSpace(callbackURL) == "" {
+		return
+	}
+
+	buttonPayload := lookupButtonPayload(original.Metadata, buttonID, incoming.Content)
+	if buttonPayload == "" {
+		buttonPayload = buttonID
+	}
+
+	payload := templateButtonCallbackPayload{
+		InvoiceCode:               valueFromPayload(buttonPayload, "invoice_code"),
+		Action:                    valueFromPayload(buttonPayload, "action"),
+		ButtonPayload:             buttonPayload,
+		ButtonID:                  buttonID,
+		ButtonText:                incoming.Content,
+		ContactID:                 contact.ID.String(),
+		ContactPhone:              contact.PhoneNumber,
+		ContactName:               contact.ProfileName,
+		WhatsAppAccount:           account.Name,
+		IncomingMessageID:         incoming.ID.String(),
+		IncomingWhatsAppMessageID: incoming.WhatsAppMessageID,
+		OriginalMessageID:         original.ID.String(),
+		OriginalWhatsAppMessageID: original.WhatsAppMessageID,
+		Timestamp:                 time.Now(),
+	}
+	if payload.Action == "" {
+		payload.Action = strings.ToLower(strings.TrimSpace(incoming.Content))
+	}
+
+	status := a.sendTemplateButtonCallback(callbackURL, stringFromJSONB(original.Metadata, "response_callback_bearer_token"), payload)
+	metadata := incoming.Metadata
+	if metadata == nil {
+		metadata = models.JSONB{}
+	}
+	metadata["response_callback"] = status
+	if err := a.DB.Model(&models.Message{}).Where("id = ?", incoming.ID).Update("metadata", metadata).Error; err != nil {
+		a.Log.Error("Failed to store template button callback status", "message_id", incoming.ID, "error", err)
+	}
+}
+
+func (a *App) sendTemplateButtonCallback(callbackURL, bearerToken string, payload templateButtonCallbackPayload) models.JSONB {
+	result := models.JSONB{
+		"url":        callbackURL,
+		"sent_at":    time.Now().Format(time.RFC3339Nano),
+		"successful": false,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+
+	client := a.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequest(http.MethodPost, callbackURL, bytes.NewReader(body))
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	defer resp.Body.Close()
+	result["status_code"] = resp.StatusCode
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		result["successful"] = true
+	} else {
+		limitedBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		result["error"] = strings.TrimSpace(string(limitedBody))
+	}
+	return result
+}
+
+func lookupButtonPayload(metadata models.JSONB, buttonID, buttonText string) string {
+	raw, ok := metadata["button_payloads"]
+	if !ok {
+		return ""
+	}
+	payloads, ok := raw.(map[string]interface{})
+	if !ok {
+		if typed, ok := raw.(map[string]string); ok {
+			if payload := typed[buttonID]; payload != "" {
+				return payload
+			}
+			return typed[buttonText]
+		}
+		return ""
+	}
+	for _, key := range []string{buttonID, buttonText} {
+		if payload, _ := payloads[key].(string); payload != "" {
+			return payload
+		}
+	}
+	return ""
+}
+
+func valueFromPayload(payload, key string) string {
+	values, err := url.ParseQuery(payload)
+	if err != nil {
+		return ""
+	}
+	return values.Get(key)
+}
+
+func stringFromJSONB(metadata models.JSONB, key string) string {
+	value, _ := metadata[key].(string)
+	return value
 }
 
 // isWithinBusinessHours checks if current time is within configured business hours

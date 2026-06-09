@@ -277,6 +277,12 @@ func BodyParamsToComponents(bodyParams map[string]string) []map[string]interface
 // and dynamic URL button parameters. Header media prefers an uploaded media ID and
 // falls back to a public link when provided.
 func BuildTemplateComponents(bodyParams map[string]string, buttonParams map[int]string, buttons []interface{}, headerType, headerMediaID, headerMediaLink string) []map[string]interface{} {
+	return BuildTemplateComponentsWithQuickReplyPayloads(bodyParams, buttonParams, nil, buttons, headerType, headerMediaID, headerMediaLink)
+}
+
+// BuildTemplateComponentsWithQuickReplyPayloads builds template components and
+// includes Meta-supported hidden payloads for QUICK_REPLY template buttons.
+func BuildTemplateComponentsWithQuickReplyPayloads(bodyParams map[string]string, buttonParams map[int]string, quickReplyPayloads map[int]string, buttons []interface{}, headerType, headerMediaID, headerMediaLink string) []map[string]interface{} {
 	var components []map[string]interface{}
 
 	// Add header component if media is provided
@@ -294,7 +300,7 @@ func BuildTemplateComponents(bodyParams map[string]string, buttonParams map[int]
 			}
 		}
 		headerParam := map[string]interface{}{
-			"type": mediaType,
+			"type":    mediaType,
 			mediaType: mediaPayload,
 		}
 		components = append(components, map[string]interface{}{
@@ -307,31 +313,50 @@ func BuildTemplateComponents(bodyParams map[string]string, buttonParams map[int]
 	bodyComponents := BodyParamsToComponents(bodyParams)
 	components = append(components, bodyComponents...)
 
-	// Add button components for URL buttons with dynamic placeholders
+	// Add button components for URL buttons with dynamic placeholders and
+	// quick-reply buttons with hidden payloads.
 	for idx, button := range buttons {
 		btnMap, ok := button.(map[string]interface{})
 		if !ok {
 			continue
 		}
 		btnType, _ := btnMap["type"].(string)
-		if strings.ToUpper(btnType) != "URL" {
-			continue
-		}
-		paramValue := buttonParams[idx]
-		if paramValue == "" {
-			continue
-		}
-		components = append(components, map[string]interface{}{
-			"type":     "button",
-			"sub_type": "url",
-			"index":    fmt.Sprintf("%d", idx),
-			"parameters": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": paramValue,
+		switch strings.ToUpper(btnType) {
+		case "URL":
+			paramValue := buttonParams[idx]
+			if paramValue == "" {
+				continue
+			}
+			components = append(components, map[string]interface{}{
+				"type":     "button",
+				"sub_type": "url",
+				"index":    fmt.Sprintf("%d", idx),
+				"parameters": []map[string]interface{}{
+					{
+						"type": "text",
+						"text": paramValue,
+					},
 				},
-			},
-		})
+			})
+		case "QUICK_REPLY":
+			payload := quickReplyPayloads[idx]
+			if payload == "" {
+				continue
+			}
+			components = append(components, map[string]interface{}{
+				"type":     "button",
+				"sub_type": "quick_reply",
+				"index":    fmt.Sprintf("%d", idx),
+				"parameters": []map[string]interface{}{
+					{
+						"type":    "payload",
+						"payload": payload,
+					},
+				},
+			})
+		default:
+			continue
+		}
 	}
 
 	if len(components) == 0 {

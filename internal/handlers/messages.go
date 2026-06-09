@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,10 +55,13 @@ type OutgoingMessageRequest struct {
 	URL             string            // For CTA URL button
 
 	// Template messages
-	Template      *models.Template
-	BodyParams    map[string]string // Parameter name -> value (supports both named and positional)
-	ButtonParams  map[int]string    // URL button index -> dynamic value
-	HeaderMediaID string            // WhatsApp media ID for template header (IMAGE/VIDEO/DOCUMENT)
+	Template                    *models.Template
+	BodyParams                  map[string]string // Parameter name -> value (supports both named and positional)
+	ButtonParams                map[int]string    // URL button index -> dynamic value
+	ButtonPayloads              map[int]string    // Quick reply button index -> hidden payload
+	HeaderMediaID               string            // WhatsApp media ID for template header (IMAGE/VIDEO/DOCUMENT)
+	ResponseCallbackURL         string
+	ResponseCallbackBearerToken string
 
 	// WhatsApp Flow messages
 	FlowID          string // Meta Flow ID
@@ -189,7 +193,7 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 			if req.Template == nil {
 				return "", fmt.Errorf("template is required for template messages")
 			}
-			components := whatsapp.BuildTemplateComponents(req.BodyParams, req.ButtonParams, req.Template.Buttons, req.Template.HeaderType, req.HeaderMediaID, "")
+			components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(req.BodyParams, req.ButtonParams, req.ButtonPayloads, req.Template.Buttons, req.Template.HeaderType, req.HeaderMediaID, "")
 			route := models.ResolveTemplateDeliveryRoute(req.Account, req.Template)
 			if route == models.TemplateDeliveryRouteMarketingMessagesLite {
 				return a.WhatsApp.SendMarketingTemplateMessage(sendCtx, waAccount, req.Contact.PhoneNumber, req.Template.Name, req.Template.Language, components)
@@ -290,6 +294,15 @@ func (a *App) createOutgoingMessage(req OutgoingMessageRequest, opts MessageSend
 				"template_id":    req.Template.ID.String(),
 				"delivery_route": string(models.ResolveTemplateDeliveryRoute(req.Account, req.Template)),
 			}
+			if len(req.ButtonPayloads) > 0 {
+				msg.Metadata["button_payloads"] = indexedStringMapToJSON(req.ButtonPayloads)
+			}
+			if req.ResponseCallbackURL != "" {
+				msg.Metadata["response_callback_url"] = req.ResponseCallbackURL
+			}
+			if req.ResponseCallbackBearerToken != "" {
+				msg.Metadata["response_callback_bearer_token"] = req.ResponseCallbackBearerToken
+			}
 			// Store header media so it renders in the chat bubble
 			if req.MediaURL != "" {
 				msg.MediaURL = req.MediaURL
@@ -351,6 +364,56 @@ func (a *App) buildInteractiveData(req OutgoingMessageRequest) models.JSONB {
 			"buttons": buttons,
 		}
 	}
+}
+
+func resolveTemplateButtonPayloads(buttons []interface{}, raw map[string]string) (map[int]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+
+	resolved := make(map[int]string)
+	for key, payload := range raw {
+		key = strings.TrimSpace(key)
+		if key == "" || payload == "" {
+			continue
+		}
+		if idx, err := strconv.Atoi(key); err == nil {
+			if idx < 0 {
+				return nil, fmt.Errorf("button_payloads contains invalid button index %q", key)
+			}
+			resolved[idx] = payload
+			continue
+		}
+
+		matched := false
+		for idx, button := range buttons {
+			btnMap, ok := button.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			text, _ := btnMap["text"].(string)
+			if strings.EqualFold(strings.TrimSpace(text), key) {
+				resolved[idx] = payload
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, fmt.Errorf("button_payloads key %q does not match a button index or text", key)
+		}
+	}
+	if len(resolved) == 0 {
+		return nil, nil
+	}
+	return resolved, nil
+}
+
+func indexedStringMapToJSON(values map[int]string) map[string]string {
+	out := make(map[string]string, len(values))
+	for idx, value := range values {
+		out[strconv.Itoa(idx)] = value
+	}
+	return out
 }
 
 // finalizeMessageSend updates message status and triggers post-send actions
@@ -549,13 +612,16 @@ func (a *App) getMessagePreview(req OutgoingMessageRequest) string {
 
 // SendTemplateMessageRequest represents the request to send a template message
 type SendTemplateMessageRequest struct {
-	ContactID      string            `json:"contact_id"`
-	PhoneNumber    string            `json:"phone_number"`    // Alternative to contact_id - send to phone directly
-	PhoneNumberID  string            `json:"phone_number_id"` // Optional: resolve WhatsApp account from Meta phone number ID
-	TemplateName   string            `json:"template_name"`   // Template name
-	TemplateID     string            `json:"template_id"`     // Alternative: template UUID
-	TemplateParams map[string]string `json:"template_params"` // Named or positional params
-	AccountName    string            `json:"account_name"`    // Optional: specific WhatsApp account
+	ContactID                   string            `json:"contact_id"`
+	PhoneNumber                 string            `json:"phone_number"`    // Alternative to contact_id - send to phone directly
+	PhoneNumberID               string            `json:"phone_number_id"` // Optional: resolve WhatsApp account from Meta phone number ID
+	TemplateName                string            `json:"template_name"`   // Template name
+	TemplateID                  string            `json:"template_id"`     // Alternative: template UUID
+	TemplateParams              map[string]string `json:"template_params"` // Named or positional params
+	ButtonPayloads              map[string]string `json:"button_payloads"` // Quick reply button payloads by index ("0") or button text
+	AccountName                 string            `json:"account_name"`    // Optional: specific WhatsApp account
+	ResponseCallbackURL         string            `json:"response_callback_url"`
+	ResponseCallbackBearerToken string            `json:"response_callback_bearer_token"`
 
 	// Header media for templates with IMAGE/VIDEO/DOCUMENT headers.
 	// Three options (in priority order):
@@ -604,6 +670,12 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		if v := form.Value["account_name"]; len(v) > 0 {
 			req.AccountName = v[0]
 		}
+		if v := form.Value["response_callback_url"]; len(v) > 0 {
+			req.ResponseCallbackURL = v[0]
+		}
+		if v := form.Value["response_callback_bearer_token"]; len(v) > 0 {
+			req.ResponseCallbackBearerToken = v[0]
+		}
 		// Parse template_params from JSON string
 		if v := form.Value["template_params"]; len(v) > 0 && v[0] != "" {
 			if err := json.Unmarshal([]byte(v[0]), &req.TemplateParams); err != nil {
@@ -612,6 +684,11 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		}
 		if v := form.Value["header_media_filename"]; len(v) > 0 {
 			req.HeaderMediaFilename = v[0]
+		}
+		if v := form.Value["button_payloads"]; len(v) > 0 && v[0] != "" {
+			if err := json.Unmarshal([]byte(v[0]), &req.ButtonPayloads); err != nil {
+				return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid button_payloads JSON", nil, "")
+			}
 		}
 		// Read header media file
 		if files := form.File["header_file"]; len(files) > 0 {
@@ -733,6 +810,10 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 	bodyParams := templateutil.ResolveParamsFromMap(paramNames, req.TemplateParams)
 	resolvedBodyParams := templateutil.ResolveParamsMapFromMap(paramNames, req.TemplateParams)
 	buttonParams, missingButtonParams := templateutil.ResolveURLButtonParamsFromMap(template.Buttons, req.TemplateParams)
+	buttonPayloads, err := resolveTemplateButtonPayloads(template.Buttons, req.ButtonPayloads)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
 
 	// Validate that all required parameters are provided
 	var missingParams []string
@@ -826,15 +907,18 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 
 	// Send using unified message sender
 	msgReq := OutgoingMessageRequest{
-		Account:       account,
-		Contact:       contact,
-		Type:          models.MessageTypeTemplate,
-		Template:      &template,
-		BodyParams:    resolvedBodyParams,
-		ButtonParams:  buttonParams,
-		HeaderMediaID: headerMediaID,
-		MediaURL:      headerLocalPath,
-		MediaMimeType: headerMimeType,
+		Account:                     account,
+		Contact:                     contact,
+		Type:                        models.MessageTypeTemplate,
+		Template:                    &template,
+		BodyParams:                  resolvedBodyParams,
+		ButtonParams:                buttonParams,
+		ButtonPayloads:              buttonPayloads,
+		HeaderMediaID:               headerMediaID,
+		MediaURL:                    headerLocalPath,
+		MediaMimeType:               headerMimeType,
+		ResponseCallbackURL:         req.ResponseCallbackURL,
+		ResponseCallbackBearerToken: req.ResponseCallbackBearerToken,
 	}
 
 	opts := DefaultSendOptions()

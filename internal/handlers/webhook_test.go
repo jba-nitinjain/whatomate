@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -85,8 +87,8 @@ func TestVerifyWebhookSignature(t *testing.T) {
 			want:      false,
 		},
 		{
-			name:      "empty body with valid signature for empty body",
-			body:      []byte{},
+			name: "empty body with valid signature for empty body",
+			body: []byte{},
 			signature: func() []byte {
 				m := hmac.New(sha256.New, appSecret)
 				m.Write([]byte{})
@@ -260,6 +262,162 @@ func TestUpdateMessageStatus_DeliveredUpdatesRecipient(t *testing.T) {
 	var updatedCampaign models.BulkMessageCampaign
 	require.NoError(t, app.DB.First(&updatedCampaign, campaign.ID).Error)
 	assert.Equal(t, 1, updatedCampaign.DeliveredCount)
+}
+
+func TestTemplateButtonResponseCallback_SendsInvoiceUpdate(t *testing.T) {
+	app := webhookTestApp(t)
+	uid := uuid.New().String()[:8]
+
+	var receivedAuth string
+	var receivedPayload templateButtonCallbackPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&receivedPayload))
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	app.HTTPClient = server.Client()
+
+	org := models.Organization{
+		BaseModel: models.BaseModel{ID: uuid.New()},
+		Name:      "callback-org-" + uid,
+		Slug:      "callback-org-" + uid,
+	}
+	require.NoError(t, app.DB.Create(&org).Error)
+	account := models.WhatsAppAccount{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: org.ID,
+		Name:           "callback-account-" + uid,
+		PhoneID:        "phone-" + uid,
+		AccessToken:    "token",
+	}
+	require.NoError(t, app.DB.Create(&account).Error)
+	contact := models.Contact{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: org.ID,
+		PhoneNumber:    "919900" + uid,
+		ProfileName:    "Invoice User",
+	}
+	require.NoError(t, app.DB.Create(&contact).Error)
+	original := models.Message{
+		BaseModel:         models.BaseModel{ID: uuid.New()},
+		OrganizationID:    org.ID,
+		WhatsAppAccount:   account.Name,
+		ContactID:         contact.ID,
+		WhatsAppMessageID: "wamid.original-" + uid,
+		Direction:         models.DirectionOutgoing,
+		MessageType:       models.MessageTypeTemplate,
+		Content:           "Please approve",
+		Status:            models.MessageStatusSent,
+		Metadata: models.JSONB{
+			"response_callback_url":          server.URL,
+			"response_callback_bearer_token": "callback-token",
+			"button_payloads": map[string]interface{}{
+				"0": "invoice_code=INV-1001&action=confirm",
+			},
+		},
+	}
+	require.NoError(t, app.DB.Create(&original).Error)
+	incoming := models.Message{
+		BaseModel:         models.BaseModel{ID: uuid.New()},
+		OrganizationID:    org.ID,
+		WhatsAppAccount:   account.Name,
+		ContactID:         contact.ID,
+		WhatsAppMessageID: "wamid.incoming-" + uid,
+		Direction:         models.DirectionIncoming,
+		MessageType:       models.MessageType("button_reply"),
+		Content:           "Confirm",
+		Status:            models.MessageStatusReceived,
+		IsReply:           true,
+		ReplyToMessageID:  &original.ID,
+	}
+	require.NoError(t, app.DB.Create(&incoming).Error)
+
+	app.handleTemplateButtonResponseCallback(&account, &contact, &incoming, "0")
+
+	assert.Equal(t, "Bearer callback-token", receivedAuth)
+	assert.Equal(t, "INV-1001", receivedPayload.InvoiceCode)
+	assert.Equal(t, "confirm", receivedPayload.Action)
+	assert.Equal(t, "Confirm", receivedPayload.ButtonText)
+	assert.Equal(t, original.WhatsAppMessageID, receivedPayload.OriginalWhatsAppMessageID)
+
+	var updated models.Message
+	require.NoError(t, app.DB.First(&updated, incoming.ID).Error)
+	status := updated.Metadata["response_callback"].(map[string]interface{})
+	assert.Equal(t, true, status["successful"])
+}
+
+func TestTemplateButtonResponseCallback_WithoutOriginalDoesNothing(t *testing.T) {
+	app := webhookTestApp(t)
+	account := &models.WhatsAppAccount{Name: "account"}
+	contact := &models.Contact{BaseModel: models.BaseModel{ID: uuid.New()}, PhoneNumber: "919999999999"}
+	incoming := &models.Message{
+		BaseModel: models.BaseModel{ID: uuid.New()},
+		Content:   "Confirm",
+	}
+
+	app.handleTemplateButtonResponseCallback(account, contact, incoming, "0")
+}
+
+func TestTemplateButtonResponseCallback_RecordsNonSuccess(t *testing.T) {
+	app := webhookTestApp(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "invoice rejected by API", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	app.HTTPClient = server.Client()
+
+	org := models.Organization{BaseModel: models.BaseModel{ID: uuid.New()}, Name: "callback-fail", Slug: "callback-fail"}
+	require.NoError(t, app.DB.Create(&org).Error)
+	account := models.WhatsAppAccount{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: org.ID,
+		Name:           "callback-fail-account",
+	}
+	require.NoError(t, app.DB.Create(&account).Error)
+	contact := models.Contact{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: org.ID,
+		PhoneNumber:    "919988776655",
+	}
+	require.NoError(t, app.DB.Create(&contact).Error)
+	original := models.Message{
+		BaseModel:         models.BaseModel{ID: uuid.New()},
+		OrganizationID:    org.ID,
+		WhatsAppAccount:   account.Name,
+		ContactID:         contact.ID,
+		WhatsAppMessageID: "wamid.original-fail",
+		Direction:         models.DirectionOutgoing,
+		MessageType:       models.MessageTypeTemplate,
+		Status:            models.MessageStatusSent,
+		Metadata: models.JSONB{
+			"response_callback_url": server.URL,
+		},
+	}
+	require.NoError(t, app.DB.Create(&original).Error)
+	incoming := models.Message{
+		BaseModel:         models.BaseModel{ID: uuid.New()},
+		OrganizationID:    org.ID,
+		WhatsAppAccount:   account.Name,
+		ContactID:         contact.ID,
+		WhatsAppMessageID: "wamid.incoming-fail",
+		Direction:         models.DirectionIncoming,
+		MessageType:       models.MessageType("button_reply"),
+		Content:           "Reject",
+		Status:            models.MessageStatusReceived,
+		IsReply:           true,
+		ReplyToMessageID:  &original.ID,
+	}
+	require.NoError(t, app.DB.Create(&incoming).Error)
+
+	app.handleTemplateButtonResponseCallback(&account, &contact, &incoming, "invoice_code=INV-1002&action=reject")
+
+	var updated models.Message
+	require.NoError(t, app.DB.First(&updated, incoming.ID).Error)
+	status := updated.Metadata["response_callback"].(map[string]interface{})
+	assert.Equal(t, false, status["successful"])
+	assert.Equal(t, float64(http.StatusBadGateway), status["status_code"])
+	assert.Contains(t, status["error"], "invoice rejected by API")
 }
 
 func TestUpdateMessageStatus_ReadUpdatesRecipient(t *testing.T) {
