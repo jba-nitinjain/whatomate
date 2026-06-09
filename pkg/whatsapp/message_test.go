@@ -506,6 +506,29 @@ func TestBuildTemplateComponents_DocumentLinkIncludesFilename(t *testing.T) {
 	assert.Equal(t, "campaign-brief.pdf", document["filename"])
 }
 
+func TestBuildTemplateComponents_DocumentIdIncludesFilename(t *testing.T) {
+	t.Parallel()
+
+	components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(
+		nil,
+		nil,
+		nil,
+		nil,
+		"DOCUMENT",
+		"123456789_media_id",
+		"JBA_AdvanceTax_AAAHP1836R_TY_2026-2027.pdf",
+	)
+
+	require.Len(t, components, 1)
+
+	headerComponent := components[0]
+	params := headerComponent["parameters"].([]map[string]interface{})
+	require.Len(t, params, 1)
+	document := params[0]["document"].(map[string]interface{})
+	assert.Equal(t, "123456789_media_id", document["id"])
+	assert.Equal(t, "JBA_AdvanceTax_AAAHP1836R_TY_2026-2027.pdf", document["filename"])
+}
+
 func TestBuildTemplateComponents_QuickReplyPayload(t *testing.T) {
 	t.Parallel()
 

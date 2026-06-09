@@ -291,6 +291,13 @@ func BuildTemplateComponentsWithQuickReplyPayloads(bodyParams map[string]string,
 		mediaPayload := map[string]interface{}{}
 		if headerMediaID != "" {
 			mediaPayload["id"] = headerMediaID
+			if mediaType == "document" && headerMediaLink != "" {
+				if filename := templateHeaderFilenameFromLink(headerMediaLink); filename != "" {
+					mediaPayload["filename"] = filename
+				} else {
+					mediaPayload["filename"] = headerMediaLink
+				}
+			}
 		} else {
 			mediaPayload["link"] = headerMediaLink
 			if mediaType == "document" {

@@ -193,7 +193,7 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 			if req.Template == nil {
 				return "", fmt.Errorf("template is required for template messages")
 			}
-			components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(req.BodyParams, req.ButtonParams, req.ButtonPayloads, req.Template.Buttons, req.Template.HeaderType, req.HeaderMediaID, "")
+			components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(req.BodyParams, req.ButtonParams, req.ButtonPayloads, req.Template.Buttons, req.Template.HeaderType, req.HeaderMediaID, req.MediaFilename)
 			route := models.ResolveTemplateDeliveryRoute(req.Account, req.Template)
 			if route == models.TemplateDeliveryRouteMarketingMessagesLite {
 				return a.WhatsApp.SendMarketingTemplateMessage(sendCtx, waAccount, req.Contact.PhoneNumber, req.Template.Name, req.Template.Language, components)
@@ -917,6 +917,7 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		HeaderMediaID:               headerMediaID,
 		MediaURL:                    headerLocalPath,
 		MediaMimeType:               headerMimeType,
+		MediaFilename:               req.HeaderMediaFilename,
 		ResponseCallbackURL:         req.ResponseCallbackURL,
 		ResponseCallbackBearerToken: req.ResponseCallbackBearerToken,
 	}
