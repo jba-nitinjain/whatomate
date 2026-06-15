@@ -245,12 +245,22 @@ func BodyParamsToComponents(bodyParams map[string]string) []map[string]interface
 		}
 	}
 
-	// Get sorted keys for deterministic ordering
+	// Get sorted keys for deterministic ordering.
+	// Positional keys ("1".."12") must sort numerically — sort.Strings gives lex order
+	// ("1","10","11","12","2",...) which maps values to wrong {{N}} slots on Meta's API.
 	keys := make([]string, 0, len(bodyParams))
 	for k := range bodyParams {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	if isNamedParams {
+		sort.Strings(keys)
+	} else {
+		sort.Slice(keys, func(i, j int) bool {
+			ni, _ := strconv.Atoi(keys[i])
+			nj, _ := strconv.Atoi(keys[j])
+			return ni < nj
+		})
+	}
 
 	params := make([]map[string]interface{}, 0, len(bodyParams))
 	for _, key := range keys {
