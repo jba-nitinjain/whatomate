@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,24 +16,24 @@ import (
 
 // ChatbotSettingsResponse represents the response for chatbot settings
 type ChatbotSettingsResponse struct {
-	Enabled               bool                     `json:"enabled"`
-	GreetingMessage       string                   `json:"greeting_message"`
-	GreetingButtons       []map[string]interface{} `json:"greeting_buttons"`
-	FallbackMessage       string                   `json:"fallback_message"`
-	FallbackButtons       []map[string]interface{} `json:"fallback_buttons"`
-	SessionTimeoutMinutes int                      `json:"session_timeout_minutes"`
-	BusinessHoursEnabled       bool                     `json:"business_hours_enabled"`
-	BusinessHours              []map[string]interface{} `json:"business_hours"`
-	OutOfHoursMessage          string                   `json:"out_of_hours_message"`
-	AllowAutomatedOutsideHours bool                     `json:"allow_automated_outside_hours"`
+	Enabled                      bool                     `json:"enabled"`
+	GreetingMessage              string                   `json:"greeting_message"`
+	GreetingButtons              []map[string]interface{} `json:"greeting_buttons"`
+	FallbackMessage              string                   `json:"fallback_message"`
+	FallbackButtons              []map[string]interface{} `json:"fallback_buttons"`
+	SessionTimeoutMinutes        int                      `json:"session_timeout_minutes"`
+	BusinessHoursEnabled         bool                     `json:"business_hours_enabled"`
+	BusinessHours                []map[string]interface{} `json:"business_hours"`
+	OutOfHoursMessage            string                   `json:"out_of_hours_message"`
+	AllowAutomatedOutsideHours   bool                     `json:"allow_automated_outside_hours"`
 	AllowAgentQueuePickup        bool                     `json:"allow_agent_queue_pickup"`
 	AssignToSameAgent            bool                     `json:"assign_to_same_agent"`
 	AgentCurrentConversationOnly bool                     `json:"agent_current_conversation_only"`
 	AIEnabled                    bool                     `json:"ai_enabled"`
-	AIProvider            models.AIProvider        `json:"ai_provider"`
-	AIModel               string                   `json:"ai_model"`
-	AIMaxTokens           int                      `json:"ai_max_tokens"`
-	AISystemPrompt        string                   `json:"ai_system_prompt"`
+	AIProvider                   models.AIProvider        `json:"ai_provider"`
+	AIModel                      string                   `json:"ai_model"`
+	AIMaxTokens                  int                      `json:"ai_max_tokens"`
+	AISystemPrompt               string                   `json:"ai_system_prompt"`
 	// SLA Settings
 	SLAEnabled             bool     `json:"sla_enabled"`
 	SLAResponseMinutes     int      `json:"sla_response_minutes"`
@@ -62,21 +65,22 @@ type ChatbotStatsResponse struct {
 
 // KeywordRuleResponse represents a keyword rule for API response
 type KeywordRuleResponse struct {
-	ID              string             `json:"id"`
-	Name            string             `json:"name"`
-	Keywords        []string           `json:"keywords"`
-	MatchType       models.MatchType   `json:"match_type"`
+	ID              string              `json:"id"`
+	Name            string              `json:"name"`
+	Keywords        []string            `json:"keywords"`
+	MatchType       models.MatchType    `json:"match_type"`
 	ResponseType    models.ResponseType `json:"response_type"`
-	ResponseContent json.RawMessage    `json:"response_content"`
-	Priority        int                `json:"priority"`
-	Enabled         bool               `json:"enabled"`
-	CreatedAt       string             `json:"created_at"`
+	ResponseContent json.RawMessage     `json:"response_content"`
+	Priority        int                 `json:"priority"`
+	Enabled         bool                `json:"enabled"`
+	CreatedAt       string              `json:"created_at"`
 }
 
 // ChatbotFlowResponse represents a chatbot flow for API response
 type ChatbotFlowResponse struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
+	WhatsAppAccount string   `json:"whatsapp_account"`
 	Description     string   `json:"description"`
 	TriggerKeywords []string `json:"trigger_keywords"`
 	Enabled         bool     `json:"enabled"`
@@ -86,14 +90,14 @@ type ChatbotFlowResponse struct {
 
 // AIContextResponse represents an AI context for API response
 type AIContextResponse struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
+	ID              string             `json:"id"`
+	Name            string             `json:"name"`
 	ContextType     models.ContextType `json:"context_type"`
-	TriggerKeywords []string          `json:"trigger_keywords"`
-	StaticContent   string            `json:"static_content"`
-	Enabled         bool              `json:"enabled"`
-	Priority        int               `json:"priority"`
-	CreatedAt       string            `json:"created_at"`
+	TriggerKeywords []string           `json:"trigger_keywords"`
+	StaticContent   string             `json:"static_content"`
+	Enabled         bool               `json:"enabled"`
+	Priority        int                `json:"priority"`
+	CreatedAt       string             `json:"created_at"`
 }
 
 // GetChatbotSettings returns chatbot settings and stats
@@ -201,25 +205,25 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 	}
 
 	var req struct {
-		Enabled                    *bool                      `json:"enabled"`
-		GreetingMessage            *string                    `json:"greeting_message"`
-		GreetingButtons            *[]map[string]interface{}  `json:"greeting_buttons"`
-		FallbackMessage            *string                    `json:"fallback_message"`
-		FallbackButtons            *[]map[string]interface{}  `json:"fallback_buttons"`
-		SessionTimeoutMinutes      *int                       `json:"session_timeout_minutes"`
-		BusinessHoursEnabled       *bool                      `json:"business_hours_enabled"`
-		BusinessHours              *[]map[string]interface{}  `json:"business_hours"`
-		OutOfHoursMessage          *string                    `json:"out_of_hours_message"`
-		AllowAutomatedOutsideHours *bool                      `json:"allow_automated_outside_hours"`
-		AllowAgentQueuePickup        *bool                      `json:"allow_agent_queue_pickup"`
-		AssignToSameAgent            *bool                      `json:"assign_to_same_agent"`
-		AgentCurrentConversationOnly *bool                      `json:"agent_current_conversation_only"`
-		AIEnabled                    *bool                      `json:"ai_enabled"`
-		AIProvider                 *models.AIProvider         `json:"ai_provider"`
-		AIAPIKey                   *string                    `json:"ai_api_key"`
-		AIModel                    *string                    `json:"ai_model"`
-		AIMaxTokens                *int                       `json:"ai_max_tokens"`
-		AISystemPrompt             *string                    `json:"ai_system_prompt"`
+		Enabled                      *bool                     `json:"enabled"`
+		GreetingMessage              *string                   `json:"greeting_message"`
+		GreetingButtons              *[]map[string]interface{} `json:"greeting_buttons"`
+		FallbackMessage              *string                   `json:"fallback_message"`
+		FallbackButtons              *[]map[string]interface{} `json:"fallback_buttons"`
+		SessionTimeoutMinutes        *int                      `json:"session_timeout_minutes"`
+		BusinessHoursEnabled         *bool                     `json:"business_hours_enabled"`
+		BusinessHours                *[]map[string]interface{} `json:"business_hours"`
+		OutOfHoursMessage            *string                   `json:"out_of_hours_message"`
+		AllowAutomatedOutsideHours   *bool                     `json:"allow_automated_outside_hours"`
+		AllowAgentQueuePickup        *bool                     `json:"allow_agent_queue_pickup"`
+		AssignToSameAgent            *bool                     `json:"assign_to_same_agent"`
+		AgentCurrentConversationOnly *bool                     `json:"agent_current_conversation_only"`
+		AIEnabled                    *bool                     `json:"ai_enabled"`
+		AIProvider                   *models.AIProvider        `json:"ai_provider"`
+		AIAPIKey                     *string                   `json:"ai_api_key"`
+		AIModel                      *string                   `json:"ai_model"`
+		AIMaxTokens                  *int                      `json:"ai_max_tokens"`
+		AISystemPrompt               *string                   `json:"ai_system_prompt"`
 		// SLA Settings
 		SLAEnabled             *bool     `json:"sla_enabled"`
 		SLAResponseMinutes     *int      `json:"sla_response_minutes"`
@@ -576,13 +580,13 @@ func (a *App) UpdateKeywordRule(r *fastglue.Request) error {
 	}
 
 	var req struct {
-		Name            *string                 `json:"name"`
-		Keywords        []string                `json:"keywords"`
-		MatchType       *models.MatchType       `json:"match_type"`
-		ResponseType    *models.ResponseType    `json:"response_type"`
-		ResponseContent map[string]interface{}  `json:"response_content"`
-		Priority        *int                    `json:"priority"`
-		Enabled         *bool                   `json:"enabled"`
+		Name            *string                `json:"name"`
+		Keywords        []string               `json:"keywords"`
+		MatchType       *models.MatchType      `json:"match_type"`
+		ResponseType    *models.ResponseType   `json:"response_type"`
+		ResponseContent map[string]interface{} `json:"response_content"`
+		Priority        *int                   `json:"priority"`
+		Enabled         *bool                  `json:"enabled"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
@@ -691,6 +695,7 @@ func (a *App) ListChatbotFlows(r *fastglue.Request) error {
 		response[i] = ChatbotFlowResponse{
 			ID:              flow.ID.String(),
 			Name:            flow.Name,
+			WhatsAppAccount: flow.WhatsAppAccount,
 			Description:     flow.Description,
 			TriggerKeywords: flow.TriggerKeywords,
 			Enabled:         flow.IsEnabled,
@@ -728,6 +733,78 @@ type FlowStepRequest struct {
 	MaxRetries      int                      `json:"max_retries"`
 }
 
+func (a *App) validateChatbotFlowRequest(orgID uuid.UUID, accountName string, steps []FlowStepRequest) error {
+	if err := a.validateChatbotFlowAccount(orgID, strings.TrimSpace(accountName)); err != nil {
+		return err
+	}
+	return validateChatbotFlowSteps(steps)
+}
+
+func (a *App) validateChatbotFlowAccount(orgID uuid.UUID, accountName string) error {
+	if accountName == "" {
+		return nil
+	}
+	var count int64
+	if err := a.DB.Model(&models.WhatsAppAccount{}).
+		Where("organization_id = ? AND name = ?", orgID, accountName).
+		Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to validate WhatsApp account")
+	}
+	if count == 0 {
+		return fmt.Errorf("WhatsApp account is invalid")
+	}
+	return nil
+}
+
+func validateChatbotFlowSteps(steps []FlowStepRequest) error {
+	stepNames := make(map[string]bool, len(steps))
+	for i, step := range steps {
+		stepName := strings.TrimSpace(step.StepName)
+		if stepName == "" {
+			return fmt.Errorf("step %d name is required", i+1)
+		}
+		if stepNames[stepName] {
+			return fmt.Errorf("duplicate step name %q", stepName)
+		}
+		stepNames[stepName] = true
+		if strings.TrimSpace(step.Message) == "" && step.MessageType != models.FlowStepTypeTransfer {
+			return fmt.Errorf("step %q message is required", stepName)
+		}
+		if step.ValidationRegex != "" {
+			if _, err := regexp.Compile(step.ValidationRegex); err != nil {
+				return fmt.Errorf("step %q has invalid validation regex", stepName)
+			}
+		}
+		if step.MaxRetries < 0 || step.MaxRetries > 10 {
+			return fmt.Errorf("step %q max_retries must be between 0 and 10", stepName)
+		}
+		if step.MessageType == models.FlowStepTypeButtons {
+			replyMode := getInteractiveReplyMode(models.JSONB(step.InputConfig), len(step.Buttons))
+			if replyMode == "buttons" && len(step.Buttons) > 3 {
+				return fmt.Errorf("step %q reply buttons are limited to 3 options", stepName)
+			}
+			if replyMode == "list" && len(step.Buttons) > 10 {
+				return fmt.Errorf("step %q list replies are limited to 10 rows", stepName)
+			}
+		}
+	}
+	for _, step := range steps {
+		if step.NextStep != "" && !stepNames[step.NextStep] {
+			return fmt.Errorf("step %q points to unknown next_step %q", step.StepName, step.NextStep)
+		}
+		for _, rawTarget := range step.ConditionalNext {
+			target, ok := rawTarget.(string)
+			if !ok || target == "" || target == "__default__" {
+				continue
+			}
+			if !stepNames[target] {
+				return fmt.Errorf("step %q points to unknown conditional target %q", step.StepName, target)
+			}
+		}
+	}
+	return nil
+}
+
 // CreateChatbotFlow creates a new chatbot flow
 func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 	orgID, userID, err := a.getOrgAndUserID(r)
@@ -741,6 +818,7 @@ func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 
 	var req struct {
 		Name              string                 `json:"name"`
+		WhatsAppAccount   string                 `json:"whatsapp_account"`
 		Description       string                 `json:"description"`
 		TriggerKeywords   []string               `json:"trigger_keywords"`
 		InitialMessage    string                 `json:"initial_message"`
@@ -748,7 +826,7 @@ func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 		OnCompleteAction  string                 `json:"on_complete_action"`
 		CompletionConfig  map[string]interface{} `json:"completion_config"`
 		PanelConfig       map[string]interface{} `json:"panel_config"`
-		Enabled           bool                   `json:"enabled"`
+		Enabled           *bool                  `json:"enabled"`
 		Steps             []FlowStepRequest      `json:"steps"`
 	}
 
@@ -759,6 +837,9 @@ func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 	if req.Name == "" {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Name is required", nil, "")
 	}
+	if err := a.validateChatbotFlowRequest(orgID, req.WhatsAppAccount, req.Steps); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
 
 	// Use transaction for flow + steps
 	tx := a.DB.Begin()
@@ -767,6 +848,7 @@ func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 	flow := models.ChatbotFlow{
 		BaseModel:         models.BaseModel{ID: flowID},
 		OrganizationID:    orgID,
+		WhatsAppAccount:   strings.TrimSpace(req.WhatsAppAccount),
 		Name:              req.Name,
 		Description:       req.Description,
 		TriggerKeywords:   req.TriggerKeywords,
@@ -775,7 +857,7 @@ func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 		OnCompleteAction:  req.OnCompleteAction,
 		CompletionConfig:  models.JSONB(req.CompletionConfig),
 		PanelConfig:       models.JSONB(req.PanelConfig),
-		IsEnabled:         req.Enabled,
+		IsEnabled:         req.Enabled == nil || *req.Enabled,
 	}
 
 	if err := tx.Create(&flow).Error; err != nil {
@@ -826,7 +908,10 @@ func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 		}
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		a.Log.Error("Failed to commit flow create", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create flow", nil, "")
+	}
 
 	// Invalidate cache
 	a.InvalidateChatbotFlowsCache(orgID)
@@ -888,15 +973,16 @@ func (a *App) UpdateChatbotFlow(r *fastglue.Request) error {
 
 	var req struct {
 		Name              *string                `json:"name"`
+		WhatsAppAccount   *string                `json:"whatsapp_account"`
 		Description       *string                `json:"description"`
-		TriggerKeywords   []string               `json:"trigger_keywords"`
+		TriggerKeywords   *[]string              `json:"trigger_keywords"`
 		InitialMessage    *string                `json:"initial_message"`
 		CompletionMessage *string                `json:"completion_message"`
 		OnCompleteAction  *string                `json:"on_complete_action"`
 		CompletionConfig  map[string]interface{} `json:"completion_config"`
 		PanelConfig       map[string]interface{} `json:"panel_config"`
 		Enabled           *bool                  `json:"enabled"`
-		Steps             []FlowStepRequest      `json:"steps"`
+		Steps             *[]FlowStepRequest     `json:"steps"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
@@ -908,11 +994,19 @@ func (a *App) UpdateChatbotFlow(r *fastglue.Request) error {
 	if req.Name != nil {
 		flow.Name = *req.Name
 	}
+	if req.WhatsAppAccount != nil {
+		accountName := strings.TrimSpace(*req.WhatsAppAccount)
+		if err := a.validateChatbotFlowAccount(orgID, accountName); err != nil {
+			tx.Rollback()
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+		}
+		flow.WhatsAppAccount = accountName
+	}
 	if req.Description != nil {
 		flow.Description = *req.Description
 	}
-	if len(req.TriggerKeywords) > 0 {
-		flow.TriggerKeywords = req.TriggerKeywords
+	if req.TriggerKeywords != nil {
+		flow.TriggerKeywords = *req.TriggerKeywords
 	}
 	if req.InitialMessage != nil {
 		flow.InitialMessage = *req.InitialMessage
@@ -940,7 +1034,11 @@ func (a *App) UpdateChatbotFlow(r *fastglue.Request) error {
 	}
 
 	// Update steps if provided
-	if len(req.Steps) > 0 {
+	if req.Steps != nil {
+		if err := validateChatbotFlowSteps(*req.Steps); err != nil {
+			tx.Rollback()
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+		}
 		// Delete existing steps
 		if err := tx.Where("flow_id = ?", id).Delete(&models.ChatbotFlowStep{}).Error; err != nil {
 			tx.Rollback()
@@ -949,7 +1047,7 @@ func (a *App) UpdateChatbotFlow(r *fastglue.Request) error {
 		}
 
 		// Create new steps
-		for i, stepReq := range req.Steps {
+		for i, stepReq := range *req.Steps {
 			// Convert buttons to JSONBArray
 			var buttons models.JSONBArray
 			for _, btn := range stepReq.Buttons {
@@ -991,7 +1089,10 @@ func (a *App) UpdateChatbotFlow(r *fastglue.Request) error {
 		}
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		a.Log.Error("Failed to commit flow update", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update flow", nil, "")
+	}
 
 	// Invalidate cache
 	a.InvalidateChatbotFlowsCache(orgID)
@@ -1039,7 +1140,10 @@ func (a *App) DeleteChatbotFlow(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Flow not found", nil, "")
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		a.Log.Error("Failed to commit flow delete", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete flow", nil, "")
+	}
 
 	// Invalidate cache
 	a.InvalidateChatbotFlowsCache(orgID)
@@ -1107,12 +1211,12 @@ func (a *App) CreateAIContext(r *fastglue.Request) error {
 	}
 
 	var req struct {
-		Name            string            `json:"name"`
+		Name            string             `json:"name"`
 		ContextType     models.ContextType `json:"context_type"`
-		TriggerKeywords []string          `json:"trigger_keywords"`
-		StaticContent   string            `json:"static_content"`
-		Priority        int               `json:"priority"`
-		Enabled         bool              `json:"enabled"`
+		TriggerKeywords []string           `json:"trigger_keywords"`
+		StaticContent   string             `json:"static_content"`
+		Priority        int                `json:"priority"`
+		Enabled         bool               `json:"enabled"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {

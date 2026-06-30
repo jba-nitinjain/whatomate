@@ -59,7 +59,7 @@
     "all": "All",
     "none": "None",
     "other": "Other",
-    "required": "Required",
+    "required": "{field} is required",
     "optional": "Optional",
     "default": "Default",
     "selected": "selected",
@@ -85,7 +85,6 @@
     "deleteConfirmMessage": "Are you sure you want to delete this {resource}? This action cannot be undone.",
     "searchPlaceholder": "Search {resource}",
     "selectPlaceholder": "Select {resource}",
-    "required": "{field} is required",
     "copiedToClipboard": "Copied to clipboard"
   },
   "auth": {
@@ -2194,7 +2193,14 @@
     "sectionLabelPlaceholder": "Section Label",
     "addFieldPlaceholder": "+ Add",
     "exampleUrlPlaceholder": "https://example.com",
-    "dataPathPlaceholder": "data.path"
+    "dataPathPlaceholder": "data.path",
+    "messageTypeList": "List Reply",
+    "whatsappAccount": "WhatsApp account",
+    "selectAccount": "Select account",
+    "globalAccount": "Global / legacy",
+    "listButtonText": "List button text",
+    "listSectionTitle": "List section title",
+    "listRowDescription": "Row description"
   },
   "calling": {
     "callLogs": "Call Logs",

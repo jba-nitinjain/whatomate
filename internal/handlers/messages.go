@@ -51,7 +51,8 @@ type OutgoingMessageRequest struct {
 	InteractiveType string            // "button", "list", "cta_url"
 	BodyText        string            // Body text for interactive messages
 	Buttons         []whatsapp.Button // For button/list messages
-	ButtonText      string            // For CTA URL button
+	ButtonText      string            // For CTA URL button or list picker label
+	ListSectionText string            // For list messages
 	URL             string            // For CTA URL button
 
 	// Template messages
@@ -185,7 +186,11 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 			switch req.InteractiveType {
 			case "cta_url":
 				return a.WhatsApp.SendCTAURLButton(sendCtx, waAccount, req.Contact.PhoneNumber, req.BodyText, req.ButtonText, req.URL)
-			default: // "button" or "list"
+			case "list":
+				return a.WhatsApp.SendInteractiveList(sendCtx, waAccount, req.Contact.PhoneNumber, req.BodyText, req.ButtonText, req.ListSectionText, req.Buttons)
+			case "button":
+				return a.WhatsApp.SendInteractiveReplyButtons(sendCtx, waAccount, req.Contact.PhoneNumber, req.BodyText, req.Buttons)
+			default:
 				return a.WhatsApp.SendInteractiveButtons(sendCtx, waAccount, req.Contact.PhoneNumber, req.BodyText, req.Buttons)
 			}
 
@@ -346,7 +351,11 @@ func (a *App) buildInteractiveData(req OutgoingMessageRequest) models.JSONB {
 	case "list":
 		rows := make([]interface{}, len(req.Buttons))
 		for i, btn := range req.Buttons {
-			rows[i] = map[string]string{"id": btn.ID, "title": btn.Title}
+			row := map[string]string{"id": btn.ID, "title": btn.Title}
+			if btn.Description != "" {
+				row["description"] = btn.Description
+			}
+			rows[i] = row
 		}
 		return models.JSONB{
 			"type": "list",

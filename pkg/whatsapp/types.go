@@ -25,10 +25,11 @@ type EmbeddedSignupTokenExchangeResponse struct {
 
 // Button represents an interactive button
 type Button struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Type  string `json:"type,omitempty"` // "reply" (default) or "url"
-	URL   string `json:"url,omitempty"`  // URL for type="url" buttons
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	Type        string `json:"type,omitempty"` // "reply" (default) or "url"
+	URL         string `json:"url,omitempty"`  // URL for type="url" buttons
 }
 
 // MetaAPIResponse represents a successful API response from Meta
@@ -161,17 +162,17 @@ type WebhookContact struct {
 
 // WebhookMessage represents an incoming message
 type WebhookMessage struct {
-	From        string                  `json:"from"`
-	ID          string                  `json:"id"`
-	Timestamp   string                  `json:"timestamp"`
-	Type        string                  `json:"type"`
-	Text        *WebhookText            `json:"text,omitempty"`
-	Interactive *WebhookInteractive     `json:"interactive,omitempty"`
-	Image       *WebhookMedia           `json:"image,omitempty"`
-	Document    *WebhookMedia           `json:"document,omitempty"`
-	Audio       *WebhookMedia           `json:"audio,omitempty"`
-	Video       *WebhookMedia           `json:"video,omitempty"`
-	Context     *WebhookMessageContext  `json:"context,omitempty"`
+	From        string                 `json:"from"`
+	ID          string                 `json:"id"`
+	Timestamp   string                 `json:"timestamp"`
+	Type        string                 `json:"type"`
+	Text        *WebhookText           `json:"text,omitempty"`
+	Interactive *WebhookInteractive    `json:"interactive,omitempty"`
+	Image       *WebhookMedia          `json:"image,omitempty"`
+	Document    *WebhookMedia          `json:"document,omitempty"`
+	Audio       *WebhookMedia          `json:"audio,omitempty"`
+	Video       *WebhookMedia          `json:"video,omitempty"`
+	Context     *WebhookMessageContext `json:"context,omitempty"`
 }
 
 // WebhookText represents text content in a message
@@ -280,7 +281,7 @@ type CatalogListResponse struct {
 // ProductInput represents input for creating/updating a product
 type ProductInput struct {
 	Name        string `json:"name"`
-	Price       int64  `json:"price"`    // Price in cents
+	Price       int64  `json:"price"` // Price in cents
 	Currency    string `json:"currency"`
 	URL         string `json:"url"`
 	ImageURL    string `json:"image_url"`

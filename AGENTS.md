@@ -33,6 +33,7 @@ If the local shell does not have Go installed, note that explicitly instead of c
 
 ## Current Important Conventions
 
+- Conversation flow reply options support explicit reply-button and list-picker modes via step `input_config.reply_mode`; runtime routing uses option IDs for both button and list replies, and new flows should be scoped with `whatsapp_account` when account-specific.
 - External message ingestion supports super-admin routing by `phone_number_id` to the correct organization/account.
 - Legacy misrouted chats can be reviewed from the super-admin-only Settings UI using all message history, with safe moves plus explicit manual approval for merge-required cases.
 - The chat repair backend flows are preview/scan/apply under `/api/admin/chat-repair`; opening the tab remains read-only, and the explicit `Scan Candidates` action auto-applies safe move candidates, including same-location chats whose active messages still drift from the resolved organization/account.

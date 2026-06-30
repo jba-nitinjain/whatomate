@@ -33,7 +33,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import { chatbotService, flowsService, type Team } from '@/services/api'
+import { accountsService, chatbotService, flowsService, type Team } from '@/services/api'
 import { useTeamsStore } from '@/stores/teams'
 import { toast } from 'vue-sonner'
 import {
@@ -53,6 +53,7 @@ import {
   ExternalLink,
   Reply,
   Phone,
+  List,
 } from 'lucide-vue-next'
 import draggable from 'vuedraggable'
 import FlowChart from '@/components/chatbot/flow-builder/FlowChart.vue'
@@ -73,6 +74,7 @@ interface ButtonConfig {
   type?: 'reply' | 'url' | 'phone'
   url?: string
   phone_number?: string
+  description?: string
 }
 
 interface TransferConfig {
@@ -148,6 +150,7 @@ const flowId = computed(() => route.params.id as string | undefined)
 const isNewFlow = computed(() => !flowId.value || flowId.value === 'new')
 
 const whatsappFlows = ref<WhatsAppFlow[]>([])
+const whatsappAccounts = ref<{ name: string }[]>([])
 const teams = ref<Team[]>([])
 
 const selectedStepIndex = ref<number | null>(null)
@@ -265,6 +268,7 @@ const defaultStep: FlowStep = {
 const formData = ref({
   name: '',
   description: '',
+  whatsapp_account: '',
   trigger_keywords: '',
   initial_message: 'Hi! Let me help you with that.',
   completion_message: 'Thank you! We have all the information we need.',
@@ -337,6 +341,7 @@ const unassignedVariables = computed(() => {
 const messageTypes = computed(() => [
   { value: 'text', label: t('flowBuilder.messageTypeText'), icon: MessageSquare },
   { value: 'buttons', label: t('flowBuilder.messageTypeButtons'), icon: MousePointerClick },
+  { value: 'list', label: t('flowBuilder.messageTypeList'), icon: List },
   { value: 'api_fetch', label: t('flowBuilder.messageTypeApi'), icon: Globe },
   { value: 'whatsapp_flow', label: t('flowBuilder.messageTypeWhatsappFlow'), icon: MessageCircle },
   { value: 'transfer', label: t('flowBuilder.messageTypeTransfer'), icon: Users }
@@ -370,7 +375,7 @@ watch(formData, () => {
 }, { deep: true })
 
 onMounted(async () => {
-  await Promise.all([fetchWhatsAppFlows(), fetchTeams()])
+  await Promise.all([fetchWhatsAppFlows(), fetchTeams(), fetchWhatsAppAccounts()])
 
   if (!isNewFlow.value && flowId.value) {
     await loadFlow(flowId.value)
@@ -405,6 +410,20 @@ async function fetchWhatsAppFlows() {
   }
 }
 
+async function fetchWhatsAppAccounts() {
+  try {
+    const response = await accountsService.list()
+    const data = response.data as { data?: { accounts?: Array<{ name: string }> }, accounts?: Array<{ name: string }> }
+    whatsappAccounts.value = data.data?.accounts ?? data.accounts ?? []
+    if (!formData.value.whatsapp_account && whatsappAccounts.value.length > 0) {
+      formData.value.whatsapp_account = whatsappAccounts.value[0].name
+    }
+  } catch (error) {
+    console.error('Failed to load WhatsApp accounts:', error)
+    whatsappAccounts.value = []
+  }
+}
+
 async function fetchTeams() {
   try {
     await teamsStore.fetchTeams()
@@ -424,6 +443,7 @@ async function loadFlow(id: string) {
     formData.value = {
       name: flow.name || flow.Name || '',
       description: flow.description || flow.Description || '',
+      whatsapp_account: flow.whatsapp_account || flow.WhatsAppAccount || '',
       trigger_keywords: (flow.trigger_keywords || flow.TriggerKeywords || []).join(', '),
       initial_message: flow.initial_message || flow.InitialMessage || '',
       completion_message: flow.completion_message || flow.CompletionMessage || '',
@@ -541,8 +561,21 @@ function updateStepOrders() {
 }
 
 function setMessageType(type: string) {
-  if (selectedStep.value) {
-    selectedStep.value.message_type = type
+  if (!selectedStep.value) return
+  if (type === 'list') {
+    selectedStep.value.message_type = 'buttons'
+    selectedStep.value.input_type = 'select'
+    selectedStep.value.input_config = {
+      ...selectedStep.value.input_config,
+      reply_mode: 'list',
+      list_button_text: selectedStep.value.input_config.list_button_text || 'Select an option',
+      list_section_title: selectedStep.value.input_config.list_section_title || 'Options'
+    }
+    return
+  }
+  selectedStep.value.message_type = type
+  if (type === 'buttons') {
+    selectedStep.value.input_config = { ...selectedStep.value.input_config, reply_mode: 'buttons' }
   }
 }
 
@@ -563,7 +596,8 @@ function setInputType(type: string | number | bigint | Record<string, any> | nul
 // Button helpers
 function addButton(type: 'reply' | 'url' | 'phone' = 'reply') {
   if (!selectedStep.value) return
-  if (selectedStep.value.buttons.length >= 10) {
+  const maxOptions = selectedStep.value.input_config.reply_mode === 'list' ? 10 : 3
+  if (selectedStep.value.buttons.length >= maxOptions) {
     toast.error(t('flowBuilder.maxOptionsError'))
     return
   }
@@ -797,6 +831,7 @@ async function saveFlow() {
     const data = {
       name: formData.value.name,
       description: formData.value.description,
+      whatsapp_account: formData.value.whatsapp_account,
       trigger_keywords: formData.value.trigger_keywords.split(',').map(k => k.trim()).filter(Boolean),
       initial_message: formData.value.initial_message,
       completion_message: formData.value.completion_message,
@@ -1379,9 +1414,9 @@ function confirmCancel() {
                 <template v-if="selectedStep.message_type === 'buttons'">
                   <div class="space-y-3">
                     <div class="flex items-center justify-between">
-                      <Label class="text-xs">{{ $t('flowBuilder.buttonOptions') }} ({{ selectedStep.buttons.length }}/{{ hasCtaButtons ? 2 : 10 }})</Label>
+                      <Label class="text-xs">{{ $t('flowBuilder.buttonOptions') }} ({{ selectedStep.buttons.length }}/{{ selectedStep.input_config.reply_mode === 'list' ? 10 : hasCtaButtons ? 2 : 3 }})</Label>
                       <div class="flex gap-1">
-                        <Button variant="outline" size="sm" class="h-6 text-xs" @click="addButton('reply')" :disabled="selectedStep.buttons.length >= 10 || hasCtaButtons">
+                        <Button variant="outline" size="sm" class="h-6 text-xs" @click="addButton('reply')" :disabled="selectedStep.buttons.length >= (selectedStep.input_config.reply_mode === 'list' ? 10 : 3) || hasCtaButtons">
                           <Reply class="h-3 w-3 mr-1" />
                           {{ $t('flowBuilder.replyButton') }}
                         </Button>
@@ -1393,6 +1428,16 @@ function confirmCancel() {
                           <Phone class="h-3 w-3 mr-1" />
                           {{ $t('flowBuilder.phoneButton') }}
                         </Button>
+                      </div>
+                    </div>
+                    <div v-if="selectedStep.input_config.reply_mode === 'list'" class="grid grid-cols-2 gap-2">
+                      <div class="space-y-1">
+                        <Label class="text-xs">{{ $t('flowBuilder.listButtonText') }}</Label>
+                        <Input v-model="selectedStep.input_config.list_button_text" class="h-7 text-xs" maxlength="20" />
+                      </div>
+                      <div class="space-y-1">
+                        <Label class="text-xs">{{ $t('flowBuilder.listSectionTitle') }}</Label>
+                        <Input v-model="selectedStep.input_config.list_section_title" class="h-7 text-xs" maxlength="24" />
                       </div>
                     </div>
                     <div class="space-y-2">
@@ -1415,6 +1460,7 @@ function confirmCancel() {
                         </div>
                         <div v-else class="space-y-2">
                           <Input v-model="btn.id" :placeholder="$t('flowBuilder.buttonIdPlaceholder')" class="h-7 text-xs" />
+                          <Input v-if="selectedStep.input_config.reply_mode === 'list'" v-model="btn.description" :placeholder="$t('flowBuilder.listRowDescription')" class="h-7 text-xs" maxlength="72" />
                           <div class="flex items-center gap-2">
                             <Label class="text-xs text-muted-foreground whitespace-nowrap">{{ $t('flowBuilder.goTo') }}:</Label>
                             <Select
