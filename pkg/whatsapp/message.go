@@ -55,74 +55,105 @@ func (c *Client) SendTextMessage(ctx context.Context, account *Account, phoneNum
 	return messageID, nil
 }
 
-// SendInteractiveButtons sends an interactive message with buttons or list
-// If buttons <= 3, sends as buttons; if 4-10, sends as list
+// SendInteractiveButtons sends reply buttons when there are up to 3 options and
+// falls back to a list for 4-10 options to preserve legacy caller behavior.
 func (c *Client) SendInteractiveButtons(ctx context.Context, account *Account, phoneNumber, bodyText string, buttons []Button) (string, error) {
+	if len(buttons) <= 3 {
+		return c.SendInteractiveReplyButtons(ctx, account, phoneNumber, bodyText, buttons)
+	}
+	return c.SendInteractiveList(ctx, account, phoneNumber, bodyText, "Select an option", "Options", buttons)
+}
+
+// SendInteractiveReplyButtons sends an explicit WhatsApp reply-button message.
+func (c *Client) SendInteractiveReplyButtons(ctx context.Context, account *Account, phoneNumber, bodyText string, buttons []Button) (string, error) {
 	if len(buttons) == 0 {
 		return "", fmt.Errorf("at least one button is required")
+	}
+	if len(buttons) > 3 {
+		return "", fmt.Errorf("maximum 3 reply buttons allowed")
+	}
+
+	buttonsList := make([]map[string]interface{}, 0, len(buttons))
+	for _, btn := range buttons {
+		title := btn.Title
+		if len(title) > 20 {
+			title = title[:20]
+		}
+		buttonsList = append(buttonsList, map[string]interface{}{
+			"type": "reply",
+			"reply": map[string]interface{}{
+				"id":    btn.ID,
+				"title": title,
+			},
+		})
+	}
+
+	interactive := map[string]interface{}{
+		"type": "button",
+		"body": map[string]interface{}{
+			"text": bodyText,
+		},
+		"action": map[string]interface{}{
+			"buttons": buttonsList,
+		},
+	}
+	return c.sendInteractivePayload(ctx, account, phoneNumber, interactive, len(buttons))
+}
+
+// SendInteractiveList sends an explicit WhatsApp list-picker message.
+func (c *Client) SendInteractiveList(ctx context.Context, account *Account, phoneNumber, bodyText, buttonText, sectionTitle string, buttons []Button) (string, error) {
+	if len(buttons) == 0 {
+		return "", fmt.Errorf("at least one list row is required")
 	}
 	if len(buttons) > 10 {
 		return "", fmt.Errorf("maximum 10 buttons allowed")
 	}
-
-	var interactive map[string]interface{}
-
-	if len(buttons) <= 3 {
-		// Use button format
-		buttonsList := make([]map[string]interface{}, 0, len(buttons))
-		for _, btn := range buttons {
-			title := btn.Title
-			if len(title) > 20 {
-				title = title[:20]
-			}
-			buttonsList = append(buttonsList, map[string]interface{}{
-				"type": "reply",
-				"reply": map[string]interface{}{
-					"id":    btn.ID,
-					"title": title,
-				},
-			})
-		}
-
-		interactive = map[string]interface{}{
-			"type": "button",
-			"body": map[string]interface{}{
-				"text": bodyText,
-			},
-			"action": map[string]interface{}{
-				"buttons": buttonsList,
-			},
-		}
-	} else {
-		// Use list format for 4-10 items
-		rows := make([]map[string]interface{}, 0, len(buttons))
-		for _, btn := range buttons {
-			title := btn.Title
-			if len(title) > 24 {
-				title = title[:24]
-			}
-			rows = append(rows, map[string]interface{}{
-				"id":    btn.ID,
-				"title": title,
-			})
-		}
-
-		interactive = map[string]interface{}{
-			"type": "list",
-			"body": map[string]interface{}{
-				"text": bodyText,
-			},
-			"action": map[string]interface{}{
-				"button": "Select an option",
-				"sections": []map[string]interface{}{
-					{
-						"title": "Options",
-						"rows":  rows,
-					},
-				},
-			},
-		}
+	if buttonText == "" {
+		buttonText = "Select an option"
 	}
+	if sectionTitle == "" {
+		sectionTitle = "Options"
+	}
+
+	rows := make([]map[string]interface{}, 0, len(buttons))
+	for _, btn := range buttons {
+		title := btn.Title
+		if len(title) > 24 {
+			title = title[:24]
+		}
+		row := map[string]interface{}{
+			"id":    btn.ID,
+			"title": title,
+		}
+		if btn.Description != "" {
+			description := btn.Description
+			if len(description) > 72 {
+				description = description[:72]
+			}
+			row["description"] = description
+		}
+		rows = append(rows, row)
+	}
+
+	interactive := map[string]interface{}{
+		"type": "list",
+		"body": map[string]interface{}{
+			"text": bodyText,
+		},
+		"action": map[string]interface{}{
+			"button": buttonText,
+			"sections": []map[string]interface{}{
+				{
+					"title": sectionTitle,
+					"rows":  rows,
+				},
+			},
+		},
+	}
+	return c.sendInteractivePayload(ctx, account, phoneNumber, interactive, len(buttons))
+}
+
+func (c *Client) sendInteractivePayload(ctx context.Context, account *Account, phoneNumber string, interactive map[string]interface{}, optionCount int) (string, error) {
 
 	payload := map[string]interface{}{
 		"messaging_product": "whatsapp",
@@ -133,7 +164,7 @@ func (c *Client) SendInteractiveButtons(ctx context.Context, account *Account, p
 	}
 
 	url := c.buildMessagesURL(account)
-	c.Log.Debug("Sending interactive message", "phone", phoneNumber, "button_count", len(buttons))
+	c.Log.Debug("Sending interactive message", "phone", phoneNumber, "option_count", optionCount)
 
 	respBody, err := c.doRequest(ctx, "POST", url, payload, account.AccessToken)
 	if err != nil {

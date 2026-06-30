@@ -2135,7 +2135,14 @@
     "sectionLabelPlaceholder": "लेबल",
     "addFieldPlaceholder": "+ जोड़ें",
     "exampleUrlPlaceholder": "https://...",
-    "dataPathPlaceholder": "path"
+    "dataPathPlaceholder": "path",
+    "messageTypeList": "List Reply",
+    "whatsappAccount": "WhatsApp account",
+    "selectAccount": "Select account",
+    "globalAccount": "Global / legacy",
+    "listButtonText": "List button text",
+    "listSectionTitle": "List section title",
+    "listRowDescription": "Row description"
   },
   "calling": {
     "callLogs": "कॉल लॉग्स",

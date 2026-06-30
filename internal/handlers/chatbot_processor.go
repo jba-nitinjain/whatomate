@@ -594,7 +594,7 @@ func (a *App) sendAndSaveTextMessage(account *models.WhatsAppAccount, contact *m
 // sendAndSaveInteractiveButtons sends an interactive button message and saves it to the database.
 // Buttons with type "url" are automatically separated and sent as CTA URL messages,
 // since WhatsApp doesn't allow mixing reply buttons and URL buttons in the same message.
-func (a *App) sendAndSaveInteractiveButtons(account *models.WhatsAppAccount, contact *models.Contact, bodyText string, buttons []map[string]interface{}) error {
+func (a *App) sendAndSaveInteractiveButtons(account *models.WhatsAppAccount, contact *models.Contact, bodyText string, buttons []map[string]interface{}, inputConfig ...models.JSONB) error {
 	// Separate reply buttons from CTA buttons (url / phone)
 	replyButtons := make([]map[string]interface{}, 0, len(buttons))
 	ctaButtons := make([]map[string]interface{}, 0)
@@ -638,17 +638,22 @@ func (a *App) sendAndSaveInteractiveButtons(account *models.WhatsAppAccount, con
 			if buttonTitle == "" {
 				continue
 			}
+			description, _ := btn["description"].(string)
 			waButtons = append(waButtons, whatsapp.Button{
-				ID:    buttonID,
-				Title: buttonTitle,
+				ID:          buttonID,
+				Title:       buttonTitle,
+				Description: description,
 			})
 		}
 
 		if len(waButtons) > 0 {
-			interactiveType := "button"
-			if len(waButtons) > 3 {
-				interactiveType = "list"
+			config := models.JSONB{}
+			if len(inputConfig) > 0 && inputConfig[0] != nil {
+				config = inputConfig[0]
 			}
+			interactiveType := getInteractiveReplyMode(config, len(waButtons))
+			buttonText := getStringConfig(config, "list_button_text", "Select an option")
+			sectionText := getStringConfig(config, "list_section_title", "Options")
 			ctx := context.Background()
 			if _, err := a.SendOutgoingMessage(ctx, OutgoingMessageRequest{
 				Account:         account,
@@ -656,6 +661,8 @@ func (a *App) sendAndSaveInteractiveButtons(account *models.WhatsAppAccount, con
 				Type:            models.MessageTypeInteractive,
 				InteractiveType: interactiveType,
 				BodyText:        bodyText,
+				ButtonText:      buttonText,
+				ListSectionText: sectionText,
 				Buttons:         waButtons,
 			}, ChatbotSendOptions()); err != nil {
 				return err
@@ -725,6 +732,28 @@ func (a *App) sendAndSaveFlowMessage(account *models.WhatsAppAccount, contact *m
 	return err
 }
 
+func getInteractiveReplyMode(config models.JSONB, optionCount int) string {
+	if mode, ok := config["reply_mode"].(string); ok && mode == "list" {
+		return "list"
+	}
+	if mode, ok := config["reply_mode"].(string); ok && mode == "buttons" {
+		return "button"
+	}
+	if optionCount > 3 {
+		return "list"
+	}
+	return "button"
+}
+
+func getStringConfig(config models.JSONB, key string, fallback string) string {
+	value, _ := config[key].(string)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 // getOrCreateSession finds an active session or creates a new one
 // Returns the session and a boolean indicating if it's a new session
 func (a *App) getOrCreateSession(orgID, contactID uuid.UUID, accountName, phoneNumber string, timeoutMins int) (*models.ChatbotSession, bool) {
@@ -786,6 +815,9 @@ func (a *App) matchFlowTrigger(orgID uuid.UUID, accountName, messageText string)
 	messageLower := strings.ToLower(messageText)
 
 	for _, flow := range flows {
+		if flow.WhatsAppAccount != "" && flow.WhatsAppAccount != accountName {
+			continue
+		}
 		for _, keyword := range flow.TriggerKeywords {
 			if strings.Contains(messageLower, strings.ToLower(keyword)) {
 				return &flow
@@ -1376,7 +1408,7 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 					buttons = append(buttons, btnMap)
 				}
 			}
-			if err := a.sendAndSaveInteractiveButtons(account, contact, message, buttons); err != nil {
+			if err := a.sendAndSaveInteractiveButtons(account, contact, message, buttons, step.InputConfig); err != nil {
 				a.Log.Error("Failed to send buttons", "error", err, "contact", contact.PhoneNumber)
 			}
 		} else {
@@ -1453,7 +1485,7 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 			// Look up the WhatsApp Flow to get the first screen name
 			var waFlow models.WhatsAppFlow
 			firstScreen := ""
-			if err := a.DB.Where("meta_flow_id = ?", flowID).First(&waFlow).Error; err != nil {
+			if err := a.DB.Where("organization_id = ? AND meta_flow_id = ?", account.OrganizationID, flowID).First(&waFlow).Error; err != nil {
 				a.Log.Debug("Could not find WhatsApp Flow in database, using default screen", "meta_flow_id", flowID)
 			} else {
 				// Extract first screen name from screens array
