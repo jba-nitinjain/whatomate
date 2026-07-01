@@ -83,6 +83,30 @@ const router = createRouter({
           meta: { permission: 'campaigns' }
         },
         {
+          path: 'rsvp',
+          name: 'rsvp',
+          component: () => import('@/views/rsvp/RSVPEventsView.vue'),
+          meta: { permission: 'rsvp' }
+        },
+        {
+          path: 'rsvp/new',
+          name: 'rsvp-new',
+          component: () => import('@/views/rsvp/RSVPEventBuilderView.vue'),
+          meta: { permission: 'rsvp' }
+        },
+        {
+          path: 'rsvp/:id/edit',
+          name: 'rsvp-edit',
+          component: () => import('@/views/rsvp/RSVPEventBuilderView.vue'),
+          meta: { permission: 'rsvp' }
+        },
+        {
+          path: 'rsvp/:id/results',
+          name: 'rsvp-results',
+          component: () => import('@/views/rsvp/RSVPResultsView.vue'),
+          meta: { permission: 'rsvp' }
+        },
+        {
           path: 'chatbot',
           name: 'chatbot',
           component: () => import('@/views/chatbot/ChatbotView.vue'),

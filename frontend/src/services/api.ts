@@ -1641,4 +1641,21 @@ export const ivrFlowsService = {
     `${api.defaults.baseURL}/ivr-flows/audio/${encodeURIComponent(filename)}`,
 };
 
+export const rsvpService = {
+  list: (params?: { search?: string; status?: string; page?: number; limit?: number }) =>
+    api.get("/rsvp-events", { params }),
+  create: (data: Record<string, unknown>) => api.post("/rsvp-events", data),
+  get: (id: string) => api.get(`/rsvp-events/${id}`),
+  update: (id: string, data: Record<string, unknown>) => api.put(`/rsvp-events/${id}`, data),
+  delete: (id: string) => api.delete(`/rsvp-events/${id}`),
+  activate: (id: string) => api.post(`/rsvp-events/${id}/activate`),
+  close: (id: string) => api.post(`/rsvp-events/${id}/close`),
+  responses: (id: string, params?: { attendance?: string; page?: number; limit?: number }) =>
+    api.get(`/rsvp-events/${id}/responses`, { params }),
+  tally: (id: string) => api.get(`/rsvp-events/${id}/tally`),
+  sendInvites: (id: string, contactIds: string[]) =>
+    api.post(`/rsvp-events/${id}/send-invites`, { contact_ids: contactIds }),
+  exportUrl: (id: string) => `${api.defaults.baseURL}/rsvp-events/${id}/export`,
+};
+
 export default api;

@@ -21,7 +21,8 @@ import {
   Tags,
   Phone,
   PhoneCall,
-  PhoneForwarded
+  PhoneForwarded,
+  CalendarCheck
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 
@@ -101,6 +102,12 @@ export const navigationItems: NavItem[] = [
     path: '/campaigns',
     icon: Megaphone,
     permission: 'campaigns'
+  },
+  {
+    name: 'nav.rsvp',
+    path: '/rsvp',
+    icon: CalendarCheck,
+    permission: 'rsvp'
   },
   {
     name: 'nav.calling',

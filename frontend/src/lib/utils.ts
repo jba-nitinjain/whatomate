@@ -84,3 +84,13 @@ export function formatLabel(key: string): string {
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/\b\w/g, c => c.toUpperCase())
 }
+
+/** Format a date as dd/mm/yyyy for display. Store/transmit ISO; format only here. */
+export function formatDateDDMMYYYY(date: string | Date): string {
+  const d = typeof date === 'string' ? new Date(date) : date
+  if (isNaN(d.getTime())) return ''
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const year = d.getFullYear()
+  return `${day}/${month}/${year}`
+}
