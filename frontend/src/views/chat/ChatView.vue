@@ -913,6 +913,19 @@ function _toggleReactionPicker(messageId: string) {
 }
 void _toggleReactionPicker // Suppress unused warning
 
+const reprocessingMessageId = ref<string | null>(null)
+async function reprocessMessage(message: Message) {
+  reprocessingMessageId.value = message.id
+  try {
+    await messagesService.reprocess(message.id)
+    toast.success('Re-running message through the chatbot flow')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.message || 'Could not reprocess message')
+  } finally {
+    reprocessingMessageId.value = null
+  }
+}
+
 function replyToMessage(message: Message) {
   contactsStore.setReplyingTo(message)
   nextTick(() => {
@@ -2264,6 +2277,17 @@ async function sendMediaMessage() {
               </div>
               <!-- Action buttons for incoming messages -->
               <div v-if="message.direction === 'incoming'" class="ml-1 flex flex-col gap-0.5 self-end opacity-100 transition-opacity md:self-center md:opacity-0 md:group-hover:opacity-100">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-6 w-6"
+                  :disabled="reprocessingMessageId === message.id"
+                  title="Run through chatbot flow"
+                  @click="reprocessMessage(message)"
+                >
+                  <Loader2 v-if="reprocessingMessageId === message.id" class="h-3 w-3 animate-spin" />
+                  <Zap v-else class="h-3 w-3" />
+                </Button>
                 <Popover :open="reactionPickerMessageId === message.id" @update:open="(open: boolean) => reactionPickerMessageId = open ? message.id : null">
                   <PopoverTrigger as-child>
                     <Button variant="ghost" size="icon" class="h-6 w-6">

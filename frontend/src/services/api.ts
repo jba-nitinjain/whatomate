@@ -591,6 +591,8 @@ export const messagesService = {
       account?: string;
     },
   ) => api.get(`/contacts/${contactId}/messages`, { params }),
+  reprocess: (messageId: string) =>
+    api.post(`/chat/messages/${messageId}/reprocess`),
   send: (
     contactId: string,
     data: {

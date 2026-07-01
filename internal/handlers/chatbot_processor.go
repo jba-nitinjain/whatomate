@@ -759,11 +759,17 @@ func getStringConfig(config models.JSONB, key string, fallback string) string {
 func (a *App) getOrCreateSession(orgID, contactID uuid.UUID, accountName, phoneNumber string, timeoutMins int) (*models.ChatbotSession, bool) {
 	now := time.Now()
 
-	// Look for an active session that hasn't timed out
+	// Look for an active session that hasn't timed out.
+	// A session that is mid-flow (current_flow_id set) stays alive for the full
+	// 24h WhatsApp reply window so a guest replying later continues the flow,
+	// instead of the shorter idle timeout used for non-flow sessions.
 	var session models.ChatbotSession
 	timeout := now.Add(-time.Duration(timeoutMins) * time.Minute)
-	result := a.DB.Where("organization_id = ? AND contact_id = ? AND whats_app_account = ? AND status = ? AND last_activity_at > ?",
-		orgID, contactID, accountName, models.SessionStatusActive, timeout).First(&session)
+	flowWindow := now.Add(-24 * time.Hour)
+	result := a.DB.Where(`organization_id = ? AND contact_id = ? AND whats_app_account = ? AND status = ?
+		AND (last_activity_at > ? OR (current_flow_id IS NOT NULL AND last_activity_at > ?))`,
+		orgID, contactID, accountName, models.SessionStatusActive, timeout, flowWindow).
+		Order("last_activity_at DESC").First(&session)
 
 	if result.Error == nil {
 		// Update last activity
