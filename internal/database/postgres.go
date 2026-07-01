@@ -79,6 +79,8 @@ func GetMigrationModels() []MigrationModel {
 		// Bulk & Notifications
 		{"BulkMessageCampaign", &models.BulkMessageCampaign{}},
 		{"BulkMessageRecipient", &models.BulkMessageRecipient{}},
+		{"RSVPEvent", &models.RSVPEvent{}},
+		{"RSVPResponse", &models.RSVPResponse{}},
 		{"NotificationRule", &models.NotificationRule{}},
 
 		// Chatbot models
