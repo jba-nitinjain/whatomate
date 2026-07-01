@@ -254,6 +254,7 @@ func runServer(args []string) {
 
 	// Start scheduled campaign processor
 	app.StartScheduledCampaignProcessor(time.Minute)
+	app.StartRSVPReminderProcessor(time.Minute)
 	lo.Info("Scheduled campaign processor started")
 
 	// Start chat retention processor
@@ -713,6 +714,19 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/flows/{id}/deprecate", app.DeprecateFlow)
 	g.POST("/api/flows/{id}/duplicate", app.DuplicateFlow)
 	g.POST("/api/flows/sync", app.SyncFlows)
+
+	// RSVP events
+	g.GET("/api/rsvp-events", app.ListRSVPEvents)
+	g.POST("/api/rsvp-events", app.CreateRSVPEvent)
+	g.GET("/api/rsvp-events/{id}", app.GetRSVPEvent)
+	g.PUT("/api/rsvp-events/{id}", app.UpdateRSVPEvent)
+	g.DELETE("/api/rsvp-events/{id}", app.DeleteRSVPEvent)
+	g.POST("/api/rsvp-events/{id}/activate", app.ActivateRSVPEvent)
+	g.POST("/api/rsvp-events/{id}/close", app.CloseRSVPEvent)
+	g.GET("/api/rsvp-events/{id}/responses", app.ListRSVPResponses)
+	g.GET("/api/rsvp-events/{id}/tally", app.GetRSVPTally)
+	g.POST("/api/rsvp-events/{id}/send-invites", app.SendRSVPInvites)
+	g.GET("/api/rsvp-events/{id}/export", app.ExportRSVPResponses)
 
 	// Bulk Campaigns
 	g.GET("/api/campaigns", app.ListCampaigns)

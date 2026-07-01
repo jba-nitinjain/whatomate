@@ -846,6 +846,21 @@ func (a *App) startFlow(account *models.WhatsAppAccount, session *models.Chatbot
 	}
 	a.DB.Save(session)
 
+	// RSVP: if this flow belongs to an active RSVP event, enforce cutoff, tag the
+	// session, and seed a pending response so the guest is tracked.
+	if event := a.rsvpEventForFlow(account.OrganizationID, flow.ID); event != nil {
+		if event.RSVPCloseAt != nil && time.Now().After(*event.RSVPCloseAt) {
+			if err := a.sendAndSaveTextMessage(account, contact, "Sorry, RSVP for this event is now closed."); err != nil {
+				a.Log.Error("Failed to send RSVP closed message", "error", err)
+			}
+			a.exitFlow(session)
+			return
+		}
+		session.SessionData[rsvpEventIDKey] = event.ID.String()
+		a.DB.Model(session).Update("session_data", session.SessionData)
+		a.seedPendingRSVPResponse(account.OrganizationID, event, contact.ID, contact.PhoneNumber)
+	}
+
 	// Send initial message if configured
 	if flow.InitialMessage != "" {
 		if err := a.sendAndSaveTextMessage(account, contact, flow.InitialMessage); err != nil {
@@ -1091,6 +1106,9 @@ func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *mode
 // completeFlow finishes a flow and sends completion message
 func (a *App) completeFlow(account *models.WhatsAppAccount, session *models.ChatbotSession, contact *models.Contact, flow *models.ChatbotFlow) {
 	a.Log.Info("Completing flow", "flow_id", flow.ID, "session_id", session.ID)
+
+	// RSVP: capture the collected answers into the response before the session closes.
+	a.finalizeRSVPFromSession(session)
 
 	// Send completion message
 	if flow.CompletionMessage != "" {
