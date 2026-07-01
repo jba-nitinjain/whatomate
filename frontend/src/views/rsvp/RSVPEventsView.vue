@@ -1,20 +1,46 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { rsvpService } from '@/services/api'
+import { toast } from 'vue-sonner'
+import { PageHeader, DataTable, DeleteConfirmDialog, SearchInput, RefreshButton, type Column } from '@/components/shared'
+import { getErrorMessage } from '@/lib/api-utils'
 import { formatDateDDMMYYYY } from '@/lib/utils'
+import { Plus, Pencil, Trash2, BarChart3, CalendarCheck } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 
 interface RSVPEvent { id: string; name: string; status: string; event_date?: string }
 
+const { t } = useI18n()
 const router = useRouter()
 const auth = useAuthStore()
+
 const events = ref<RSVPEvent[]>([])
-const loading = ref(true)
+const isLoading = ref(true)
+const searchQuery = ref('')
+const deleteDialogOpen = ref(false)
+const toDelete = ref<RSVPEvent | null>(null)
+
+const columns = computed<Column<RSVPEvent>[]>(() => [
+  { key: 'name', label: t('rsvp.name'), sortable: true },
+  { key: 'status', label: t('rsvp.status') },
+  { key: 'event_date', label: t('rsvp.eventDate') },
+  { key: 'actions', label: t('rsvp.actions'), align: 'right' },
+])
+
+const filtered = computed(() => {
+  const q = searchQuery.value.toLowerCase().trim()
+  if (!q) return events.value
+  return events.value.filter(e => e.name.toLowerCase().includes(q))
+})
 
 async function fetchEvents() {
-  loading.value = true
+  isLoading.value = true
   try {
     const res = await rsvpService.list()
     const data = (res.data as any).data || res.data
@@ -22,46 +48,105 @@ async function fetchEvents() {
   } catch {
     events.value = []
   } finally {
-    loading.value = false
+    isLoading.value = false
   }
 }
 onMounted(fetchEvents)
 
-async function remove(e: RSVPEvent) {
-  if (!confirm(`Delete RSVP "${e.name}"?`)) return
-  await rsvpService.delete(e.id)
-  await fetchEvents()
+function createEvent() { router.push('/rsvp/new') }
+function editEvent(e: RSVPEvent) { router.push(`/rsvp/${e.id}/edit`) }
+function viewResults(e: RSVPEvent) { router.push(`/rsvp/${e.id}/results`) }
+function openDeleteDialog(e: RSVPEvent) { toDelete.value = e; deleteDialogOpen.value = true }
+
+async function confirmDelete() {
+  if (!toDelete.value) return
+  try {
+    await rsvpService.delete(toDelete.value.id)
+    toast.success(t('rsvp.delete'))
+    deleteDialogOpen.value = false
+    toDelete.value = null
+    await fetchEvents()
+  } catch (e: any) {
+    toast.error(getErrorMessage(e, t('rsvp.delete')))
+  }
 }
 </script>
 
 <template>
-  <div class="p-6 max-w-6xl mx-auto">
-    <div class="flex items-center justify-between mb-4">
-      <h1 class="text-xl font-semibold">RSVP Events</h1>
-      <Button v-if="auth.hasPermission('rsvp', 'write')" size="sm" @click="router.push('/rsvp/new')">New RSVP</Button>
-    </div>
-    <div v-if="loading" class="text-muted-foreground">Loading…</div>
-    <table v-else class="w-full text-sm">
-      <thead>
-        <tr class="text-left text-muted-foreground border-b">
-          <th class="py-2">Name</th><th>Status</th><th>Event date</th><th class="text-right">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="e in events" :key="e.id" class="border-b">
-          <td class="py-2">{{ e.name }}</td>
-          <td>{{ e.status }}</td>
-          <td>{{ e.event_date ? formatDateDDMMYYYY(e.event_date) : '—' }}</td>
-          <td class="text-right space-x-2">
-            <Button variant="ghost" size="sm" @click="router.push(`/rsvp/${e.id}/results`)">Results</Button>
-            <Button v-if="auth.hasPermission('rsvp', 'write')" variant="ghost" size="sm" @click="router.push(`/rsvp/${e.id}/edit`)">Edit</Button>
-            <Button v-if="auth.hasPermission('rsvp', 'delete')" variant="ghost" size="sm" @click="remove(e)">Delete</Button>
-          </td>
-        </tr>
-        <tr v-if="!events.length">
-          <td colspan="4" class="py-6 text-center text-muted-foreground">No RSVP events yet.</td>
-        </tr>
-      </tbody>
-    </table>
+  <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
+    <PageHeader :title="t('rsvp.title')" :icon="CalendarCheck" back-link="/">
+      <template #actions>
+        <RefreshButton :refreshing="isLoading" :label="t('common.refresh')" @refresh="fetchEvents" />
+        <Button v-if="auth.hasPermission('rsvp', 'write')" variant="outline" size="sm" @click="createEvent">
+          <Plus class="h-4 w-4 mr-2" />
+          {{ t('rsvp.create') }}
+        </Button>
+      </template>
+    </PageHeader>
+
+    <ScrollArea class="flex-1">
+      <div class="p-6">
+        <div class="max-w-6xl mx-auto">
+          <Card>
+            <CardHeader>
+              <div class="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                  <CardTitle>{{ t('rsvp.yourEvents') }}</CardTitle>
+                  <CardDescription>{{ t('rsvp.subtitle') }}</CardDescription>
+                </div>
+                <SearchInput v-model="searchQuery" :placeholder="t('rsvp.search') + '...'" class="w-64" />
+              </div>
+            </CardHeader>
+            <CardContent>
+              <DataTable
+                :items="filtered"
+                :columns="columns"
+                :is-loading="isLoading"
+                :empty-icon="CalendarCheck"
+                :empty-title="searchQuery ? t('rsvp.noMatching') : t('rsvp.noEvents')"
+                :empty-description="searchQuery ? '' : t('rsvp.noEventsDesc')"
+                item-name="events"
+              >
+                <template #cell-name="{ item }">
+                  <span class="font-medium">{{ item.name }}</span>
+                </template>
+                <template #cell-status="{ item }">
+                  <Badge variant="secondary" class="text-xs">{{ t('rsvp.' + item.status) !== 'rsvp.' + item.status ? t('rsvp.' + item.status) : item.status }}</Badge>
+                </template>
+                <template #cell-event_date="{ item }">
+                  <span class="text-sm text-muted-foreground">{{ item.event_date ? formatDateDDMMYYYY(item.event_date) : '—' }}</span>
+                </template>
+                <template #cell-actions="{ item }">
+                  <div class="flex items-center justify-end gap-1">
+                    <Button variant="ghost" size="icon" class="h-8 w-8" :title="t('rsvp.results')" @click="viewResults(item)">
+                      <BarChart3 class="h-4 w-4" />
+                    </Button>
+                    <Button v-if="auth.hasPermission('rsvp', 'write')" variant="ghost" size="icon" class="h-8 w-8" @click="editEvent(item)">
+                      <Pencil class="h-4 w-4" />
+                    </Button>
+                    <Button v-if="auth.hasPermission('rsvp', 'delete')" variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="openDeleteDialog(item)">
+                      <Trash2 class="h-4 w-4" />
+                    </Button>
+                  </div>
+                </template>
+                <template #empty-action>
+                  <Button v-if="!searchQuery && auth.hasPermission('rsvp', 'write')" variant="outline" size="sm" @click="createEvent">
+                    <Plus class="h-4 w-4 mr-2" />
+                    {{ t('rsvp.create') }}
+                  </Button>
+                </template>
+              </DataTable>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </ScrollArea>
+
+    <DeleteConfirmDialog
+      v-model:open="deleteDialogOpen"
+      :title="t('rsvp.deletePrompt')"
+      :item-name="toDelete?.name"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>

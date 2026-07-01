@@ -11,6 +11,7 @@ import (
 	"github.com/zerodha/fastglue"
 
 	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/pkg/whatsapp"
 )
 
 // ---------------------------------------------------------------------------
@@ -419,7 +420,17 @@ func (a *App) sendRSVPInviteTemplate(event *models.RSVPEvent, templateID *uuid.U
 	if a.WhatsApp == nil {
 		return
 	}
-	if _, err := a.WhatsApp.SendTemplateMessage(context.Background(), a.toWhatsAppAccount(&account), contact.PhoneNumber, template.Name, template.Language, nil); err != nil {
+	// Build template components the same way campaign/template sends do, and honor the
+	// account's delivery route (marketing-lite vs standard).
+	components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(nil, nil, nil, template.Buttons, template.HeaderType, "", "")
+	waAccount := a.toWhatsAppAccount(&account)
+	var err error
+	if models.ResolveTemplateDeliveryRoute(&account, &template) == models.TemplateDeliveryRouteMarketingMessagesLite {
+		_, err = a.WhatsApp.SendMarketingTemplateMessage(context.Background(), waAccount, contact.PhoneNumber, template.Name, template.Language, components)
+	} else {
+		_, err = a.WhatsApp.SendTemplateMessage(context.Background(), waAccount, contact.PhoneNumber, template.Name, template.Language, components)
+	}
+	if err != nil {
 		a.Log.Error("RSVP invite send failed", "error", err)
 	}
 }
