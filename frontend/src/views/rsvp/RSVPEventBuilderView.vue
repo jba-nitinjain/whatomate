@@ -130,6 +130,7 @@ async function createStarterFlow() {
       name: `RSVP flow – ${form.value.name || 'event'}`.slice(0, 90),
       whatsapp_account: form.value.whatsapp_account,
       description: 'Auto-generated starter RSVP flow',
+      trigger_keywords: form.value.keyword ? [form.value.keyword] : ['RSVP'],
       completion_message: 'Thank you! Your RSVP has been recorded.',
       enabled: true,
       steps: [

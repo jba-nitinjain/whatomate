@@ -12,7 +12,8 @@ import {
   Users,
   Edit3,
   ExternalLink,
-  Play
+  Play,
+  List
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -42,6 +43,7 @@ watch(() => props.initialMode, (newMode) => {
 const messageTypeIcons: Record<string, any> = {
   text: MessageSquare,
   buttons: MousePointerClick,
+  list: List,
   api_fetch: Globe,
   whatsapp_flow: MessageCircle,
   transfer: Users
