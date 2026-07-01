@@ -57,6 +57,7 @@ const (
 	ResourceFlowsWhatsApp   = "flows.whatsapp"
 	ResourceFlowsChatbot    = "flows.chatbot"
 	ResourceCampaigns       = "campaigns"
+	ResourceRSVP            = "rsvp"
 	ResourceChatbotKeywords = "chatbot.keywords"
 	ResourceChatbotAI       = "chatbot.ai"
 	ResourceChat            = "chat"
@@ -142,6 +143,13 @@ func DefaultPermissions() []Permission {
 		{Resource: ResourceCampaigns, Action: ActionWrite, Description: "Create and edit campaigns"},
 		{Resource: ResourceCampaigns, Action: ActionDelete, Description: "Delete campaigns"},
 		{Resource: ResourceCampaigns, Action: ActionExecute, Description: "Execute campaigns"},
+
+		// RSVP
+		{Resource: ResourceRSVP, Action: ActionRead, Description: "View RSVP events"},
+		{Resource: ResourceRSVP, Action: ActionWrite, Description: "Create and edit RSVP events"},
+		{Resource: ResourceRSVP, Action: ActionDelete, Description: "Delete RSVP events"},
+		{Resource: ResourceRSVP, Action: ActionExecute, Description: "Send invites/reminders and manage responses"},
+		{Resource: ResourceRSVP, Action: ActionExport, Description: "Export RSVP responses"},
 
 		// Chatbot Keywords
 		{Resource: ResourceChatbotKeywords, Action: ActionRead, Description: "View keyword rules"},
@@ -247,6 +255,7 @@ func SystemRolePermissions() map[string][]string {
 		"flows.chatbot:read", "flows.chatbot:write", "flows.chatbot:delete",
 		// Campaigns
 		"campaigns:read", "campaigns:write", "campaigns:delete", "campaigns:execute",
+		"rsvp:read", "rsvp:write", "rsvp:delete", "rsvp:execute", "rsvp:export",
 		// Chatbot
 		"chatbot.keywords:read", "chatbot.keywords:write", "chatbot.keywords:delete",
 		"chatbot.ai:read", "chatbot.ai:write",
@@ -276,6 +285,7 @@ func SystemRolePermissions() map[string][]string {
 	}
 
 	agentPermissions := []string{
+		"rsvp:read",
 		// Chat
 		"chat:read", "chat:write",
 		// Contacts (read only)
