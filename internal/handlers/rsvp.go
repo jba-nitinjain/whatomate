@@ -252,6 +252,9 @@ func (a *App) syncRSVPFlowKeyword(event *models.RSVPEvent) {
 	}
 	flow.TriggerKeywords = append(flow.TriggerKeywords, event.Keyword)
 	a.DB.Model(&flow).Update("trigger_keywords", flow.TriggerKeywords)
+	// Invalidate the chatbot flows cache so matchFlowTrigger sees the new keyword
+	// immediately (the cache TTL is 6h). Mirrors UpdateChatbotFlow's behavior.
+	a.InvalidateChatbotFlowsCache(event.OrganizationID)
 }
 
 func (a *App) ActivateRSVPEvent(r *fastglue.Request) error {
