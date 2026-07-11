@@ -859,8 +859,11 @@ async function saveFlow() {
 
     hasUnsavedChanges.value = false
     // Stay on page - don't navigate away
-  } catch (error) {
-    toast.error(t('common.failedSave', { resource: t('resources.flow') }))
+  } catch (error: any) {
+    // Surface the backend's specific validation reason (e.g. "step X points to
+    // unknown next_step Y") instead of a generic message, so the user can fix it.
+    const serverMsg = error?.response?.data?.message
+    toast.error(serverMsg || t('common.failedSave', { resource: t('resources.flow') }))
   } finally {
     isSaving.value = false
   }

@@ -780,7 +780,7 @@ func validateChatbotFlowSteps(steps []FlowStepRequest) error {
 		}
 		if step.MessageType == models.FlowStepTypeButtons {
 			replyMode := getInteractiveReplyMode(models.JSONB(step.InputConfig), len(step.Buttons))
-			if replyMode == "buttons" && len(step.Buttons) > 3 {
+			if replyMode == "button" && len(step.Buttons) > 3 {
 				return fmt.Errorf("step %q reply buttons are limited to 3 options", stepName)
 			}
 			if replyMode == "list" && len(step.Buttons) > 10 {
