@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { PageHeader, DataTable, type Column } from '@/components/shared'
 import { rsvpService } from '@/services/api'
-import { formatDateDDMMYYYY } from '@/lib/utils'
+import { formatDateTimeIST } from '@/lib/utils'
 import { BarChart3, Download } from 'lucide-vue-next'
 
 interface RSVPRow { id: string; phone_number: string; attendance: string; answers?: Record<string, unknown>; responded_at?: string; contact?: { profile_name?: string } }
@@ -23,7 +23,8 @@ let timer: number | undefined
 const cards = ['yes', 'no', 'maybe', 'pending', 'total']
 
 const columns = computed<Column<RSVPRow>[]>(() => [
-  { key: 'guest', label: t('rsvp.guest') },
+  { key: 'name', label: t('rsvp.name') },
+  { key: 'mobile', label: 'Mobile' },
   { key: 'attendance', label: t('rsvp.status') },
   { key: 'answers', label: t('rsvp.description') },
   { key: 'responded_at', label: t('rsvp.respondedAt') },
@@ -90,8 +91,11 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                 :empty-title="t('rsvp.noResponses')"
                 item-name="responses"
               >
-                <template #cell-guest="{ item }">
-                  <span class="font-medium">{{ item.contact?.profile_name || item.phone_number }}</span>
+                <template #cell-name="{ item }">
+                  <span class="font-medium">{{ item.contact?.profile_name || '—' }}</span>
+                </template>
+                <template #cell-mobile="{ item }">
+                  <span class="text-sm">{{ item.phone_number }}</span>
                 </template>
                 <template #cell-attendance="{ item }">
                   {{ t('rsvp.' + item.attendance) !== 'rsvp.' + item.attendance ? t('rsvp.' + item.attendance) : item.attendance }}
@@ -100,7 +104,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                   <span class="text-sm text-muted-foreground">{{ answerText(item) || '—' }}</span>
                 </template>
                 <template #cell-responded_at="{ item }">
-                  <span class="text-sm text-muted-foreground">{{ item.responded_at ? formatDateDDMMYYYY(item.responded_at) : '—' }}</span>
+                  <span class="text-sm text-muted-foreground">{{ item.responded_at ? formatDateTimeIST(item.responded_at) : '—' }}</span>
                 </template>
               </DataTable>
             </CardContent>

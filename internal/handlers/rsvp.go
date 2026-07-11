@@ -476,17 +476,22 @@ func (a *App) ExportRSVPResponses(r *fastglue.Request) error {
 	sheet := "Responses"
 	f.SetSheetName(f.GetSheetName(0), sheet)
 
-	headers := append([]string{"Phone", "Attendance", "Responded At"}, answerKeys...)
+	headers := append([]string{"Name", "Mobile", "Attendance", "Responded At (IST)"}, answerKeys...)
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(sheet, cell, h)
 	}
+	ist := time.FixedZone("IST", 5*3600+30*60) // UTC+5:30, no DST
 	for rIdx, row := range rows {
 		respondedAt := ""
 		if row.RespondedAt != nil {
-			respondedAt = row.RespondedAt.Format("02/01/2006") // dd/mm/yyyy
+			respondedAt = row.RespondedAt.In(ist).Format("02/01/2006 15:04") // dd/mm/yyyy HH:mm IST
 		}
-		vals := []interface{}{row.PhoneNumber, string(row.Attendance), respondedAt}
+		name := ""
+		if row.Contact != nil {
+			name = row.Contact.ProfileName
+		}
+		vals := []interface{}{name, row.PhoneNumber, string(row.Attendance), respondedAt}
 		for _, k := range answerKeys {
 			vals = append(vals, row.Answers[k])
 		}

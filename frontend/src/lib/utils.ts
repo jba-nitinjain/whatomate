@@ -94,3 +94,16 @@ export function formatDateDDMMYYYY(date: string | Date): string {
   const year = d.getFullYear()
   return `${day}/${month}/${year}`
 }
+
+/** Format a date as dd/mm/yyyy HH:mm in IST (Asia/Kolkata) for display. */
+export function formatDateTimeIST(date: string | Date): string {
+  const d = typeof date === 'string' ? new Date(date) : date
+  if (isNaN(d.getTime())) return ''
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).formatToParts(d)
+  const g = (t: string) => parts.find(p => p.type === t)?.value || ''
+  return `${g('day')}/${g('month')}/${g('year')} ${g('hour')}:${g('minute')}`
+}
