@@ -8,8 +8,8 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"time"
 
@@ -591,13 +591,37 @@ type SubscribeAppResponse struct {
 	Success bool `json:"success"`
 }
 
+// SubscribeAppOptions configures an optional per-WABA webhook override applied
+// when subscribing the app. When both fields are set, Meta registers a
+// WABA-specific callback URL and verify token (instead of relying on the
+// app-level webhook configuration) and immediately validates the callback with
+// a GET challenge carrying the verify token.
+type SubscribeAppOptions struct {
+	OverrideCallbackURI string
+	VerifyToken         string
+}
+
 // SubscribeApp subscribes the app to webhooks for the WhatsApp Business Account.
 // This is required after phone number registration to receive incoming messages.
+// When opts provides an override callback URI and verify token, the webhook is
+// wired per-WABA via the API; otherwise Meta falls back to the app-level webhook.
 // Calls POST /{api_version}/{waba_id}/subscribed_apps
-func (c *Client) SubscribeApp(ctx context.Context, account *Account) error {
+func (c *Client) SubscribeApp(ctx context.Context, account *Account, opts *SubscribeAppOptions) error {
 	url := fmt.Sprintf("%s/%s/%s/subscribed_apps", c.getBaseURL(), account.APIVersion, account.BusinessID)
 
-	respBody, err := c.doRequest(ctx, http.MethodPost, url, nil, account.AccessToken)
+	var body interface{}
+	if opts != nil {
+		callback := strings.TrimSpace(opts.OverrideCallbackURI)
+		verifyToken := strings.TrimSpace(opts.VerifyToken)
+		if callback != "" && verifyToken != "" {
+			body = map[string]string{
+				"override_callback_uri": callback,
+				"verify_token":          verifyToken,
+			}
+		}
+	}
+
+	respBody, err := c.doRequest(ctx, http.MethodPost, url, body, account.AccessToken)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe app to webhooks: %w", err)
 	}

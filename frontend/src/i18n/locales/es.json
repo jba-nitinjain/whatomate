@@ -1157,7 +1157,7 @@
     "subscribeError": "Error al suscribirse a webhooks",
     "testNumber": "Número de prueba",
     "webhookConfig": "Configuración del webhook",
-    "webhookConfigDesc": "Configure esta URL en su Consola de desarrollador de Meta como la URL de callback del webhook:",
+    "webhookConfigDesc": "La acción Suscribir configura esta URL de callback y el token de verificación de cada cuenta en Meta automáticamente — sin configuración manual en la Consola de desarrollador. Se muestra aquí como referencia:",
     "verifyToken": "Token de verificación",
     "configured": "Configurado",
     "missing": "Faltante",

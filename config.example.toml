@@ -82,6 +82,17 @@ trust_proxy = false            # Trust X-Forwarded-For / X-Real-IP headers (set 
 # piper_model = "/opt/piper/models/en_US-lessac-medium.onnx"
 # opusenc_binary = "opusenc"  # defaults to finding in PATH
 
+# WhatsApp Cloud API
+[whatsapp]
+# api_version = "v21.0"                 # Default Graph API version
+# base_url = "https://graph.facebook.com"
+# webhook_verify_token = ""             # Optional global GET-challenge token (per-account tokens also accepted)
+# Reject incoming webhooks that cannot be signature-verified because no app
+# secret is configured for the target account (or platform Meta app). Webhooks
+# for accounts that DO have an app secret are always signature-enforced. Set true
+# in production to block spoofed events once app secrets are configured.
+require_webhook_signature = false
+
 # WhatsApp Calling / WebRTC
 [calling]
 max_call_duration = 300       # Max call duration in seconds

@@ -381,9 +381,11 @@ func (a *App) SubscribeApp(r *fastglue.Request) error {
 		return nil
 	}
 
-	// Subscribe the app to webhooks
+	// Subscribe the app to webhooks, wiring the per-WABA callback + verify token
+	// so Meta delivers events to this deployment without a manual dashboard step.
 	ctx := context.Background()
-	if err := a.WhatsApp.SubscribeApp(ctx, a.toWhatsAppAccount(account)); err != nil {
+	opts := a.subscribeAppOverrideOptions(account)
+	if err := a.WhatsApp.SubscribeApp(ctx, a.toWhatsAppAccount(account), opts); err != nil {
 		a.Log.Error("Failed to subscribe app to webhooks", "error", err, "account", account.Name)
 		return r.SendEnvelope(map[string]interface{}{
 			"success": false,

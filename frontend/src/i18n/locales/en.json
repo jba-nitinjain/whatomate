@@ -1208,7 +1208,7 @@
     "subscribeError": "Failed to subscribe to webhooks",
     "testNumber": "Test Number",
     "webhookConfig": "Webhook Configuration",
-    "webhookConfigDesc": "Configure this URL in your Meta Developer Console as the webhook callback URL:",
+    "webhookConfigDesc": "The Subscribe action wires this callback URL and each account's verify token into Meta automatically — no manual Developer Console setup needed. Shown here for reference:",
     "verifyToken": "Verify Token",
     "configured": "Configured",
     "missing": "Missing",

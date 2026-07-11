@@ -189,28 +189,28 @@ type WebhookPayload struct {
 					} `json:"context,omitempty"`
 				} `json:"messages,omitempty"`
 				Statuses []WebhookStatus `json:"statuses,omitempty"`
-			Calls []struct {
-				ID        string `json:"id"`
-				From      string `json:"from"`
-				To        string `json:"to"`
-				Timestamp string `json:"timestamp"`
-				Type      string `json:"type"`
-				Event     string `json:"event"`
-				Direction string `json:"direction,omitempty"`
-				Session   *struct {
-					SDPType string `json:"sdp_type"`
-					SDP     string `json:"sdp"`
-				} `json:"session,omitempty"`
-				Error *struct {
-					Code    int    `json:"code"`
-					Message string `json:"message"`
-				} `json:"error,omitempty"`
-				// Terminate webhook fields
-				Status    json.RawMessage `json:"status,omitempty"`
-				StartTime string          `json:"start_time,omitempty"`
-				EndTime   string          `json:"end_time,omitempty"`
-				Duration  int             `json:"duration,omitempty"`
-			} `json:"calls,omitempty"`
+				Calls    []struct {
+					ID        string `json:"id"`
+					From      string `json:"from"`
+					To        string `json:"to"`
+					Timestamp string `json:"timestamp"`
+					Type      string `json:"type"`
+					Event     string `json:"event"`
+					Direction string `json:"direction,omitempty"`
+					Session   *struct {
+						SDPType string `json:"sdp_type"`
+						SDP     string `json:"sdp"`
+					} `json:"session,omitempty"`
+					Error *struct {
+						Code    int    `json:"code"`
+						Message string `json:"message"`
+					} `json:"error,omitempty"`
+					// Terminate webhook fields
+					Status    json.RawMessage `json:"status,omitempty"`
+					StartTime string          `json:"start_time,omitempty"`
+					EndTime   string          `json:"end_time,omitempty"`
+					Duration  int             `json:"duration,omitempty"`
+				} `json:"calls,omitempty"`
 			} `json:"value"`
 			Field string `json:"field"`
 		} `json:"changes"`
@@ -228,8 +228,25 @@ func (a *App) WebhookHandler(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid payload", nil, "")
 	}
 
-	// Track if signature has been verified (only need to verify once per request)
-	signatureVerified := false
+	// Verify the webhook signature up-front, before dispatching ANY event
+	// (messages, statuses, template updates, calls). Meta signs every payload
+	// with HMAC-SHA256 of the raw body using the Meta app secret. Accounts that
+	// have an app secret are always enforced; when no secret is available the
+	// require_webhook_signature flag decides between reject and warn-and-process.
+	verifyPhoneID := webhookPayloadPhoneNumberID(&payload)
+	appSecret := a.resolveWebhookAppSecret(verifyPhoneID)
+	switch {
+	case appSecret != "":
+		if len(signature) == 0 || !verifyWebhookSignature(body, signature, []byte(appSecret)) {
+			a.Log.Warn("Rejected webhook: missing or invalid signature", "phone_id", verifyPhoneID)
+			return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Invalid signature", nil, "")
+		}
+	case a.Config.WhatsApp.RequireWebhookSignature:
+		a.Log.Warn("Rejected webhook: no app secret configured to verify signature", "phone_id", verifyPhoneID)
+		return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Signature verification required", nil, "")
+	default:
+		a.Log.Warn("Processing webhook without signature verification; configure the Meta app secret to enable it", "phone_id", verifyPhoneID)
+	}
 
 	// Process each entry
 	for _, entry := range payload.Entry {
@@ -282,19 +299,6 @@ func (a *App) WebhookHandler(r *fastglue.Request) error {
 			}
 
 			phoneNumberID := change.Value.Metadata.PhoneNumberID
-
-			// Verify webhook signature on first message processing (uses cached account)
-			if !signatureVerified && len(signature) > 0 && phoneNumberID != "" {
-				account, err := a.getWhatsAppAccountCached(phoneNumberID)
-				if err == nil && account.AppSecret != "" {
-					if !verifyWebhookSignature(body, signature, []byte(account.AppSecret)) {
-						a.Log.Warn("Invalid webhook signature", "phone_id", phoneNumberID)
-						return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Invalid signature", nil, "")
-					}
-					a.Log.Debug("Webhook signature verified successfully")
-				}
-				signatureVerified = true
-			}
 
 			// Process messages
 			for _, msg := range change.Value.Messages {
@@ -560,6 +564,37 @@ func (a *App) processTemplateStatusUpdate(wabaID, event, templateName, templateL
 
 // verifyWebhookSignature verifies the X-Hub-Signature-256 header from Meta.
 // The signature is HMAC-SHA256 of the request body using the App Secret.
+// webhookPayloadPhoneNumberID returns the first business phone number ID found
+// in the payload, used to resolve which account's app secret verifies the signature.
+func webhookPayloadPhoneNumberID(payload *WebhookPayload) string {
+	for _, entry := range payload.Entry {
+		for _, change := range entry.Changes {
+			if id := strings.TrimSpace(change.Value.Metadata.PhoneNumberID); id != "" {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+// resolveWebhookAppSecret returns the app secret used to verify a webhook
+// signature: the target account's secret when available, otherwise the
+// platform-level Meta app secret (the same secret Meta signs with, shared by all
+// numbers under one Meta app). Empty when neither is configured.
+func (a *App) resolveWebhookAppSecret(phoneNumberID string) string {
+	if phoneNumberID != "" {
+		if account, err := a.getWhatsAppAccountCached(phoneNumberID); err == nil {
+			if s := strings.TrimSpace(account.AppSecret); s != "" {
+				return s
+			}
+		}
+	}
+	if stored, err := a.getStoredMetaOnboardingConfig(); err == nil && stored != nil {
+		return strings.TrimSpace(stored.MetaAppSecret)
+	}
+	return ""
+}
+
 func verifyWebhookSignature(body, signature, appSecret []byte) bool {
 	// Signature format: "sha256=<hex_signature>"
 	prefix := []byte("sha256=")

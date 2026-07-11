@@ -406,6 +406,33 @@ func (a *App) importOnboardingAssets(session *models.WhatsAppOnboardingSession, 
 	return a.DB.Save(session).Error
 }
 
+// subscribeAppOverrideOptions builds the per-WABA webhook override applied when
+// subscribing the app, so Meta registers this deployment's callback URL and the
+// account's verify token via the API instead of relying on a manual app-level
+// webhook setup. Returns nil (app-level fallback) when the callback URL or
+// verify token is unavailable.
+func (a *App) subscribeAppOverrideOptions(account *models.WhatsAppAccount) *whatsapp.SubscribeAppOptions {
+	if account == nil {
+		return nil
+	}
+	verifyToken := strings.TrimSpace(account.WebhookVerifyToken)
+	if verifyToken == "" {
+		return nil
+	}
+	metaCfg, err := a.getMetaOnboardingConfig()
+	if err != nil || metaCfg == nil {
+		return nil
+	}
+	callback := strings.TrimSpace(metaCfg.CallbackURL)
+	if callback == "" {
+		return nil
+	}
+	return &whatsapp.SubscribeAppOptions{
+		OverrideCallbackURI: callback,
+		VerifyToken:         verifyToken,
+	}
+}
+
 func toString(value any) string {
 	if s, ok := value.(string); ok {
 		return s

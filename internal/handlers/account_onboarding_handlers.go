@@ -430,12 +430,13 @@ func (a *App) SubscribeOnboardingWebhooks(r *fastglue.Request) error {
 		return nil
 	}
 
-	waAccount, _, err := a.resolveOnboardingWhatsAppAccount(session)
+	waAccount, accountModel, err := a.resolveOnboardingWhatsAppAccount(session)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 
-	err = a.WhatsApp.SubscribeApp(context.Background(), waAccount)
+	opts := a.subscribeAppOverrideOptions(accountModel)
+	err = a.WhatsApp.SubscribeApp(context.Background(), waAccount, opts)
 	if err != nil && !isAlreadySubscribedError(err) {
 		a.setOnboardingFailure(session, onboardingStepWebhooks, err)
 		_ = a.DB.Save(session).Error
