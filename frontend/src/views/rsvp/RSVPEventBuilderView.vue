@@ -156,18 +156,37 @@ async function createStarterFlow() {
           step_name: 'attendance',
           message: 'Will you attend our event?',
           message_type: 'buttons',
+          input_type: 'button',
           buttons: [
             { id: 'yes', title: 'Yes' },
             { id: 'no', title: 'No' },
             { id: 'maybe', title: 'Maybe' }
           ],
           store_as: 'attendance',
-          conditional_next: { yes: 'headcount', maybe: 'headcount', default: '' }
+          // Not attending ends the flow; yes/maybe continue to collect details.
+          conditional_next: { yes: 'mobile', maybe: 'mobile', no: '__complete__', default: '' }
+        },
+        {
+          step_name: 'mobile',
+          message: 'Please share your mobile number.',
+          message_type: 'text',
+          input_type: 'phone',
+          store_as: 'mobile',
+          next_step: 'spouse_mobile'
+        },
+        {
+          step_name: 'spouse_mobile',
+          message: 'Spouse mobile number? (type "-" to skip)',
+          message_type: 'text',
+          input_type: 'phone',
+          store_as: 'spouse_mobile',
+          next_step: 'headcount'
         },
         {
           step_name: 'headcount',
           message: 'How many people will attend (including you)?',
           message_type: 'text',
+          input_type: 'number',
           store_as: 'headcount'
         }
       ]
@@ -177,6 +196,8 @@ async function createStarterFlow() {
     const newId = created?.id || created?.flow?.id || created?.flow_id
     await loadFlows()
     if (newId) form.value.flow_id = newId
+    // Wire the duplicate check to the spouse mobile the starter flow collects.
+    if (!form.value.spouse_mobile_field) form.value.spouse_mobile_field = 'spouse_mobile'
     toast.success(t('rsvp.starterFlowCreated'))
   } catch (e: any) {
     toast.error(getErrorMessage(e, t('rsvp.starterFlowFailed')))
