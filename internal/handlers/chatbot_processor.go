@@ -869,8 +869,28 @@ func (a *App) startFlow(account *models.WhatsAppAccount, session *models.Chatbot
 		a.seedPendingRSVPResponse(account.OrganizationID, event, contact.ID, contact.PhoneNumber)
 	}
 
-	// Send initial message if configured
-	if flow.InitialMessage != "" {
+	// Inject the rich initial message (media + buttons) as a synthetic first step
+	// so it runs through the normal step engine (send + routing + RSVP capture).
+	a.injectInitialRichStep(flow)
+
+	if len(flow.Steps) > 0 && flow.Steps[0].StepName == initialRichStepName {
+		initialStep := &flow.Steps[0]
+		session.CurrentStep = initialStep.StepName
+		a.DB.Model(session).Update("current_step", initialStep.StepName)
+		a.sendStepWithSkipCheck(account, session, contact, initialStep, flow, nil)
+		return
+	}
+
+	// Plain initial message (optionally with a media header), then the first step.
+	if flow.InitialMediaType != "" && flow.InitialMediaURL != "" {
+		if _, err := a.WhatsApp.SendMediaByLink(context.Background(), a.toWhatsAppAccount(account), contact.PhoneNumber, flow.InitialMediaType, flow.InitialMediaURL, flow.InitialMessage); err != nil {
+			a.Log.Error("Failed to send initial media message", "error", err, "contact", contact.PhoneNumber)
+			if flow.InitialMessage != "" {
+				_ = a.sendAndSaveTextMessage(account, contact, flow.InitialMessage)
+			}
+		}
+		a.logSessionMessage(session.ID, models.DirectionOutgoing, flow.InitialMessage, "flow_start")
+	} else if flow.InitialMessage != "" {
 		if err := a.sendAndSaveTextMessage(account, contact, flow.InitialMessage); err != nil {
 			a.Log.Error("Failed to send flow initial message", "error", err, "contact", contact.PhoneNumber)
 		}
@@ -891,6 +911,45 @@ func (a *App) startFlow(account *models.WhatsAppAccount, session *models.Chatbot
 	}
 }
 
+const initialRichStepName = "__initial__"
+
+// buildInitialRichStep returns a synthetic first step representing a flow's rich
+// initial message (optional media header + reply buttons), or nil when the flow
+// has no initial buttons configured.
+func buildInitialRichStep(flow *models.ChatbotFlow) *models.ChatbotFlowStep {
+	if len(flow.InitialButtons) == 0 {
+		return nil
+	}
+	inputCfg := models.JSONB{"reply_mode": "buttons"}
+	if flow.InitialMediaType != "" && flow.InitialMediaURL != "" {
+		inputCfg["media_type"] = flow.InitialMediaType
+		inputCfg["media_url"] = flow.InitialMediaURL
+	}
+	return &models.ChatbotFlowStep{
+		StepName:        initialRichStepName,
+		StepOrder:       0,
+		Message:         flow.InitialMessage,
+		MessageType:     models.FlowStepTypeButtons,
+		Buttons:         flow.InitialButtons,
+		InputConfig:     inputCfg,
+		StoreAs:         flow.InitialStoreAs,
+		ConditionalNext: flow.InitialConditionalNext,
+		MaxRetries:      3,
+		RetryOnInvalid:  true,
+	}
+}
+
+// injectInitialRichStep prepends the synthetic initial step (idempotently) so the
+// flow engine treats the rich initial message as the first interactive step.
+func (a *App) injectInitialRichStep(flow *models.ChatbotFlow) {
+	if len(flow.Steps) > 0 && flow.Steps[0].StepName == initialRichStepName {
+		return
+	}
+	if s := buildInitialRichStep(flow); s != nil {
+		flow.Steps = append([]models.ChatbotFlowStep{*s}, flow.Steps...)
+	}
+}
+
 // processFlowResponse handles user response within a flow
 func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *models.ChatbotSession, contact *models.Contact, userInput string, buttonID string, flowResponseData map[string]interface{}) {
 	// Load the current flow from cache
@@ -900,6 +959,9 @@ func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *mode
 		a.exitFlow(session)
 		return
 	}
+	// Mirror startFlow: the rich initial message is a synthetic first step, so it
+	// must be present here for "__initial__" routing and step lookup to resolve.
+	a.injectInitialRichStep(flow)
 
 	// Check for cancel keywords
 	userInputLower := strings.ToLower(userInput)

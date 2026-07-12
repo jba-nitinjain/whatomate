@@ -158,6 +158,16 @@ type ChatbotFlow struct {
 	CancelKeywords     StringArray `gorm:"type:jsonb" json:"cancel_keywords"`
 	PanelConfig        JSONB       `gorm:"type:jsonb;default:'{}'" json:"panel_config"` // Contact info panel configuration
 
+	// Rich initial message: optional media header + reply buttons that route into
+	// steps. When InitialButtons is non-empty the initial message is delivered as
+	// the flow's first interactive step; otherwise InitialMessage sends as text
+	// (optionally with a media header) for backward compatibility.
+	InitialMediaType       string     `gorm:"size:20" json:"initial_media_type"` // image, video, document
+	InitialMediaURL        string     `gorm:"type:text" json:"initial_media_url"`
+	InitialButtons         JSONBArray `gorm:"type:jsonb;default:'[]'" json:"initial_buttons"`         // [{id, title}]
+	InitialConditionalNext JSONB      `gorm:"type:jsonb;default:'{}'" json:"initial_conditional_next"` // buttonId -> step name / __complete__
+	InitialStoreAs         string     `gorm:"size:100" json:"initial_store_as"`                       // SessionData key for the tapped value
+
 	// Relations
 	Organization    *Organization     `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
 	InitialTemplate *Template         `gorm:"foreignKey:InitialTemplateID" json:"initial_template,omitempty"`

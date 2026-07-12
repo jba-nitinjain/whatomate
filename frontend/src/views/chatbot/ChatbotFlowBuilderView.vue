@@ -277,7 +277,13 @@ const formData = ref({
   completion_config: { ...defaultWebhookConfig },
   panel_config: { sections: [] } as PanelConfig,
   enabled: true,
-  steps: [] as FlowStep[]
+  steps: [] as FlowStep[],
+  // Rich initial message (optional media header + reply buttons)
+  initial_media_type: '',
+  initial_media_url: '',
+  initial_buttons: [] as { id: string; title: string }[],
+  initial_conditional_next: {} as Record<string, string>,
+  initial_store_as: '',
 })
 
 const selectedStep = computed(() => {
@@ -447,6 +453,11 @@ async function loadFlow(id: string) {
       whatsapp_account: flow.whatsapp_account || flow.WhatsAppAccount || '',
       trigger_keywords: (flow.trigger_keywords || flow.TriggerKeywords || []).join(', '),
       initial_message: flow.initial_message || flow.InitialMessage || '',
+      initial_media_type: flow.initial_media_type || flow.InitialMediaType || '',
+      initial_media_url: flow.initial_media_url || flow.InitialMediaURL || '',
+      initial_buttons: flow.initial_buttons || flow.InitialButtons || [],
+      initial_conditional_next: flow.initial_conditional_next || flow.InitialConditionalNext || {},
+      initial_store_as: flow.initial_store_as || flow.InitialStoreAs || '',
       completion_message: flow.completion_message || flow.CompletionMessage || '',
       on_complete_action: flow.on_complete_action || flow.OnCompleteAction || 'none',
       completion_config: {
@@ -786,6 +797,31 @@ function setHeaderMediaType(v: string | number | bigint | Record<string, any> | 
   selectedStep.value.input_config.media_type = (typeof v === 'string' && v !== 'none') ? v : ''
 }
 
+// --- Rich initial message (Flow Settings) ---
+function setInitialMediaType(v: string | number | bigint | Record<string, any> | null) {
+  formData.value.initial_media_type = (typeof v === 'string' && v !== 'none') ? v : ''
+}
+function addInitialButton() {
+  if (formData.value.initial_buttons.length >= 3) return
+  formData.value.initial_buttons.push({ id: `opt_${formData.value.initial_buttons.length + 1}`, title: '' })
+}
+function removeInitialButton(idx: number) {
+  const btn = formData.value.initial_buttons[idx]
+  formData.value.initial_buttons.splice(idx, 1)
+  if (btn?.id) delete formData.value.initial_conditional_next[btn.id]
+}
+function getInitialButtonNext(buttonId: string): string {
+  return formData.value.initial_conditional_next[buttonId] || '__default__'
+}
+function setInitialButtonNext(buttonId: string, target: string | number | bigint | Record<string, any> | null) {
+  if (typeof target !== 'string') return
+  if (target && target !== '__default__') {
+    formData.value.initial_conditional_next[buttonId] = target
+  } else {
+    delete formData.value.initial_conditional_next[buttonId]
+  }
+}
+
 // API header helpers
 function addHeader() {
   if (!selectedStep.value) return
@@ -946,6 +982,11 @@ async function saveFlow() {
       whatsapp_account: formData.value.whatsapp_account,
       trigger_keywords: formData.value.trigger_keywords.split(',').map(k => k.trim()).filter(Boolean),
       initial_message: formData.value.initial_message,
+      initial_media_type: formData.value.initial_media_type,
+      initial_media_url: formData.value.initial_media_url,
+      initial_buttons: formData.value.initial_buttons,
+      initial_conditional_next: formData.value.initial_conditional_next,
+      initial_store_as: formData.value.initial_store_as,
       completion_message: formData.value.completion_message,
       on_complete_action: formData.value.on_complete_action,
       completion_config: formData.value.on_complete_action === 'webhook' ? formData.value.completion_config : {},
@@ -1223,6 +1264,65 @@ function confirmCancel() {
                 class="text-xs"
               />
               <p class="text-[10px] text-muted-foreground">{{ $t('flowBuilder.initialMessageHint') }}</p>
+            </div>
+
+            <!-- Initial Message rich: media header + reply buttons -->
+            <div class="space-y-2">
+              <div class="grid grid-cols-3 gap-2">
+                <div class="space-y-1">
+                  <Label class="text-xs">{{ $t('flowBuilder.headerMedia') }}</Label>
+                  <Select :model-value="formData.initial_media_type || 'none'" @update:model-value="setInitialMediaType">
+                    <SelectTrigger class="h-7 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{{ $t('flowBuilder.headerMediaNone') }}</SelectItem>
+                      <SelectItem value="image">{{ $t('flowBuilder.headerImage') }}</SelectItem>
+                      <SelectItem value="video">{{ $t('flowBuilder.headerVideo') }}</SelectItem>
+                      <SelectItem value="document">{{ $t('flowBuilder.headerDocument') }}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div v-if="formData.initial_media_type" class="space-y-1 col-span-2">
+                  <Label class="text-xs">{{ $t('flowBuilder.headerMediaUrl') }}</Label>
+                  <Input v-model="formData.initial_media_url" :placeholder="$t('flowBuilder.headerMediaUrlPlaceholder')" class="h-7 text-xs" />
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between">
+                <Label class="text-xs">{{ $t('flowBuilder.initialButtons') }} ({{ formData.initial_buttons.length }}/3)</Label>
+                <Button variant="outline" size="sm" class="h-6 text-xs" @click="addInitialButton" :disabled="formData.initial_buttons.length >= 3">
+                  <Reply class="h-3 w-3 mr-1" />
+                  {{ $t('flowBuilder.replyButton') }}
+                </Button>
+              </div>
+              <div v-for="(btn, idx) in formData.initial_buttons" :key="idx" class="p-2 border rounded-md bg-muted/30 space-y-2">
+                <div class="flex items-center gap-2">
+                  <Input v-model="btn.title" :placeholder="$t('flowBuilder.buttonTitle')" class="h-7 flex-1 text-xs" maxlength="20" />
+                  <Button variant="ghost" size="icon" class="h-7 w-7" @click="removeInitialButton(idx)">
+                    <Trash2 class="h-3 w-3 text-destructive" />
+                  </Button>
+                </div>
+                <Input v-model="btn.id" :placeholder="$t('flowBuilder.buttonIdPlaceholder')" class="h-7 text-xs" />
+                <div class="flex items-center gap-2">
+                  <Label class="text-xs text-muted-foreground whitespace-nowrap">{{ $t('flowBuilder.goTo') }}:</Label>
+                  <Select :model-value="getInitialButtonNext(btn.id)" @update:model-value="setInitialButtonNext(btn.id, $event)">
+                    <SelectTrigger class="h-7 text-xs flex-1">
+                      <SelectValue :placeholder="$t('flowBuilder.nextStepSequential')" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default__">{{ $t('flowBuilder.nextStepSequential') }}</SelectItem>
+                      <SelectItem value="__complete__">{{ $t('flowBuilder.endFlow') }}</SelectItem>
+                      <SelectItem v-for="step in stepsWithNames" :key="`init-goto-${step.step_name}`" :value="step.step_name">
+                        {{ step.step_name }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div v-if="formData.initial_buttons.length" class="space-y-1">
+                <Label class="text-xs">{{ $t('flowBuilder.initialStoreAs') }}</Label>
+                <Input v-model="formData.initial_store_as" :placeholder="$t('flowBuilder.initialStoreAsPlaceholder')" class="h-7 text-xs" />
+                <p class="text-[10px] text-muted-foreground">{{ $t('flowBuilder.initialStoreAsHint') }}</p>
+              </div>
             </div>
 
             <Separator />

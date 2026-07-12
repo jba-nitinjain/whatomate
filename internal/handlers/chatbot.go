@@ -806,6 +806,31 @@ func validateChatbotFlowSteps(steps []FlowStepRequest) error {
 	return nil
 }
 
+// validateInitialRichMessage checks the initial message's reply buttons and their
+// routing targets. Terminal sentinels and existing step names are valid targets.
+func validateInitialRichMessage(buttons []interface{}, conditional map[string]interface{}, steps []FlowStepRequest) error {
+	if len(buttons) == 0 {
+		return nil
+	}
+	if len(buttons) > 3 {
+		return fmt.Errorf("the initial message allows at most 3 buttons")
+	}
+	names := make(map[string]bool, len(steps))
+	for _, s := range steps {
+		names[strings.TrimSpace(s.StepName)] = true
+	}
+	for _, raw := range conditional {
+		target, ok := raw.(string)
+		if !ok || target == "" || target == "__default__" || target == "__complete__" || target == "__end__" {
+			continue
+		}
+		if len(steps) > 0 && !names[target] {
+			return fmt.Errorf("initial message button routes to unknown step %q", target)
+		}
+	}
+	return nil
+}
+
 // CreateChatbotFlow creates a new chatbot flow
 func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 	orgID, userID, err := a.getOrgAndUserID(r)
@@ -829,6 +854,12 @@ func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 		PanelConfig       map[string]interface{} `json:"panel_config"`
 		Enabled           *bool                  `json:"enabled"`
 		Steps             []FlowStepRequest      `json:"steps"`
+
+		InitialMediaType       string                 `json:"initial_media_type"`
+		InitialMediaURL        string                 `json:"initial_media_url"`
+		InitialButtons         []interface{}          `json:"initial_buttons"`
+		InitialConditionalNext map[string]interface{} `json:"initial_conditional_next"`
+		InitialStoreAs         string                 `json:"initial_store_as"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
@@ -839,6 +870,9 @@ func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Name is required", nil, "")
 	}
 	if err := a.validateChatbotFlowRequest(orgID, req.WhatsAppAccount, req.Steps); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
+	if err := validateInitialRichMessage(req.InitialButtons, req.InitialConditionalNext, req.Steps); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 
@@ -859,6 +893,12 @@ func (a *App) CreateChatbotFlow(r *fastglue.Request) error {
 		CompletionConfig:  models.JSONB(req.CompletionConfig),
 		PanelConfig:       models.JSONB(req.PanelConfig),
 		IsEnabled:         req.Enabled == nil || *req.Enabled,
+
+		InitialMediaType:       strings.TrimSpace(req.InitialMediaType),
+		InitialMediaURL:        strings.TrimSpace(req.InitialMediaURL),
+		InitialButtons:         models.JSONBArray(req.InitialButtons),
+		InitialConditionalNext: models.JSONB(req.InitialConditionalNext),
+		InitialStoreAs:         strings.TrimSpace(req.InitialStoreAs),
 	}
 
 	if err := tx.Create(&flow).Error; err != nil {
@@ -984,10 +1024,26 @@ func (a *App) UpdateChatbotFlow(r *fastglue.Request) error {
 		PanelConfig       map[string]interface{} `json:"panel_config"`
 		Enabled           *bool                  `json:"enabled"`
 		Steps             *[]FlowStepRequest     `json:"steps"`
+
+		InitialMediaType       *string                `json:"initial_media_type"`
+		InitialMediaURL        *string                `json:"initial_media_url"`
+		InitialButtons         *[]interface{}         `json:"initial_buttons"`
+		InitialConditionalNext map[string]interface{} `json:"initial_conditional_next"`
+		InitialStoreAs         *string                `json:"initial_store_as"`
 	}
 
 	if err := json.Unmarshal(r.RequestCtx.PostBody(), &req); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
+	}
+
+	if req.InitialButtons != nil {
+		var steps []FlowStepRequest
+		if req.Steps != nil {
+			steps = *req.Steps
+		}
+		if err := validateInitialRichMessage(*req.InitialButtons, req.InitialConditionalNext, steps); err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+		}
 	}
 
 	tx := a.DB.Begin()
@@ -1026,6 +1082,21 @@ func (a *App) UpdateChatbotFlow(r *fastglue.Request) error {
 	}
 	if req.Enabled != nil {
 		flow.IsEnabled = *req.Enabled
+	}
+	if req.InitialMediaType != nil {
+		flow.InitialMediaType = strings.TrimSpace(*req.InitialMediaType)
+	}
+	if req.InitialMediaURL != nil {
+		flow.InitialMediaURL = strings.TrimSpace(*req.InitialMediaURL)
+	}
+	if req.InitialButtons != nil {
+		flow.InitialButtons = models.JSONBArray(*req.InitialButtons)
+	}
+	if req.InitialConditionalNext != nil {
+		flow.InitialConditionalNext = models.JSONB(req.InitialConditionalNext)
+	}
+	if req.InitialStoreAs != nil {
+		flow.InitialStoreAs = strings.TrimSpace(*req.InitialStoreAs)
 	}
 
 	if err := tx.Save(flow).Error; err != nil {

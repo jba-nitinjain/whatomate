@@ -205,6 +205,41 @@ func (c *Client) sendInteractivePayload(ctx context.Context, account *Account, p
 	return messageID, nil
 }
 
+// SendMediaByLink sends an image/video/document message by public URL (no upload
+// step) with an optional caption. mediaType is "image", "video" or "document".
+func (c *Client) SendMediaByLink(ctx context.Context, account *Account, phoneNumber, mediaType, link, caption string) (string, error) {
+	mt := strings.ToLower(strings.TrimSpace(mediaType))
+	switch mt {
+	case "image", "video", "document":
+	default:
+		return "", fmt.Errorf("unsupported media type %q", mediaType)
+	}
+	media := map[string]interface{}{"link": link}
+	if strings.TrimSpace(caption) != "" {
+		media["caption"] = caption
+	}
+	payload := map[string]interface{}{
+		"messaging_product": "whatsapp",
+		"recipient_type":    "individual",
+		"to":                phoneNumber,
+		"type":              mt,
+		mt:                  media,
+	}
+	apiURL := c.buildMessagesURL(account)
+	respBody, err := c.doRequest(ctx, "POST", apiURL, payload, account.AccessToken)
+	if err != nil {
+		return "", fmt.Errorf("failed to send media message: %w", err)
+	}
+	var resp MetaAPIResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return "", fmt.Errorf("failed to parse media response: %w", err)
+	}
+	if len(resp.Messages) == 0 {
+		return "", fmt.Errorf("no message ID in media response")
+	}
+	return resp.Messages[0].ID, nil
+}
+
 // SendCTAURLButton sends an interactive message with a CTA URL button
 // This opens a URL when clicked instead of sending a reply
 func (c *Client) SendCTAURLButton(ctx context.Context, account *Account, phoneNumber, bodyText, buttonText, url string) (string, error) {
