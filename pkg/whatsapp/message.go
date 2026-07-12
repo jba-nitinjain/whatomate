@@ -66,6 +66,13 @@ func (c *Client) SendInteractiveButtons(ctx context.Context, account *Account, p
 
 // SendInteractiveReplyButtons sends an explicit WhatsApp reply-button message.
 func (c *Client) SendInteractiveReplyButtons(ctx context.Context, account *Account, phoneNumber, bodyText string, buttons []Button) (string, error) {
+	return c.SendInteractiveReplyButtonsWithHeader(ctx, account, phoneNumber, bodyText, buttons, "", "")
+}
+
+// SendInteractiveReplyButtonsWithHeader sends a reply-button message with an
+// optional media header (image/video/document) shown above the body, so the flow
+// can present a poster/clip and tappable buttons in a single message.
+func (c *Client) SendInteractiveReplyButtonsWithHeader(ctx context.Context, account *Account, phoneNumber, bodyText string, buttons []Button, headerType, headerLink string) (string, error) {
 	if len(buttons) == 0 {
 		return "", fmt.Errorf("at least one button is required")
 	}
@@ -96,6 +103,18 @@ func (c *Client) SendInteractiveReplyButtons(ctx context.Context, account *Accou
 		"action": map[string]interface{}{
 			"buttons": buttonsList,
 		},
+	}
+	if link := strings.TrimSpace(headerLink); link != "" {
+		ht := strings.ToLower(strings.TrimSpace(headerType))
+		switch ht {
+		case "image", "video", "document":
+		default:
+			ht = "image"
+		}
+		interactive["header"] = map[string]interface{}{
+			"type": ht,
+			ht:     map[string]interface{}{"link": link},
+		}
 	}
 	return c.sendInteractivePayload(ctx, account, phoneNumber, interactive, len(buttons))
 }

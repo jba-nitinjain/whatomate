@@ -760,6 +760,13 @@ function onStepNameChange(newName: string | number | bigint | Record<string, any
   }
 }
 
+// setHeaderMediaType sets the optional media header (image/video/document) shown
+// above a reply-button message; 'none' clears it.
+function setHeaderMediaType(v: string | number | bigint | Record<string, any> | null) {
+  if (!selectedStep.value) return
+  selectedStep.value.input_config.media_type = (typeof v === 'string' && v !== 'none') ? v : ''
+}
+
 // API header helpers
 function addHeader() {
   if (!selectedStep.value) return
@@ -1527,6 +1534,27 @@ function confirmCancel() {
                       <div class="space-y-1">
                         <Label class="text-xs">{{ $t('flowBuilder.listSectionTitle') }}</Label>
                         <Input v-model="selectedStep.input_config.list_section_title" class="h-7 text-xs" maxlength="24" />
+                      </div>
+                    </div>
+                    <div v-if="selectedStep.input_config.reply_mode !== 'list'" class="grid grid-cols-3 gap-2">
+                      <div class="space-y-1">
+                        <Label class="text-xs">{{ $t('flowBuilder.headerMedia') }}</Label>
+                        <Select
+                          :model-value="selectedStep.input_config.media_type || 'none'"
+                          @update:model-value="setHeaderMediaType"
+                        >
+                          <SelectTrigger class="h-7 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">{{ $t('flowBuilder.headerMediaNone') }}</SelectItem>
+                            <SelectItem value="image">{{ $t('flowBuilder.headerImage') }}</SelectItem>
+                            <SelectItem value="video">{{ $t('flowBuilder.headerVideo') }}</SelectItem>
+                            <SelectItem value="document">{{ $t('flowBuilder.headerDocument') }}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div v-if="selectedStep.input_config.media_type" class="space-y-1 col-span-2">
+                        <Label class="text-xs">{{ $t('flowBuilder.headerMediaUrl') }}</Label>
+                        <Input v-model="selectedStep.input_config.media_url" :placeholder="$t('flowBuilder.headerMediaUrlPlaceholder')" class="h-7 text-xs" />
                       </div>
                     </div>
                     <div class="space-y-2">

@@ -664,6 +664,8 @@ func (a *App) sendAndSaveInteractiveButtons(account *models.WhatsAppAccount, con
 				ButtonText:      buttonText,
 				ListSectionText: sectionText,
 				Buttons:         waButtons,
+				HeaderMediaType: getStringConfig(config, "media_type", ""),
+				HeaderMediaLink: getStringConfig(config, "media_url", ""),
 			}, ChatbotSendOptions()); err != nil {
 				return err
 			}

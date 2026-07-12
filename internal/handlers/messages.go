@@ -54,6 +54,10 @@ type OutgoingMessageRequest struct {
 	ButtonText      string            // For CTA URL button or list picker label
 	ListSectionText string            // For list messages
 	URL             string            // For CTA URL button
+	// Optional media header (image/video/document) shown above a reply-button
+	// message, e.g. an event poster with Attending/Not-Attending buttons.
+	HeaderMediaType string // "image" | "video" | "document"
+	HeaderMediaLink string // Public URL to the header media
 
 	// Template messages
 	Template                    *models.Template
@@ -189,6 +193,9 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 			case "list":
 				return a.WhatsApp.SendInteractiveList(sendCtx, waAccount, req.Contact.PhoneNumber, req.BodyText, req.ButtonText, req.ListSectionText, req.Buttons)
 			case "button":
+				if strings.TrimSpace(req.HeaderMediaLink) != "" {
+					return a.WhatsApp.SendInteractiveReplyButtonsWithHeader(sendCtx, waAccount, req.Contact.PhoneNumber, req.BodyText, req.Buttons, req.HeaderMediaType, req.HeaderMediaLink)
+				}
 				return a.WhatsApp.SendInteractiveReplyButtons(sendCtx, waAccount, req.Contact.PhoneNumber, req.BodyText, req.Buttons)
 			default:
 				return a.WhatsApp.SendInteractiveButtons(sendCtx, waAccount, req.Contact.PhoneNumber, req.BodyText, req.Buttons)
