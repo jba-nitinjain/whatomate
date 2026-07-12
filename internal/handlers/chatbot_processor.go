@@ -1328,6 +1328,26 @@ func (a *App) closeSession(session *models.ChatbotSession) {
 
 // sendStepWithSkipCheck checks if a step should be skipped and sends the appropriate step message
 // It takes the full flow to find next steps when skipping
+// stepHasReplyButtons reports whether a step presents tappable reply buttons (as
+// opposed to URL/phone CTA buttons or none). Such a step must wait for the user's
+// tap and must never auto-advance.
+func stepHasReplyButtons(step *models.ChatbotFlowStep) bool {
+	if step.MessageType != models.FlowStepTypeButtons {
+		return false
+	}
+	for _, raw := range step.Buttons {
+		b, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		switch t, _ := b["type"].(string); t {
+		case "", "reply":
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) sendStepWithSkipCheck(account *models.WhatsAppAccount, session *models.ChatbotSession, contact *models.Contact, step *models.ChatbotFlowStep, flow *models.ChatbotFlow, skippedSteps map[string]bool) {
 	// Prevent infinite loops
 	if skippedSteps == nil {
@@ -1394,8 +1414,11 @@ func (a *App) sendStepWithSkipCheck(account *models.WhatsAppAccount, session *mo
 	// Not skipping - send the step message normally
 	a.sendStepMessage(account, session, contact, step)
 
-	// If input type is "none", automatically advance to next step without waiting for user input
-	if step.InputType == models.InputTypeNone {
+	// If input type is "none", automatically advance to next step without waiting
+	// for user input. A step presenting reply buttons ALWAYS waits for the tap,
+	// even when InputType was left as "none" (e.g. saved without an explicit type),
+	// otherwise the flow cascades past unanswered questions to completion.
+	if step.InputType == models.InputTypeNone && !stepHasReplyButtons(step) {
 
 		// Find next step
 		nextStepName := step.NextStep

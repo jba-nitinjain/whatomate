@@ -611,6 +611,9 @@ function setMessageType(type: string) {
   }
   selectedStep.value.message_type = type
   if (type === 'buttons') {
+    // Reply-button steps must wait for the tap; mark them as button input so the
+    // engine never auto-advances past an unanswered question.
+    selectedStep.value.input_type = 'button'
     selectedStep.value.input_config = { ...selectedStep.value.input_config, reply_mode: 'buttons' }
   }
 }
