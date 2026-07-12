@@ -395,6 +395,28 @@ func (a *App) UpdateRSVPResponse(r *fastglue.Request) error {
 	return r.SendEnvelope(resp)
 }
 
+// DeleteRSVPResponse removes a received response from an event.
+func (a *App) DeleteRSVPResponse(r *fastglue.Request) error {
+	orgID, err := a.getOrgID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+	eventID, err := parsePathUUID(r, "id", "RSVP event")
+	if err != nil {
+		return nil
+	}
+	respID, err := parsePathUUID(r, "responseId", "RSVP response")
+	if err != nil {
+		return nil
+	}
+	if err := a.DB.Where("id = ? AND organization_id = ? AND rsvp_event_id = ?", respID, orgID, eventID).
+		Delete(&models.RSVPResponse{}).Error; err != nil {
+		a.Log.Error("Failed to delete rsvp response", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete RSVP response", nil, "")
+	}
+	return r.SendEnvelope(map[string]interface{}{"deleted": true})
+}
+
 func (a *App) GetRSVPTally(r *fastglue.Request) error {
 	orgID, err := a.getOrgID(r)
 	if err != nil {

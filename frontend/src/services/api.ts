@@ -1659,6 +1659,8 @@ export const rsvpService = {
     responseId: string,
     data: { attendance?: string; answers?: Record<string, unknown>; notes?: string },
   ) => api.put(`/rsvp-events/${id}/responses/${responseId}`, data),
+  deleteResponse: (id: string, responseId: string) =>
+    api.delete(`/rsvp-events/${id}/responses/${responseId}`),
   tally: (id: string) => api.get(`/rsvp-events/${id}/tally`),
   sendInvites: (id: string, contactIds: string[]) =>
     api.post(`/rsvp-events/${id}/send-invites`, { contact_ids: contactIds }),

@@ -725,6 +725,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/rsvp-events/{id}/close", app.CloseRSVPEvent)
 	g.GET("/api/rsvp-events/{id}/responses", app.ListRSVPResponses)
 	g.PUT("/api/rsvp-events/{id}/responses/{responseId}", app.UpdateRSVPResponse)
+	g.DELETE("/api/rsvp-events/{id}/responses/{responseId}", app.DeleteRSVPResponse)
 	g.GET("/api/rsvp-events/{id}/tally", app.GetRSVPTally)
 	g.POST("/api/rsvp-events/{id}/send-invites", app.SendRSVPInvites)
 	g.GET("/api/rsvp-events/{id}/export", app.ExportRSVPResponses)

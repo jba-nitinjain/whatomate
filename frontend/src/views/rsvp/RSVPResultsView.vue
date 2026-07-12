@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from '@/components/ui/dialog'
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
@@ -18,7 +18,7 @@ import {
 import { PageHeader, DataTable, type Column } from '@/components/shared'
 import { rsvpService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
-import { BarChart3, Download, Pencil } from 'lucide-vue-next'
+import { BarChart3, Download, Pencil, Trash2 } from 'lucide-vue-next'
 
 interface RSVPRow { id: string; phone_number: string; attendance: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; contact?: { profile_name?: string } }
 
@@ -33,11 +33,26 @@ let timer: number | undefined
 const cards = ['yes', 'no', 'maybe', 'pending', 'total']
 const attendanceOptions = ['pending', 'yes', 'no', 'maybe']
 
+// Union of answer keys across all responses (first-seen order), one column each.
+const answerKeys = computed<string[]>(() => {
+  const seen: string[] = []
+  for (const row of responses.value) {
+    for (const k of Object.keys(row.answers || {})) {
+      if (!k.startsWith('_') && !seen.includes(k)) seen.push(k)
+    }
+  }
+  return seen
+})
+
+function prettyKey(k: string): string {
+  return k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+}
+
 const columns = computed<Column<RSVPRow>[]>(() => [
   { key: 'name', label: t('rsvp.name') },
   { key: 'mobile', label: 'Mobile' },
   { key: 'attendance', label: t('rsvp.status') },
-  { key: 'answers', label: t('rsvp.description') },
+  ...answerKeys.value.map(k => ({ key: `answers.${k}`, label: prettyKey(k) })),
   { key: 'notes', label: t('rsvp.notes') },
   { key: 'responded_at', label: t('rsvp.respondedAt') },
   { key: 'actions', label: '' },
@@ -84,6 +99,32 @@ async function saveEdit() {
   }
 }
 
+// --- Delete dialog state ---
+const deleteOpen = ref(false)
+const isDeleting = ref(false)
+const deletingRow = ref<RSVPRow | null>(null)
+
+function openDelete(row: RSVPRow) {
+  deletingRow.value = row
+  deleteOpen.value = true
+}
+
+async function confirmDelete() {
+  if (!deletingRow.value) return
+  isDeleting.value = true
+  try {
+    await rsvpService.deleteResponse(id, deletingRow.value.id)
+    toast.success(t('rsvp.responseDeleted'))
+    deleteOpen.value = false
+    deletingRow.value = null
+    await Promise.all([loadTally(), loadResponses()])
+  } catch (error: any) {
+    toast.error(error?.response?.data?.message || t('rsvp.responseDeleteFailed'))
+  } finally {
+    isDeleting.value = false
+  }
+}
+
 async function loadTally() {
   const r = await rsvpService.tally(id)
   tally.value = (r.data as any).data || r.data
@@ -92,13 +133,6 @@ async function loadResponses() {
   const r = await rsvpService.responses(id)
   const d = (r.data as any).data || r.data
   responses.value = d.responses || []
-}
-function answerText(row: RSVPRow): string {
-  const a = row.answers || {}
-  return Object.entries(a)
-    .filter(([k]) => !k.startsWith('_'))
-    .map(([k, v]) => `${k}: ${v}`)
-    .join(', ')
 }
 function attendanceLabel(v: string): string {
   const key = 'rsvp.' + v
@@ -158,9 +192,6 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                 <template #cell-attendance="{ item }">
                   {{ attendanceLabel(item.attendance) }}
                 </template>
-                <template #cell-answers="{ item }">
-                  <span class="text-sm text-muted-foreground">{{ answerText(item) || '—' }}</span>
-                </template>
                 <template #cell-notes="{ item }">
                   <span class="text-sm text-muted-foreground">{{ item.notes || '—' }}</span>
                 </template>
@@ -168,9 +199,14 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                   <span class="text-sm text-muted-foreground">{{ item.responded_at ? formatDateTimeIST(item.responded_at) : '—' }}</span>
                 </template>
                 <template #cell-actions="{ item }">
-                  <Button variant="ghost" size="icon" class="h-8 w-8" @click="openEdit(item)" :title="t('rsvp.editResponse')">
-                    <Pencil class="h-4 w-4" />
-                  </Button>
+                  <div class="flex items-center justify-end gap-1">
+                    <Button variant="ghost" size="icon" class="h-8 w-8" @click="openEdit(item)" :title="t('rsvp.editResponse')">
+                      <Pencil class="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="openDelete(item)" :title="t('rsvp.deleteResponse')">
+                      <Trash2 class="h-4 w-4" />
+                    </Button>
+                  </div>
                 </template>
               </DataTable>
             </CardContent>
@@ -200,7 +236,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
           <div v-if="editAnswers.length" class="space-y-2">
             <Label>{{ t('rsvp.answersLabel') }}</Label>
             <div v-for="(ans, idx) in editAnswers" :key="idx" class="flex items-center gap-2">
-              <span class="text-sm text-muted-foreground w-32 truncate">{{ ans.key }}</span>
+              <span class="text-sm text-muted-foreground w-32 truncate">{{ prettyKey(ans.key) }}</span>
               <Input v-model="editAnswers[idx].value" class="h-8 flex-1" />
             </div>
           </div>
@@ -213,6 +249,23 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
         <DialogFooter>
           <Button variant="outline" @click="editOpen = false" :disabled="isSaving">{{ t('common.cancel') }}</Button>
           <Button @click="saveEdit" :disabled="isSaving">{{ isSaving ? t('common.saving') + '...' : t('common.save') }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="deleteOpen">
+      <DialogContent class="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{{ t('rsvp.deleteResponse') }}</DialogTitle>
+          <DialogDescription>
+            {{ t('rsvp.deleteResponseConfirm', { name: deletingRow?.contact?.profile_name || deletingRow?.phone_number || '' }) }}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" @click="deleteOpen = false" :disabled="isDeleting">{{ t('common.cancel') }}</Button>
+          <Button variant="destructive" @click="confirmDelete" :disabled="isDeleting">
+            {{ t('common.delete') }}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

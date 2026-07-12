@@ -4,13 +4,15 @@
     <meta charset="UTF-8">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Whatomate - WhatsApp Business Platform">
-    <title>Whatomate</title>
+    <meta name="description" content="WMate - WhatsApp Business Platform">
+    <title>WMate</title>
     <script>
       (function() {
         var mode = localStorage.getItem('color-mode');
-        var isDark = mode === 'dark' || (mode === 'system' || !mode) && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        if (isDark) document.documentElement.classList.add('dark');
+        // Default to the bright/light theme when nothing is saved; only go dark
+        // on an explicit 'dark' choice or 'system' when the OS prefers dark.
+        var isDark = mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.add(isDark ? 'dark' : 'light');
       })();
     </script>
   </head>

@@ -580,7 +580,7 @@ async function finalizeOnboarding() {
                 <AlertCircle class="h-4 w-4" />
                 <AlertTitle>Preferred path</AlertTitle>
                 <AlertDescription>
-                  Launch Meta embedded signup first. If the popup finishes but Whatomate does not capture all values automatically, paste the returned code or access token and IDs below.
+                  Launch Meta embedded signup first. If the popup finishes but WMate does not capture all values automatically, paste the returned code or access token and IDs below.
                 </AlertDescription>
               </Alert>
 
@@ -665,7 +665,7 @@ async function finalizeOnboarding() {
               <div>
                 <h3 class="text-sm font-semibold text-white light:text-gray-900">3. Asset import</h3>
                 <p class="mt-1 text-sm text-white/60 light:text-gray-600">
-                  Whatomate creates or updates the tenant account record from the imported Meta values.
+                  WMate creates or updates the tenant account record from the imported Meta values.
                 </p>
               </div>
               <Badge variant="outline" :class="statusVariant(stepStatus('asset_import'))">
@@ -825,7 +825,7 @@ async function finalizeOnboarding() {
               <div>
                 <h3 class="text-sm font-semibold text-white light:text-gray-900">6. Connection test</h3>
                 <p class="mt-1 text-sm text-white/60 light:text-gray-600">
-                  Run the final readiness check. Whatomate validates the account, refreshes phone status, and computes the final onboarding state.
+                  Run the final readiness check. WMate validates the account, refreshes phone status, and computes the final onboarding state.
                 </p>
               </div>
               <Badge variant="outline" :class="statusVariant(stepStatus('connection_test'))">
