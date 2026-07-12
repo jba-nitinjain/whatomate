@@ -71,6 +71,7 @@ type RSVPResponse struct {
 	PhoneNumber    string         `gorm:"size:50;not null" json:"phone_number"`
 	Attendance     RSVPAttendance `gorm:"size:20;default:'pending'" json:"attendance"`
 	Answers        JSONB          `gorm:"type:jsonb;default:'{}'" json:"answers"`
+	Notes          string         `gorm:"type:text" json:"notes"`
 	RespondedAt    *time.Time     `json:"responded_at,omitempty"`
 
 	Event   *RSVPEvent `gorm:"foreignKey:RSVPEventID" json:"event,omitempty"`

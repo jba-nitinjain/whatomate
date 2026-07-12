@@ -532,14 +532,20 @@ function confirmDeleteStep(index: number) {
 function deleteStep() {
   if (stepToDeleteIndex.value === null) return
 
+  const deletedName = formData.value.steps[stepToDeleteIndex.value]?.step_name
   formData.value.steps.splice(stepToDeleteIndex.value, 1)
-  // Reorder remaining steps
+  // Reorder remaining steps, tracking auto-name renumbering so references follow.
+  const renames: Record<string, string> = {}
   formData.value.steps.forEach((step, idx) => {
     step.step_order = idx + 1
     if (step.step_name.startsWith('step_')) {
-      step.step_name = `step_${idx + 1}`
+      const newName = `step_${idx + 1}`
+      if (newName !== step.step_name) renames[step.step_name] = newName
+      step.step_name = newName
     }
   })
+  if (deletedName) removeStepReferences(deletedName)
+  applyStepRenames(renames)
 
   // Adjust selection
   if (selectedStepIndex.value !== null) {
@@ -678,6 +684,82 @@ function setButtonNextStep(buttonId: string, targetStep: string | number | bigin
   }
 }
 
+// --- Step reference integrity -------------------------------------------------
+// Routing (next_step, conditional_next values, button.next_step) stores target
+// step NAMES. Renaming or deleting a step must update these references, else the
+// backend rejects the save with "points to unknown ... target".
+
+// applyStepRenames rewrites every reference from an old step name to a new one.
+function applyStepRenames(renames: Record<string, string>) {
+  if (Object.keys(renames).length === 0) return
+  const remap = (name?: string) => (name && renames[name]) ? renames[name] : name
+  for (const step of formData.value.steps) {
+    step.next_step = remap(step.next_step) || ''
+    if (step.conditional_next) {
+      for (const key of Object.keys(step.conditional_next)) {
+        step.conditional_next[key] = remap(step.conditional_next[key]) || ''
+      }
+    }
+    if (Array.isArray(step.buttons)) {
+      for (const btn of step.buttons as any[]) {
+        if (btn.next_step) btn.next_step = remap(btn.next_step)
+      }
+    }
+  }
+}
+
+// removeStepReferences clears any reference pointing to a deleted step name.
+function removeStepReferences(name: string) {
+  if (!name) return
+  for (const step of formData.value.steps) {
+    if (step.next_step === name) step.next_step = ''
+    if (step.conditional_next) {
+      for (const key of Object.keys(step.conditional_next)) {
+        if (step.conditional_next[key] === name) delete step.conditional_next[key]
+      }
+    }
+    if (Array.isArray(step.buttons)) {
+      for (const btn of step.buttons as any[]) {
+        if (btn.next_step === name) btn.next_step = ''
+      }
+    }
+  }
+}
+
+// pruneDanglingReferences strips any routing target that no longer matches an
+// existing step. Safety net so a stale reference can never block a save.
+function pruneDanglingReferences() {
+  const names = new Set(
+    formData.value.steps.map(s => (s.step_name || '').trim()).filter(Boolean),
+  )
+  const valid = (t?: string) => !t || t === '__default__' || names.has(t)
+  for (const step of formData.value.steps) {
+    if (!valid(step.next_step)) step.next_step = ''
+    if (step.conditional_next) {
+      for (const key of Object.keys(step.conditional_next)) {
+        if (!valid(step.conditional_next[key])) delete step.conditional_next[key]
+      }
+    }
+    if (Array.isArray(step.buttons)) {
+      for (const btn of step.buttons as any[]) {
+        if (btn.next_step && !valid(btn.next_step)) btn.next_step = ''
+      }
+    }
+  }
+}
+
+// onStepNameChange renames the selected step and propagates the rename to every
+// reference so branching stays intact.
+function onStepNameChange(newName: string | number | bigint | Record<string, any> | null) {
+  if (!selectedStep.value || typeof newName !== 'string') return
+  const oldName = selectedStep.value.step_name
+  selectedStep.value.step_name = newName
+  const trimmed = newName.trim()
+  if (oldName && trimmed && oldName !== trimmed) {
+    applyStepRenames({ [oldName]: trimmed })
+  }
+}
+
 // API header helpers
 function addHeader() {
   if (!selectedStep.value) return
@@ -786,6 +868,10 @@ async function saveFlow() {
     toast.error(t('flowBuilder.addAtLeastOneStep'))
     return
   }
+
+  // Drop any routing target that points at a step that no longer exists (e.g.
+  // after a rename/delete), so a stale reference can't fail the save.
+  pruneDanglingReferences()
 
   // Validate button titles and URLs
   for (let i = 0; i < formData.value.steps.length; i++) {
@@ -1379,7 +1465,7 @@ function confirmCancel() {
             <div class="space-y-3">
               <div class="space-y-1.5">
                 <Label class="text-xs">{{ $t('flowBuilder.stepName') }}</Label>
-                <Input v-model="selectedStep.step_name" :placeholder="$t('flowBuilder.stepNamePlaceholder')" class="h-8" />
+                <Input :model-value="selectedStep.step_name" @update:model-value="onStepNameChange" :placeholder="$t('flowBuilder.stepNamePlaceholder')" class="h-8" />
               </div>
               <div class="space-y-1.5">
                 <Label class="text-xs">{{ $t('flowBuilder.storeResponseAs') }}</Label>

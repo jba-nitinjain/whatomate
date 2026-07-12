@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -327,6 +328,71 @@ func (a *App) ListRSVPResponses(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list responses", nil, "")
 	}
 	return r.SendEnvelope(map[string]interface{}{"responses": rows, "total": total, "page": pg.Page, "limit": pg.Limit})
+}
+
+type rsvpResponseUpdateRequest struct {
+	Attendance *string                `json:"attendance"`
+	Answers    map[string]interface{} `json:"answers"`
+	Notes      *string                `json:"notes"`
+}
+
+func isValidRSVPAttendance(v string) bool {
+	switch models.RSVPAttendance(v) {
+	case models.RSVPAttendancePending, models.RSVPAttendanceYes, models.RSVPAttendanceNo, models.RSVPAttendanceMaybe:
+		return true
+	}
+	return false
+}
+
+// UpdateRSVPResponse edits an existing received response (attendance, answers, notes).
+func (a *App) UpdateRSVPResponse(r *fastglue.Request) error {
+	orgID, err := a.getOrgID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+	eventID, err := parsePathUUID(r, "id", "RSVP event")
+	if err != nil {
+		return nil
+	}
+	respID, err := parsePathUUID(r, "responseId", "RSVP response")
+	if err != nil {
+		return nil
+	}
+
+	var resp models.RSVPResponse
+	if err := a.DB.Where("id = ? AND organization_id = ? AND rsvp_event_id = ?", respID, orgID, eventID).
+		First(&resp).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "RSVP response not found", nil, "")
+	}
+
+	var req rsvpResponseUpdateRequest
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
+	}
+
+	if req.Attendance != nil {
+		if !isValidRSVPAttendance(*req.Attendance) {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "attendance must be pending, yes, no, or maybe", nil, "")
+		}
+		resp.Attendance = models.RSVPAttendance(*req.Attendance)
+		// Stamp responded_at the first time a real answer is recorded manually.
+		if resp.Attendance != models.RSVPAttendancePending && resp.RespondedAt == nil {
+			now := time.Now().UTC()
+			resp.RespondedAt = &now
+		}
+	}
+	if req.Answers != nil {
+		resp.Answers = models.JSONB(req.Answers)
+	}
+	if req.Notes != nil {
+		resp.Notes = strings.TrimSpace(*req.Notes)
+	}
+
+	if err := a.DB.Save(&resp).Error; err != nil {
+		a.Log.Error("Failed to update rsvp response", "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update RSVP response", nil, "")
+	}
+	return r.SendEnvelope(resp)
 }
 
 func (a *App) GetRSVPTally(r *fastglue.Request) error {
