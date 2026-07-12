@@ -154,40 +154,36 @@ async function createStarterFlow() {
       steps: [
         {
           step_name: 'attendance',
-          message: 'Will you attend our event?',
+          message: 'Will you be attending?',
           message_type: 'buttons',
           input_type: 'button',
           buttons: [
-            { id: 'yes', title: 'Yes' },
-            { id: 'no', title: 'No' },
-            { id: 'maybe', title: 'Maybe' }
+            { id: 'yes', title: 'Attending' },
+            { id: 'no', title: 'Not Attending' }
           ],
           store_as: 'attendance',
-          // Not attending ends the flow; yes/maybe continue to collect details.
-          conditional_next: { yes: 'mobile', maybe: 'mobile', no: '__complete__', default: '' }
+          // Self attendance needs no mobile (we already have the sender's number).
+          conditional_next: { yes: 'spouse_attendance', no: 'spouse_attendance', default: '' }
         },
         {
-          step_name: 'mobile',
-          message: 'Please share your mobile number.',
-          message_type: 'text',
-          input_type: 'phone',
-          store_as: 'mobile',
-          next_step: 'spouse_mobile'
+          step_name: 'spouse_attendance',
+          message: 'Will your spouse be attending?',
+          message_type: 'buttons',
+          input_type: 'button',
+          buttons: [
+            { id: 'yes', title: 'Attending' },
+            { id: 'no', title: 'Not Attending' }
+          ],
+          store_as: 'spouse_attendance',
+          // Only collect the spouse mobile when the spouse is attending.
+          conditional_next: { yes: 'spouse_mobile', no: '__complete__', default: '' }
         },
         {
           step_name: 'spouse_mobile',
-          message: 'Spouse mobile number? (type "-" to skip)',
+          message: "Please share your spouse's mobile number.",
           message_type: 'text',
           input_type: 'phone',
-          store_as: 'spouse_mobile',
-          next_step: 'headcount'
-        },
-        {
-          step_name: 'headcount',
-          message: 'How many people will attend (including you)?',
-          message_type: 'text',
-          input_type: 'number',
-          store_as: 'headcount'
+          store_as: 'spouse_mobile'
         }
       ]
     }
