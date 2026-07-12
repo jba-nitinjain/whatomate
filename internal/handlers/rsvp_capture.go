@@ -69,7 +69,19 @@ func (a *App) rsvpEventForFlow(orgID, flowID uuid.UUID) *models.RSVPEvent {
 // No-op if a row already exists (does not overwrite an answered row).
 func (a *App) seedPendingRSVPResponse(orgID uuid.UUID, event *models.RSVPEvent, contactID uuid.UUID, phone string) {
 	var existing models.RSVPResponse
-	if err := a.DB.Where("rsvp_event_id = ? AND contact_id = ?", event.ID, contactID).First(&existing).Error; err == nil {
+	// Unscoped so a previously deleted row is found and revived rather than
+	// colliding with the unique (event, contact) index on create.
+	if err := a.DB.Unscoped().Where("rsvp_event_id = ? AND contact_id = ?", event.ID, contactID).First(&existing).Error; err == nil {
+		if existing.DeletedAt.Valid {
+			a.DB.Unscoped().Model(&models.RSVPResponse{}).Where("id = ?", existing.ID).
+				Updates(map[string]interface{}{
+					"deleted_at":   nil,
+					"attendance":   models.RSVPAttendancePending,
+					"answers":      models.JSONB{},
+					"phone_number": phone,
+					"responded_at": nil,
+				})
+		}
 		return
 	}
 	_ = a.DB.Create(&models.RSVPResponse{
@@ -136,8 +148,10 @@ func (a *App) finalizeRSVPFromSession(session *models.ChatbotSession) {
 		"attendance":   attendance,
 		"responded_at": now,
 	}
-	// Upsert: update existing (pending) row, else create.
-	res := a.DB.Model(&models.RSVPResponse{}).
+	updates["deleted_at"] = nil // revive a soft-deleted row rather than colliding on create
+	// Upsert: update existing (pending or soft-deleted) row, else create. Unscoped
+	// so a previously deleted row for this contact is reused.
+	res := a.DB.Unscoped().Model(&models.RSVPResponse{}).
 		Where("rsvp_event_id = ? AND contact_id = ?", event.ID, session.ContactID).
 		Updates(updates)
 	if res.Error == nil && res.RowsAffected == 0 {

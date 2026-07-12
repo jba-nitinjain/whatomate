@@ -413,7 +413,9 @@ func (a *App) DeleteRSVPResponse(r *fastglue.Request) error {
 	if err != nil {
 		return nil
 	}
-	if err := a.DB.Where("id = ? AND organization_id = ? AND rsvp_event_id = ?", respID, orgID, eventID).
+	// Hard delete so the unique (event, contact) slot is freed and the guest can
+	// RSVP again — a soft delete would leave the row blocking re-submission.
+	if err := a.DB.Unscoped().Where("id = ? AND organization_id = ? AND rsvp_event_id = ?", respID, orgID, eventID).
 		Delete(&models.RSVPResponse{}).Error; err != nil {
 		a.Log.Error("Failed to delete rsvp response", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete RSVP response", nil, "")
