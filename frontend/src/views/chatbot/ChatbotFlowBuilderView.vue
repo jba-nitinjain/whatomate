@@ -800,6 +800,35 @@ function setHeaderMediaType(v: string | number | bigint | Record<string, any> | 
   selectedStep.value.input_config.media_type = (typeof v === 'string' && v !== 'none') ? v : ''
 }
 
+// pickAndUploadMedia opens a file picker, uploads the chosen file, and calls back
+// with the hosted public URL (usable as a WhatsApp media header link).
+function pickAndUploadMedia(onUrl: (url: string) => void) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'image/*,video/*,application/pdf'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    try {
+      const res = await chatbotService.uploadFlowMedia(file)
+      const url = (res.data as any)?.data?.media_url || (res.data as any)?.media_url
+      if (url) {
+        onUrl(url)
+        toast.success(t('flowBuilder.mediaUploaded'))
+      }
+    } catch (error: any) {
+      toast.error(error?.response?.data?.message || t('flowBuilder.mediaUploadFailed'))
+    }
+  }
+  input.click()
+}
+function uploadStepMedia() {
+  pickAndUploadMedia(u => { if (selectedStep.value) selectedStep.value.input_config.media_url = u })
+}
+function uploadInitialMedia() {
+  pickAndUploadMedia(u => { formData.value.initial_media_url = u })
+}
+
 // --- Rich initial message (Flow Settings) ---
 function setInitialMediaType(v: string | number | bigint | Record<string, any> | null) {
   formData.value.initial_media_type = (typeof v === 'string' && v !== 'none') ? v : ''
@@ -1286,7 +1315,10 @@ function confirmCancel() {
                 </div>
                 <div v-if="formData.initial_media_type" class="space-y-1 col-span-2">
                   <Label class="text-xs">{{ $t('flowBuilder.headerMediaUrl') }}</Label>
-                  <Input v-model="formData.initial_media_url" :placeholder="$t('flowBuilder.headerMediaUrlPlaceholder')" class="h-7 text-xs" />
+                  <div class="flex gap-1">
+                    <Input v-model="formData.initial_media_url" :placeholder="$t('flowBuilder.headerMediaUrlPlaceholder')" class="h-7 text-xs flex-1" />
+                    <Button variant="outline" size="sm" class="h-7 text-xs" @click="uploadInitialMedia">{{ $t('flowBuilder.upload') }}</Button>
+                  </div>
                 </div>
               </div>
 
@@ -1685,7 +1717,10 @@ function confirmCancel() {
                       </div>
                       <div v-if="selectedStep.input_config.media_type" class="space-y-1 col-span-2">
                         <Label class="text-xs">{{ $t('flowBuilder.headerMediaUrl') }}</Label>
-                        <Input v-model="selectedStep.input_config.media_url" :placeholder="$t('flowBuilder.headerMediaUrlPlaceholder')" class="h-7 text-xs" />
+                        <div class="flex gap-1">
+                          <Input v-model="selectedStep.input_config.media_url" :placeholder="$t('flowBuilder.headerMediaUrlPlaceholder')" class="h-7 text-xs flex-1" />
+                          <Button variant="outline" size="sm" class="h-7 text-xs" @click="uploadStepMedia">{{ $t('flowBuilder.upload') }}</Button>
+                        </div>
                       </div>
                     </div>
                     <div class="space-y-2">

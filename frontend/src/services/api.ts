@@ -742,6 +742,13 @@ export const chatbotService = {
   getFlow: (id: string) => api.get(`/chatbot/flows/${id}`),
   createFlow: (data: any) => api.post("/chatbot/flows", data),
   updateFlow: (id: string, data: any) => api.put(`/chatbot/flows/${id}`, data),
+  uploadFlowMedia: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api.post("/flow-media/upload", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
   deleteFlow: (id: string) => api.delete(`/chatbot/flows/${id}`),
 
   // AI Contexts

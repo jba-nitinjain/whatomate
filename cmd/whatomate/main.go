@@ -545,6 +545,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/webhook", app.WebhookVerify)
 	g.POST("/api/webhook", app.WebhookHandler)
 	g.GET("/public/campaigns/{id}/media/{filename}", app.ServePublicCampaignMedia)
+	g.GET("/public/flow-media/{filename}", app.ServePublicFlowMedia)
 
 	// WebSocket route (auth via message-based flow after upgrade)
 	g.GET("/ws", app.WebSocketHandler)
@@ -702,6 +703,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/templates/sync", app.SyncTemplates)
 	g.POST("/api/templates/{id}/publish", app.SubmitTemplate)
 	g.POST("/api/templates/upload-media", app.UploadTemplateMedia)
+	g.POST("/api/flow-media/upload", app.UploadFlowMedia)
 
 	// WhatsApp Flows
 	g.GET("/api/flows", app.ListFlows)
