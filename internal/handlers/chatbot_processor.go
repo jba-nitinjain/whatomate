@@ -1071,10 +1071,12 @@ func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *mode
 		}
 	}
 
-	// Auto-validate button responses when step expects button/select input
-	// Only validate if InputType is button/select, or if buttons are configured and user clicked a button
+	// Auto-validate button responses. Any step presenting reply buttons must be
+	// answered by tapping (or typing the exact button title) — a stray typed
+	// message (e.g. a trigger keyword) is rejected and the step is re-prompted,
+	// regardless of the step's configured InputType.
 	shouldValidateButtons := len(currentStep.Buttons) > 0 &&
-		(currentStep.InputType == models.InputTypeButton || currentStep.InputType == models.InputTypeSelect || buttonID != "")
+		(stepHasReplyButtons(currentStep) || currentStep.InputType == models.InputTypeButton || currentStep.InputType == models.InputTypeSelect || buttonID != "")
 
 	if shouldValidateButtons {
 		isValidButton := false
