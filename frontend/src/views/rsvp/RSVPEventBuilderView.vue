@@ -19,7 +19,8 @@ const id = computed(() => route.params.id as string | undefined)
 const form = ref<any>({
   name: '', description: '', keyword: '', event_date: '', rsvp_close_at: '',
   whatsapp_account: '', flow_id: '', template_id: '', reminder_enabled: false,
-  reminder_at: '', reminder_template_id: ''
+  reminder_at: '', reminder_template_id: '',
+  spouse_mobile_field: '', duplicate_message: ''
 })
 const status = ref('draft')
 const saving = ref(false)
@@ -60,7 +61,8 @@ async function load() {
     whatsapp_account: e.whatsapp_account || '', flow_id: e.flow_id || '',
     template_id: e.template_id || '', reminder_enabled: !!e.reminder_enabled,
     reminder_at: e.reminder_at ? String(e.reminder_at).substring(0, 16) : '',
-    reminder_template_id: e.reminder_template_id || ''
+    reminder_template_id: e.reminder_template_id || '',
+    spouse_mobile_field: e.spouse_mobile_field || '', duplicate_message: e.duplicate_message || ''
   }
   status.value = e.status || 'draft'
 }
@@ -82,7 +84,9 @@ function payload() {
     reminder_at: f.reminder_at ? new Date(f.reminder_at).toISOString() : null,
     flow_id: f.flow_id || null,
     template_id: f.template_id || null,
-    reminder_template_id: f.reminder_template_id || null
+    reminder_template_id: f.reminder_template_id || null,
+    spouse_mobile_field: f.spouse_mobile_field || '',
+    duplicate_message: f.duplicate_message || ''
   }
 }
 
@@ -186,6 +190,13 @@ const templateExampleBody = "You're invited to {{1}}! Tap below to RSVP."
                 <textarea v-model="form.description" :class="inputClass"></textarea></label>
               <label class="block"><span class="text-sm">{{ t('rsvp.keyword') }}</span>
                 <input v-model="form.keyword" :class="inputClass" /></label>
+
+              <label class="block"><span class="text-sm">{{ t('rsvp.spouseMobileField') }}</span>
+                <input v-model="form.spouse_mobile_field" :class="inputClass" :placeholder="t('rsvp.spouseMobileFieldPlaceholder')" />
+                <span class="text-xs text-muted-foreground">{{ t('rsvp.spouseMobileFieldHint') }}</span></label>
+              <label class="block"><span class="text-sm">{{ t('rsvp.duplicateMessage') }}</span>
+                <textarea v-model="form.duplicate_message" :class="inputClass" :placeholder="t('rsvp.duplicateMessagePlaceholder')"></textarea>
+                <span class="text-xs text-muted-foreground">{{ t('rsvp.duplicateMessageHint') }}</span></label>
 
               <div class="grid grid-cols-2 gap-4">
                 <label class="block"><span class="text-sm">{{ t('rsvp.eventDate') }}</span>

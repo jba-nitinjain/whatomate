@@ -1,12 +1,33 @@
 package handlers
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/nikyjain/whatomate/internal/models"
 )
+
+// rsvpAlreadyResponded reports whether a completed (non-pending) response already
+// exists for the phone — either as the responder's number or as a recorded spouse
+// mobile — so a duplicate submission can be turned away.
+func (a *App) rsvpAlreadyResponded(event *models.RSVPEvent, phone string) bool {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return false
+	}
+	q := a.DB.Model(&models.RSVPResponse{}).
+		Where("rsvp_event_id = ? AND attendance <> ?", event.ID, models.RSVPAttendancePending)
+	if strings.TrimSpace(event.SpouseMobileField) != "" {
+		q = q.Where("phone_number = ? OR answers->>? = ?", phone, event.SpouseMobileField, phone)
+	} else {
+		q = q.Where("phone_number = ?", phone)
+	}
+	var count int64
+	q.Count(&count)
+	return count > 0
+}
 
 // rsvpEventIDKey is the SessionData key that ties a chatbot session to an RSVP event.
 const rsvpEventIDKey = "_rsvp_event_id"

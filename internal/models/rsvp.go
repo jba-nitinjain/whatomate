@@ -45,6 +45,12 @@ type RSVPEvent struct {
 	AttendanceField string `gorm:"size:100;default:'attendance'" json:"attendance_field"`
 	AttendanceMap   JSONB  `gorm:"type:jsonb;default:'{}'" json:"attendance_map"`
 
+	// Duplicate handling: SpouseMobileField is the answer key holding a spouse's
+	// mobile; a new responder whose number already responded (as responder or as a
+	// recorded spouse) is turned away with DuplicateMessage instead of re-asked.
+	SpouseMobileField string `gorm:"size:100" json:"spouse_mobile_field"`
+	DuplicateMessage  string `gorm:"type:text" json:"duplicate_message"`
+
 	// Invite template (optional, for campaign/keyword invite send).
 	TemplateID *uuid.UUID `gorm:"type:uuid" json:"template_id,omitempty"`
 

@@ -857,6 +857,19 @@ func (a *App) startFlow(account *models.WhatsAppAccount, session *models.Chatbot
 	// RSVP: if this flow belongs to an active RSVP event, enforce cutoff, tag the
 	// session, and seed a pending response so the guest is tracked.
 	if event := a.rsvpEventForFlow(account.OrganizationID, flow.ID); event != nil {
+		// Turn away a repeat responder (same number, or a number already recorded
+		// as a spouse) with the already-recorded message instead of re-asking.
+		if a.rsvpAlreadyResponded(event, contact.PhoneNumber) {
+			msg := strings.TrimSpace(event.DuplicateMessage)
+			if msg == "" {
+				msg = "Your RSVP has already been recorded. Thank you!"
+			}
+			if err := a.sendAndSaveTextMessage(account, contact, msg); err != nil {
+				a.Log.Error("Failed to send RSVP duplicate message", "error", err)
+			}
+			a.exitFlow(session)
+			return
+		}
 		if event.RSVPCloseAt != nil && time.Now().After(*event.RSVPCloseAt) {
 			if err := a.sendAndSaveTextMessage(account, contact, "Sorry, RSVP for this event is now closed."); err != nil {
 				a.Log.Error("Failed to send RSVP closed message", "error", err)

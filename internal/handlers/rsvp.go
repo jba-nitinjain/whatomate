@@ -29,6 +29,8 @@ type rsvpEventRequest struct {
 	Keyword            string       `json:"keyword"`
 	AttendanceField    string       `json:"attendance_field"`
 	AttendanceMap      models.JSONB `json:"attendance_map"`
+	SpouseMobileField  string       `json:"spouse_mobile_field"`
+	DuplicateMessage   string       `json:"duplicate_message"`
 	TemplateID         *string      `json:"template_id"`
 	ReminderEnabled    bool         `json:"reminder_enabled"`
 	ReminderAt         *time.Time   `json:"reminder_at"`
@@ -61,6 +63,8 @@ func (a *App) applyRSVPEventRequest(e *models.RSVPEvent, req rsvpEventRequest) b
 	if req.AttendanceMap != nil {
 		e.AttendanceMap = req.AttendanceMap
 	}
+	e.SpouseMobileField = strings.TrimSpace(req.SpouseMobileField)
+	e.DuplicateMessage = strings.TrimSpace(req.DuplicateMessage)
 	e.ReminderEnabled = req.ReminderEnabled
 	e.ReminderAt = req.ReminderAt
 	if fid, ok := parseOptionalUUID(req.FlowID); ok {
