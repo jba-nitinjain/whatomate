@@ -881,9 +881,12 @@ func (a *App) startFlow(account *models.WhatsAppAccount, session *models.Chatbot
 		return
 	}
 
-	// Plain initial message (optionally with a media header), then the first step.
+	// Plain initial message (optionally with media), then the first step. The media
+	// is pre-uploaded to Meta and sent by ID so it is delivered BEFORE the first
+	// step's message — media sent by link is held while Meta downloads it and would
+	// otherwise arrive after the next message.
 	if flow.InitialMediaType != "" && flow.InitialMediaURL != "" {
-		if _, err := a.WhatsApp.SendMediaByLink(context.Background(), a.toWhatsAppAccount(account), contact.PhoneNumber, flow.InitialMediaType, flow.InitialMediaURL, flow.InitialMessage); err != nil {
+		if err := a.sendFlowInitialMedia(account, contact, flow); err != nil {
 			a.Log.Error("Failed to send initial media message", "error", err, "contact", contact.PhoneNumber)
 			if flow.InitialMessage != "" {
 				_ = a.sendAndSaveTextMessage(account, contact, flow.InitialMessage)
@@ -909,6 +912,45 @@ func (a *App) startFlow(account *models.WhatsAppAccount, session *models.Chatbot
 		// No steps, complete the flow
 		a.completeFlow(account, session, contact, flow)
 	}
+}
+
+// sendFlowInitialMedia downloads the flow's initial media, uploads it to Meta,
+// and sends it by media ID (image/video/document) with the initial message as the
+// caption. Pre-uploading guarantees the media is delivered before the first step,
+// unlike link media which Meta fetches asynchronously.
+func (a *App) sendFlowInitialMedia(account *models.WhatsAppAccount, contact *models.Contact, flow *models.ChatbotFlow) error {
+	waAccount := a.toWhatsAppAccount(account)
+	resp, err := http.Get(flow.InitialMediaURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to fetch initial media: status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return err
+	}
+	mimeType := resp.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	const filename = "initial-media"
+	mediaID, err := a.WhatsApp.UploadMedia(context.Background(), waAccount, data, mimeType, filename)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	switch strings.ToLower(flow.InitialMediaType) {
+	case "video":
+		_, err = a.WhatsApp.SendVideoMessage(ctx, waAccount, contact.PhoneNumber, mediaID, flow.InitialMessage)
+	case "document":
+		_, err = a.WhatsApp.SendDocumentMessage(ctx, waAccount, contact.PhoneNumber, mediaID, filename, flow.InitialMessage)
+	default:
+		_, err = a.WhatsApp.SendImageMessage(ctx, waAccount, contact.PhoneNumber, mediaID, flow.InitialMessage)
+	}
+	return err
 }
 
 const initialRichStepName = "__initial__"
