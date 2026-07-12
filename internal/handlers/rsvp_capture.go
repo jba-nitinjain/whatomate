@@ -9,20 +9,43 @@ import (
 	"github.com/nikyjain/whatomate/internal/models"
 )
 
+// normalizePhoneDigits strips everything except digits from a phone number.
+func normalizePhoneDigits(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// phoneMatchSuffix returns the last 10 digits of a number (or all of them when
+// shorter), used to compare numbers regardless of country-code/formatting.
+func phoneMatchSuffix(s string) string {
+	d := normalizePhoneDigits(s)
+	if len(d) > 10 {
+		return d[len(d)-10:]
+	}
+	return d
+}
+
 // rsvpAlreadyResponded reports whether a completed (non-pending) response already
 // exists for the phone — either as the responder's number or as a recorded spouse
-// mobile — so a duplicate submission can be turned away.
+// mobile. Matching is by trailing digits so differing formats (spaces, +, country
+// code) still match, so any number that already submitted is turned away.
 func (a *App) rsvpAlreadyResponded(event *models.RSVPEvent, phone string) bool {
-	phone = strings.TrimSpace(phone)
-	if phone == "" {
+	suffix := phoneMatchSuffix(phone)
+	if suffix == "" {
 		return false
 	}
+	like := "%" + suffix
 	q := a.DB.Model(&models.RSVPResponse{}).
 		Where("rsvp_event_id = ? AND attendance <> ?", event.ID, models.RSVPAttendancePending)
 	if strings.TrimSpace(event.SpouseMobileField) != "" {
-		q = q.Where("phone_number = ? OR answers->>? = ?", phone, event.SpouseMobileField, phone)
+		q = q.Where("phone_number LIKE ? OR answers->>? LIKE ?", like, event.SpouseMobileField, like)
 	} else {
-		q = q.Where("phone_number = ?", phone)
+		q = q.Where("phone_number LIKE ?", like)
 	}
 	var count int64
 	q.Count(&count)
@@ -87,6 +110,16 @@ func (a *App) finalizeRSVPFromSession(session *models.ChatbotSession) {
 			continue
 		}
 		answers[k] = v
+	}
+
+	// Store the spouse mobile as digits so duplicate matching works regardless of
+	// how the guest typed it (spaces, +, country code).
+	if event.SpouseMobileField != "" {
+		if s, ok := answers[event.SpouseMobileField].(string); ok {
+			if d := normalizePhoneDigits(s); d != "" {
+				answers[event.SpouseMobileField] = d
+			}
+		}
 	}
 
 	// Derive attendance from the configured field + map.
