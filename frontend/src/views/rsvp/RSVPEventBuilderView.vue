@@ -183,7 +183,11 @@ async function createStarterFlow() {
           message: "Please share your spouse's mobile number.",
           message_type: 'text',
           input_type: 'phone',
-          store_as: 'spouse_mobile'
+          store_as: 'spouse_mobile',
+          validation_regex: '^[6-9][0-9]{9}$',
+          validation_error: 'Please enter a valid 10-digit Indian mobile number (starting with 6, 7, 8 or 9).',
+          retry_on_invalid: true,
+          max_retries: 5
         }
       ]
     }

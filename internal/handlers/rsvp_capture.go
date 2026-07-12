@@ -125,10 +125,14 @@ func (a *App) finalizeRSVPFromSession(session *models.ChatbotSession) {
 	}
 
 	// Store the spouse mobile as digits so duplicate matching works regardless of
-	// how the guest typed it (spaces, +, country code).
+	// how the guest typed it. A bare 10-digit Indian number is prefixed with 91 so
+	// it matches the WhatsApp phone-number format guests message from.
 	if event.SpouseMobileField != "" {
 		if s, ok := answers[event.SpouseMobileField].(string); ok {
 			if d := normalizePhoneDigits(s); d != "" {
+				if len(d) == 10 {
+					d = "91" + d
+				}
 				answers[event.SpouseMobileField] = d
 			}
 		}
