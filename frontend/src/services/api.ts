@@ -1669,6 +1669,7 @@ export const rsvpService = {
   deleteResponse: (id: string, responseId: string) =>
     api.delete(`/rsvp-events/${id}/responses/${responseId}`),
   tally: (id: string) => api.get(`/rsvp-events/${id}/tally`),
+  generateFlowForm: (id: string) => api.post(`/rsvp-events/${id}/flow-form`),
   sendInvites: (id: string, contactIds: string[]) =>
     api.post(`/rsvp-events/${id}/send-invites`, { contact_ids: contactIds }),
   exportUrl: (id: string) => `${api.defaults.baseURL}/rsvp-events/${id}/export`,

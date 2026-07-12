@@ -25,6 +25,7 @@ const form = ref<any>({
 const status = ref('draft')
 const saving = ref(false)
 const creatingFlow = ref(false)
+const generatingForm = ref(false)
 const showHelp = ref(false)
 
 // Dropdown option sources
@@ -87,6 +88,19 @@ function payload() {
     reminder_template_id: f.reminder_template_id || null,
     spouse_mobile_field: f.spouse_mobile_field || '',
     duplicate_message: f.duplicate_message || ''
+  }
+}
+
+async function generateForm() {
+  if (!id.value) { toast.error(t('rsvp.saveEventFirst')); return }
+  generatingForm.value = true
+  try {
+    await rsvpService.generateFlowForm(id.value)
+    toast.success(t('rsvp.flowFormCreated'))
+  } catch (e: any) {
+    toast.error(getErrorMessage(e, t('rsvp.flowFormFailed')))
+  } finally {
+    generatingForm.value = false
   }
 }
 
@@ -233,6 +247,9 @@ const templateExampleBody = "You're invited to {{1}}! Tap below to RSVP."
                     </button>
                     <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50" :disabled="creatingFlow" @click="createStarterFlow">
                       <Sparkles class="inline h-3 w-3 mr-1" />{{ creatingFlow ? t('rsvp.creating') : t('rsvp.createStarterFlow') }}
+                    </button>
+                    <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50" :disabled="generatingForm || !id" @click="generateForm">
+                      <Sparkles class="inline h-3 w-3 mr-1" />{{ generatingForm ? t('rsvp.creating') : t('rsvp.generateFlowForm') }}
                     </button>
                   </div>
                 </div>
