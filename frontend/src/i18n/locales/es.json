@@ -2117,6 +2117,8 @@
     "phoneNumberPlaceholder": "+1234567890",
     "goTo": "Ir a",
     "nextStepSequential": "Siguiente paso (secuencial)",
+    "endFlow": "Finalizar flujo (marcar completado)",
+    "duplicateStep": "Duplicar paso",
     "buttonsHint": "Los botones de respuesta (máx. 10) envían la elección del usuario. Los botones de URL/Teléfono (máx. 2) abren un enlace o realizan una llamada. No puede mezclar botones de respuesta y de URL/Teléfono. Use \"Ir a\" para ramificar a diferentes pasos.",
     "apiConfiguration": "Configuración de API",
     "method": "Método",

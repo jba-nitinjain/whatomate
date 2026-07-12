@@ -2117,6 +2117,8 @@
     "phoneNumberPlaceholder": "फ़ोन",
     "goTo": "जाएं",
     "nextStepSequential": "क्रमिक",
+    "endFlow": "फ़्लो समाप्त करें (पूर्ण चिह्नित करें)",
+    "duplicateStep": "चरण डुप्लिकेट करें",
     "buttonsHint": "10 उत्तर बटन।",
     "apiConfiguration": "API",
     "method": "विधि",

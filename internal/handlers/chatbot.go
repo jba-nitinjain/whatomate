@@ -788,13 +788,14 @@ func validateChatbotFlowSteps(steps []FlowStepRequest) error {
 			}
 		}
 	}
+	isTerminalTarget := func(t string) bool { return t == "__complete__" || t == "__end__" }
 	for _, step := range steps {
-		if step.NextStep != "" && !stepNames[step.NextStep] {
+		if step.NextStep != "" && !isTerminalTarget(step.NextStep) && !stepNames[step.NextStep] {
 			return fmt.Errorf("step %q points to unknown next_step %q", step.StepName, step.NextStep)
 		}
 		for _, rawTarget := range step.ConditionalNext {
 			target, ok := rawTarget.(string)
-			if !ok || target == "" || target == "__default__" {
+			if !ok || target == "" || target == "__default__" || isTerminalTarget(target) {
 				continue
 			}
 			if !stepNames[target] {

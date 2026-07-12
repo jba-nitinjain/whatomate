@@ -54,6 +54,7 @@ import {
   Reply,
   Phone,
   List,
+  Copy,
 } from 'lucide-vue-next'
 import draggable from 'vuedraggable'
 import FlowChart from '@/components/chatbot/flow-builder/FlowChart.vue'
@@ -513,6 +514,24 @@ function selectStep(index: number) {
   previewMode.value = 'edit'
 }
 
+// duplicateStep clones a step (message, buttons, routing, config) and inserts it
+// right after the original with a unique name, so branching setups are reusable.
+function duplicateStep(index: number) {
+  const orig = formData.value.steps[index]
+  if (!orig) return
+  const clone = JSON.parse(JSON.stringify(orig))
+  const base = `${orig.step_name || `step_${index + 1}`}_copy`
+  const names = new Set(formData.value.steps.map(s => s.step_name))
+  let name = base
+  let n = 2
+  while (names.has(name)) { name = `${base}_${n++}` }
+  clone.step_name = name
+  formData.value.steps.splice(index + 1, 0, clone)
+  updateStepOrders()
+  selectedStepIndex.value = index + 1
+  showFlowSettings.value = false
+}
+
 function selectFlowSettings() {
   showFlowSettings.value = true
   selectedStepIndex.value = null
@@ -732,7 +751,7 @@ function pruneDanglingReferences() {
   const names = new Set(
     formData.value.steps.map(s => (s.step_name || '').trim()).filter(Boolean),
   )
-  const valid = (t?: string) => !t || t === '__default__' || names.has(t)
+  const valid = (t?: string) => !t || t === '__default__' || t === '__complete__' || t === '__end__' || names.has(t)
   for (const step of formData.value.steps) {
     if (!valid(step.next_step)) step.next_step = ''
     if (step.conditional_next) {
@@ -1088,6 +1107,15 @@ function confirmCancel() {
                       <span>{{ getStepLabel(step.message_type) }}</span>
                     </div>
                   </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="h-7 w-7 opacity-0 group-hover:opacity-100 flex-shrink-0"
+                    :title="$t('flowBuilder.duplicateStep')"
+                    @click.stop="duplicateStep(index)"
+                  >
+                    <Copy class="h-4 w-4" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -1589,6 +1617,7 @@ function confirmCancel() {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="__default__">{{ $t('flowBuilder.nextStepSequential') }}</SelectItem>
+                                <SelectItem value="__complete__">{{ $t('flowBuilder.endFlow') }}</SelectItem>
                                 <SelectItem
                                   v-for="step in stepsWithNames"
                                   :key="`goto-${step.step_name}`"

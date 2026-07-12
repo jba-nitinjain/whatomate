@@ -1080,8 +1080,9 @@ func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *mode
 		}
 	}
 
-	// Move to next step or complete flow
-	if nextStepName == "" {
+	// Move to next step or complete flow. An explicit "End flow" routing target
+	// completes the flow (fires the completion message + RSVP capture).
+	if nextStepName == "" || nextStepName == "__complete__" || nextStepName == "__end__" {
 		a.completeFlow(account, session, contact, flow)
 		return
 	}
