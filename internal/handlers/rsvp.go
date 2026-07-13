@@ -325,6 +325,16 @@ func (a *App) ListRSVPResponses(r *fastglue.Request) error {
 	if status := string(r.RequestCtx.QueryArgs().Peek("attendance")); status != "" {
 		q = q.Where("rsvp_responses.attendance = ?", status)
 	}
+	// Filter by a dynamic "*_title" answer field value (used by clickable stat cards).
+	// title_value "__pending__" matches rows where the field is unanswered/empty.
+	if tf := string(r.RequestCtx.QueryArgs().Peek("title_field")); tf != "" {
+		tv := string(r.RequestCtx.QueryArgs().Peek("title_value"))
+		if tv == "__pending__" {
+			q = q.Where("(rsvp_responses.answers->>? IS NULL OR rsvp_responses.answers->>? = '')", tf, tf)
+		} else if tv != "" {
+			q = q.Where("rsvp_responses.answers->>? = ?", tf, tv)
+		}
+	}
 	if search := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("search"))); search != "" {
 		like := "%" + search + "%"
 		q = q.Joins("LEFT JOIN contacts ON contacts.id = rsvp_responses.contact_id").
@@ -452,7 +462,45 @@ func (a *App) GetRSVPTally(r *fastglue.Request) error {
 		out[string(rw.Attendance)] += rw.Count
 		out["total"] += rw.Count
 	}
-	return r.SendEnvelope(out)
+
+	// Dynamic breakdowns for every "*_title" answer field (e.g. attendance_title,
+	// spouse_attendance_title) grouped by their actual values, so the UI can show
+	// clickable Member/Spouse Attendance cards without hardcoding the values.
+	type titleRow struct {
+		Key   string
+		Value string
+		Count int
+	}
+	var trows []titleRow
+	a.DB.Raw(`
+		SELECT je.key AS key, je.value AS value, count(*) AS count
+		FROM rsvp_responses r
+		CROSS JOIN LATERAL jsonb_each_text(r.answers) je
+		WHERE r.organization_id = ? AND r.rsvp_event_id = ? AND r.deleted_at IS NULL
+		  AND right(je.key, 6) = '_title' AND je.value <> ''
+		GROUP BY je.key, je.value`, orgID, eventID).Scan(&trows)
+
+	breakdowns := map[string]map[string]int{}
+	for _, tr := range trows {
+		if breakdowns[tr.Key] == nil {
+			breakdowns[tr.Key] = map[string]int{}
+		}
+		breakdowns[tr.Key][tr.Value] += tr.Count
+	}
+
+	attendanceField := "attendance"
+	var ev models.RSVPEvent
+	if err := a.DB.Select("attendance_field").
+		Where("id = ? AND organization_id = ?", eventID, orgID).First(&ev).Error; err == nil && ev.AttendanceField != "" {
+		attendanceField = ev.AttendanceField
+	}
+
+	return r.SendEnvelope(map[string]interface{}{
+		"yes": out["yes"], "no": out["no"], "maybe": out["maybe"],
+		"pending": out["pending"], "total": out["total"],
+		"breakdowns":       breakdowns,
+		"attendance_field": attendanceField,
+	})
 }
 
 // ---------------------------------------------------------------------------

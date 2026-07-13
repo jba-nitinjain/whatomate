@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,6 +27,9 @@ const route = useRoute()
 const id = route.params.id as string
 
 const tally = ref<Record<string, number>>({ yes: 0, no: 0, maybe: 0, pending: 0, total: 0 })
+const breakdowns = ref<Record<string, Record<string, number>>>({})
+const attendanceField = ref('attendance')
+const activeFilter = ref<{ field: string; value: string } | null>(null)
 const responses = ref<RSVPRow[]>([])
 const isLoading = ref(true)
 const searchQuery = ref('')
@@ -35,8 +38,39 @@ const pageSize = 20
 const total = ref(0)
 let searchTimer: number | undefined
 let timer: number | undefined
-const cards = ['yes', 'no', 'maybe', 'pending', 'total']
 const attendanceOptions = ['pending', 'yes', 'no', 'maybe']
+
+interface Bucket { label: string; field: string; value: string; count: number }
+interface CardGroup { title: string; field: string; buckets: Bucket[] }
+
+// Build a clickable card group for a "*_title" answer field: one card per actual
+// value (dynamic) plus a Pending card for unanswered guests.
+function buildGroup(title: string, field: string): CardGroup {
+  const map = breakdowns.value[field] || {}
+  const buckets: Bucket[] = Object.entries(map)
+    .sort((a, b) => b[1] - a[1])
+    .map(([value, count]) => ({ label: value, field, value, count }))
+  const answered = buckets.reduce((s, b) => s + b.count, 0)
+  buckets.push({ label: t('rsvp.pending'), field, value: '__pending__', count: Math.max((tally.value.total || 0) - answered, 0) })
+  return { title, field, buckets }
+}
+
+const memberGroup = computed(() => buildGroup(t('rsvp.memberAttendance'), attendanceField.value + '_title'))
+const spouseGroup = computed(() => {
+  const key = Object.keys(breakdowns.value).find(k => k.includes('spouse')) || 'spouse_attendance_title'
+  return buildGroup(t('rsvp.spouseAttendance'), key)
+})
+const cardGroups = computed<CardGroup[]>(() => [memberGroup.value, spouseGroup.value])
+
+function isActive(field: string, value: string) {
+  return activeFilter.value?.field === field && activeFilter.value?.value === value
+}
+function toggleCardFilter(field: string, value: string) {
+  activeFilter.value = isActive(field, value) ? null : { field, value }
+  page.value = 1
+  loadResponses()
+}
+function clearFilter() { activeFilter.value = null; page.value = 1; loadResponses() }
 
 // Union of answer keys across all responses (first-seen order), one column each.
 const answerKeys = computed<string[]>(() => {
@@ -133,10 +167,19 @@ async function confirmDelete() {
 
 async function loadTally() {
   const r = await rsvpService.tally(id)
-  tally.value = (r.data as any).data || r.data
+  const d = (r.data as any).data || r.data
+  tally.value = { yes: d.yes || 0, no: d.no || 0, maybe: d.maybe || 0, pending: d.pending || 0, total: d.total || 0 }
+  breakdowns.value = d.breakdowns || {}
+  attendanceField.value = d.attendance_field || 'attendance'
 }
 async function loadResponses() {
-  const r = await rsvpService.responses(id, { search: searchQuery.value || undefined, page: page.value, limit: pageSize })
+  const r = await rsvpService.responses(id, {
+    search: searchQuery.value || undefined,
+    page: page.value,
+    limit: pageSize,
+    title_field: activeFilter.value?.field,
+    title_value: activeFilter.value?.value,
+  })
   const d = (r.data as any).data || r.data
   responses.value = d.responses || []
   total.value = d.total || 0
@@ -239,11 +282,32 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
     <ScrollArea class="flex-1">
       <div class="p-6">
         <div class="max-w-6xl mx-auto space-y-6">
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <Card v-for="k in cards" :key="k">
-              <CardHeader><CardTitle class="text-sm text-muted-foreground">{{ t('rsvp.' + k) }}</CardTitle></CardHeader>
-              <CardContent><div class="text-2xl font-bold">{{ tally[k] ?? 0 }}</div></CardContent>
-            </Card>
+          <div class="space-y-4">
+            <div class="flex flex-wrap gap-3">
+              <button
+                type="button"
+                @click="clearFilter"
+                :class="['rounded-lg border px-4 py-3 text-left transition min-w-[120px]', !activeFilter ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/50']"
+              >
+                <div class="text-xs text-muted-foreground">{{ t('rsvp.total') }}</div>
+                <div class="text-2xl font-bold">{{ tally.total }}</div>
+              </button>
+            </div>
+            <div v-for="grp in cardGroups" :key="grp.field" class="space-y-2">
+              <div class="text-sm font-medium text-muted-foreground">{{ grp.title }}</div>
+              <div class="flex flex-wrap gap-3">
+                <button
+                  v-for="b in grp.buckets"
+                  :key="b.value"
+                  type="button"
+                  @click="toggleCardFilter(b.field, b.value)"
+                  :class="['rounded-lg border px-4 py-3 text-left transition min-w-[120px]', isActive(b.field, b.value) ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/50']"
+                >
+                  <div class="text-xs text-muted-foreground truncate max-w-[160px]">{{ b.label }}</div>
+                  <div class="text-2xl font-bold">{{ b.count }}</div>
+                </button>
+              </div>
+            </div>
           </div>
 
           <Card>

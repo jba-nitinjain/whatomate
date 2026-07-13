@@ -1514,6 +1514,8 @@
     "repromptConfirm": "Send the RSVP flow again to {count} guest(s) with an incomplete response.",
     "repromptMessage": "Message they'll receive",
     "repromptRecipients": "Recipients",
+    "memberAttendance": "Member Attendance",
+    "spouseAttendance": "Spouse Attendance",
     "reprompted": "Re-prompted",
     "alreadyReprompted": "resent",
     "searchResponses": "Search name or number",
