@@ -21,6 +21,7 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const events = ref<RSVPEvent[]>([])
+const tallies = ref<Record<string, Record<string, number>>>({})
 const isLoading = ref(true)
 const searchQuery = ref('')
 const deleteDialogOpen = ref(false)
@@ -30,6 +31,7 @@ const columns = computed<Column<RSVPEvent>[]>(() => [
   { key: 'name', label: t('rsvp.name'), sortable: true },
   { key: 'status', label: t('rsvp.status') },
   { key: 'event_date', label: t('rsvp.eventDate') },
+  { key: 'responses', label: t('rsvp.responses') },
   { key: 'actions', label: t('rsvp.actions'), align: 'right' },
 ])
 
@@ -45,11 +47,24 @@ async function fetchEvents() {
     const res = await rsvpService.list()
     const data = (res.data as any).data || res.data
     events.value = data.events || []
+    await loadTallies()
   } catch {
     events.value = []
   } finally {
     isLoading.value = false
   }
+}
+
+async function loadTallies() {
+  const results = await Promise.all(events.value.map(async (e) => {
+    try {
+      const r = await rsvpService.tally(e.id)
+      return [e.id, (r.data as any).data || r.data] as const
+    } catch {
+      return [e.id, {}] as const
+    }
+  }))
+  tallies.value = Object.fromEntries(results)
 }
 onMounted(fetchEvents)
 
@@ -116,16 +131,28 @@ async function confirmDelete() {
                 <template #cell-event_date="{ item }">
                   <span class="text-sm text-muted-foreground">{{ item.event_date ? formatDateDDMMYYYY(item.event_date) : '—' }}</span>
                 </template>
+                <template #cell-responses="{ item }">
+                  <div class="flex items-center gap-2 text-xs">
+                    <span class="text-green-600 font-medium" :title="t('rsvp.yes')">{{ tallies[item.id]?.yes ?? 0 }} ✓</span>
+                    <span class="text-red-600 font-medium" :title="t('rsvp.no')">{{ tallies[item.id]?.no ?? 0 }} ✗</span>
+                    <span class="text-amber-600 font-medium" :title="t('rsvp.maybe')">{{ tallies[item.id]?.maybe ?? 0 }} ~</span>
+                    <span class="text-muted-foreground" :title="t('rsvp.pending')">{{ tallies[item.id]?.pending ?? 0 }} ⧗</span>
+                    <span class="font-semibold" :title="t('rsvp.total')">Σ {{ tallies[item.id]?.total ?? 0 }}</span>
+                  </div>
+                </template>
                 <template #cell-actions="{ item }">
                   <div class="flex items-center justify-end gap-1">
-                    <Button variant="ghost" size="icon" class="h-8 w-8" :title="t('rsvp.results')" @click="viewResults(item)">
+                    <Button variant="ghost" size="sm" class="h-8 gap-1.5" :title="t('rsvp.results')" @click="viewResults(item)">
                       <BarChart3 class="h-4 w-4" />
+                      <span class="text-xs">{{ t('rsvp.results') }}</span>
                     </Button>
-                    <Button v-if="auth.hasPermission('rsvp', 'write')" variant="ghost" size="icon" class="h-8 w-8" @click="editEvent(item)">
+                    <Button v-if="auth.hasPermission('rsvp', 'write')" variant="ghost" size="sm" class="h-8 gap-1.5" :title="t('common.edit')" @click="editEvent(item)">
                       <Pencil class="h-4 w-4" />
+                      <span class="text-xs">{{ t('common.edit') }}</span>
                     </Button>
-                    <Button v-if="auth.hasPermission('rsvp', 'delete')" variant="ghost" size="icon" class="h-8 w-8 text-destructive" @click="openDeleteDialog(item)">
+                    <Button v-if="auth.hasPermission('rsvp', 'delete')" variant="ghost" size="sm" class="h-8 gap-1.5 text-destructive" :title="t('common.delete')" @click="openDeleteDialog(item)">
                       <Trash2 class="h-4 w-4" />
+                      <span class="text-xs">{{ t('common.delete') }}</span>
                     </Button>
                   </div>
                 </template>
