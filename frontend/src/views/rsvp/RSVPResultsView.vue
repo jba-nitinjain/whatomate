@@ -141,12 +141,34 @@ function attendanceLabel(v: string): string {
 function exportXlsx() { window.open(rsvpService.exportUrl(id), '_blank') }
 
 const reprompting = ref(false)
+const repromptOpen = ref(false)
+const repromptTargets = ref<{ phone: string; name: string; reason: string }[]>([])
+const repromptMessage = ref('')
+
+// Preview who will be messaged and what, before sending.
 async function reprompt() {
+  reprompting.value = true
+  try {
+    const r = await rsvpService.repromptPreview(id)
+    const d = (r.data as any)?.data || r.data
+    repromptTargets.value = d.targets || []
+    repromptMessage.value = d.message || ''
+    repromptOpen.value = true
+  } catch (error: any) {
+    toast.error(error?.response?.data?.message || t('rsvp.repromptFailed'))
+  } finally {
+    reprompting.value = false
+  }
+}
+
+async function confirmReprompt() {
   reprompting.value = true
   try {
     const r = await rsvpService.reprompt(id)
     const n = (r.data as any)?.data?.reprompted ?? (r.data as any)?.reprompted ?? 0
     toast.success(t('rsvp.repromptSent', { count: n }))
+    repromptOpen.value = false
+    await Promise.all([loadTally(), loadResponses()])
   } catch (error: any) {
     toast.error(error?.response?.data?.message || t('rsvp.repromptFailed'))
   } finally {
@@ -232,6 +254,37 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
         </div>
       </div>
     </ScrollArea>
+
+    <Dialog v-model:open="repromptOpen">
+      <DialogContent class="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ t('rsvp.reprompt') }}</DialogTitle>
+          <DialogDescription>{{ t('rsvp.repromptConfirm', { count: repromptTargets.length }) }}</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-3 py-2">
+          <div class="space-y-1">
+            <Label class="text-xs">{{ t('rsvp.repromptMessage') }}</Label>
+            <div class="text-xs bg-muted/40 rounded p-2 max-h-32 overflow-y-auto whitespace-pre-wrap">{{ repromptMessage || '—' }}</div>
+          </div>
+          <div class="space-y-1">
+            <Label class="text-xs">{{ t('rsvp.repromptRecipients') }} ({{ repromptTargets.length }})</Label>
+            <div class="border rounded max-h-56 overflow-y-auto divide-y">
+              <div v-for="(tg, i) in repromptTargets" :key="i" class="flex items-center justify-between px-2 py-1 text-xs">
+                <span>{{ tg.name || '—' }} <span class="text-muted-foreground">{{ tg.phone }}</span></span>
+                <span class="text-[10px] text-muted-foreground">{{ tg.reason }}</span>
+              </div>
+              <div v-if="!repromptTargets.length" class="px-2 py-3 text-center text-xs text-muted-foreground">{{ t('rsvp.noResponses') }}</div>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="repromptOpen = false" :disabled="reprompting">{{ t('common.cancel') }}</Button>
+          <Button @click="confirmReprompt" :disabled="reprompting || !repromptTargets.length">
+            {{ t('rsvp.repromptSendNow', { count: repromptTargets.length }) }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <Dialog v-model:open="editOpen">
       <DialogContent class="max-w-md">
