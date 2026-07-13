@@ -79,6 +79,7 @@ type RSVPResponse struct {
 	Answers        JSONB          `gorm:"type:jsonb;default:'{}'" json:"answers"`
 	Notes          string         `gorm:"type:text" json:"notes"`
 	RespondedAt    *time.Time     `json:"responded_at,omitempty"`
+	RepromptedAt   *time.Time     `json:"reprompted_at,omitempty"` // last time the RSVP flow was re-sent to this guest
 
 	Event   *RSVPEvent `gorm:"foreignKey:RSVPEventID" json:"event,omitempty"`
 	Contact *Contact   `gorm:"foreignKey:ContactID" json:"contact,omitempty"`

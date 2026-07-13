@@ -1463,6 +1463,8 @@
     "repromptConfirm": "பதில் முழுமையடையாத {count} விருந்தினர்(கள்)க்கு RSVP ஓட்டத்தை மீண்டும் அனுப்பு.",
     "repromptMessage": "அவர்கள் பெறும் செய்தி",
     "repromptRecipients": "பெறுநர்கள்",
+    "reprompted": "மீண்டும் அனுப்பப்பட்டது",
+    "alreadyReprompted": "அனுப்பப்பட்டது",
     "searchResponses": "பெயர் அல்லது எண்ணைத் தேடு",
     "selectAll": "அனைத்தையும் தேர்வு",
     "clearSelection": "அழி",

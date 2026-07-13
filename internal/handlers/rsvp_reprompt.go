@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/nikyjain/whatomate/internal/models"
@@ -10,10 +11,11 @@ import (
 )
 
 type repromptTarget struct {
-	ContactID uuid.UUID `json:"-"`
-	Phone     string    `json:"phone"`
-	Name      string    `json:"name"`
-	Reason    string    `json:"reason"`
+	ContactID    uuid.UUID  `json:"-"`
+	Phone        string     `json:"phone"`
+	Name         string     `json:"name"`
+	Reason       string     `json:"reason"`
+	RepromptedAt *time.Time `json:"reprompted_at,omitempty"`
 }
 
 // computeRepromptTargets returns the guests whose RSVP is incomplete for the event
@@ -55,7 +57,7 @@ func (a *App) computeRepromptTargets(orgID uuid.UUID, event *models.RSVPEvent) (
 		}
 		seen[r.ContactID] = true
 		phone, name := contactInfo(r.ContactID)
-		targets = append(targets, repromptTarget{ContactID: r.ContactID, Phone: phone, Name: name, Reason: "incomplete"})
+		targets = append(targets, repromptTarget{ContactID: r.ContactID, Phone: phone, Name: name, Reason: "incomplete", RepromptedAt: r.RepromptedAt})
 	}
 
 	// Contacts who sent a button reply (template tap) but have no response row.
@@ -202,6 +204,10 @@ func (a *App) RepromptRSVPFlowSessions(r *fastglue.Request) error {
 
 		session, _ := a.getOrCreateSession(orgID, contact.ID, account.Name, contact.PhoneNumber, timeoutMins)
 		a.startFlow(account, session, &contact, flow, "", "")
+		now := time.Now()
+		a.DB.Model(&models.RSVPResponse{}).
+			Where("rsvp_event_id = ? AND contact_id = ?", event.ID, contact.ID).
+			Update("reprompted_at", now)
 		reprompted++
 	}
 

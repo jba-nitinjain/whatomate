@@ -20,7 +20,7 @@ import { rsvpService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
 import { BarChart3, Download, Pencil, Trash2, Send } from 'lucide-vue-next'
 
-interface RSVPRow { id: string; phone_number: string; attendance: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; contact?: { profile_name?: string } }
+interface RSVPRow { id: string; phone_number: string; attendance: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; reprompted_at?: string; contact?: { profile_name?: string } }
 
 const { t } = useI18n()
 const route = useRoute()
@@ -60,6 +60,7 @@ const columns = computed<Column<RSVPRow>[]>(() => [
   ...answerKeys.value.map(k => ({ key: `answers.${k}`, label: prettyKey(k) })),
   { key: 'notes', label: t('rsvp.notes') },
   { key: 'responded_at', label: t('rsvp.respondedAt') },
+  { key: 'reprompted', label: t('rsvp.reprompted') },
   { key: 'actions', label: '' },
 ])
 
@@ -153,7 +154,7 @@ function exportXlsx() { window.open(rsvpService.exportUrl(id), '_blank') }
 
 const reprompting = ref(false)
 const repromptOpen = ref(false)
-const repromptTargets = ref<{ phone: string; name: string; reason: string }[]>([])
+const repromptTargets = ref<{ phone: string; name: string; reason: string; reprompted_at?: string }[]>([])
 const repromptMessage = ref('')
 const repromptSearch = ref('')
 const selectedPhones = ref<Set<string>>(new Set())
@@ -278,6 +279,10 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                 <template #cell-responded_at="{ item }">
                   <span class="text-sm text-muted-foreground">{{ item.responded_at ? formatDateTimeIST(item.responded_at) : '—' }}</span>
                 </template>
+                <template #cell-reprompted="{ item }">
+                  <span v-if="item.reprompted_at" class="text-xs text-blue-600" :title="formatDateTimeIST(item.reprompted_at)">✓ {{ formatDateTimeIST(item.reprompted_at) }}</span>
+                  <span v-else class="text-sm text-muted-foreground">—</span>
+                </template>
                 <template #cell-actions="{ item }">
                   <div class="flex items-center justify-end gap-1">
                     <Button variant="ghost" size="icon" class="h-8 w-8" @click="openEdit(item)" :title="t('rsvp.editResponse')">
@@ -319,6 +324,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
               <label v-for="(tg, i) in filteredTargets" :key="i" class="flex items-center gap-2 px-2 py-1 text-xs cursor-pointer">
                 <input type="checkbox" :checked="selectedPhones.has(tg.phone)" @change="toggleTarget(tg.phone)" />
                 <span class="flex-1">{{ tg.name || '—' }} <span class="text-muted-foreground">{{ tg.phone }}</span></span>
+                <span v-if="tg.reprompted_at" class="text-[10px] text-blue-600" :title="formatDateTimeIST(tg.reprompted_at)">✓ {{ t('rsvp.alreadyReprompted') }}</span>
                 <span class="text-[10px] text-muted-foreground">{{ tg.reason }}</span>
               </label>
               <div v-if="!filteredTargets.length" class="px-2 py-3 text-center text-xs text-muted-foreground">{{ t('rsvp.noResponses') }}</div>
