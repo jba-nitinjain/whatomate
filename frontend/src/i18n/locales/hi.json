@@ -1463,6 +1463,7 @@
     "repromptConfirm": "अधूरी प्रतिक्रिया वाले {count} अतिथि(यों) को RSVP फ़्लो फिर से भेजें।",
     "repromptMessage": "उन्हें मिलने वाला संदेश",
     "repromptRecipients": "प्राप्तकर्ता",
+    "clearFilter": "फ़िल्टर हटाएँ",
     "memberAttendance": "सदस्य उपस्थिति",
     "spouseAttendance": "जीवनसाथी उपस्थिति",
     "reprompted": "फिर भेजा गया",

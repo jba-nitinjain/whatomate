@@ -1463,6 +1463,7 @@
     "repromptConfirm": "Reenviar el flujo RSVP a {count} invitado(s) con respuesta incompleta.",
     "repromptMessage": "Mensaje que recibirán",
     "repromptRecipients": "Destinatarios",
+    "clearFilter": "Quitar filtro",
     "memberAttendance": "Asistencia del miembro",
     "spouseAttendance": "Asistencia del cónyuge",
     "reprompted": "Reenviado",

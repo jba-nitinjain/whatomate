@@ -29,7 +29,7 @@ const id = route.params.id as string
 const tally = ref<Record<string, number>>({ yes: 0, no: 0, maybe: 0, pending: 0, total: 0 })
 const breakdowns = ref<Record<string, Record<string, number>>>({})
 const attendanceField = ref('attendance')
-const activeFilter = ref<{ field: string; value: string } | null>(null)
+const selected = ref<Record<string, string>>({}) // title field -> value (member + spouse combine as AND)
 const responses = ref<RSVPRow[]>([])
 const isLoading = ref(true)
 const searchQuery = ref('')
@@ -62,15 +62,40 @@ const spouseGroup = computed(() => {
 })
 const cardGroups = computed<CardGroup[]>(() => [memberGroup.value, spouseGroup.value])
 
-function isActive(field: string, value: string) {
-  return activeFilter.value?.field === field && activeFilter.value?.value === value
-}
+function isActive(field: string, value: string) { return selected.value[field] === value }
 function toggleCardFilter(field: string, value: string) {
-  activeFilter.value = isActive(field, value) ? null : { field, value }
+  const next = { ...selected.value }
+  if (next[field] === value) delete next[field]
+  else next[field] = value
+  selected.value = next
   page.value = 1
   loadResponses()
 }
-function clearFilter() { activeFilter.value = null; page.value = 1; loadResponses() }
+function clearFilter() { selected.value = {}; page.value = 1; loadResponses() }
+const hasFilter = computed(() => Object.keys(selected.value).length > 0)
+
+// Active-filter chips (one per selected group) shown above the table.
+const activeChips = computed(() =>
+  cardGroups.value
+    .filter(g => selected.value[g.field] != null)
+    .map(g => {
+      const v = selected.value[g.field]
+      return { field: g.field, value: v, group: g.title, label: v === '__pending__' ? t('rsvp.pending') : v }
+    }),
+)
+
+// Semantic colour for a bucket value: attending=green, not-attending=red, pending=amber.
+function bucketTone(value: string): 'yes' | 'no' | 'pending' | 'neutral' {
+  if (value === '__pending__') return 'pending'
+  const v = value.toLowerCase()
+  if (v.includes('not') || v === 'no') return 'no'
+  if (v.includes('attend') || v.includes('yes')) return 'yes'
+  return 'neutral'
+}
+const TONE_TEXT: Record<string, string> = { yes: 'text-emerald-500', no: 'text-rose-500', pending: 'text-amber-500', neutral: 'text-foreground' }
+const TONE_DOT: Record<string, string> = { yes: 'bg-emerald-500', no: 'bg-rose-500', pending: 'bg-amber-500', neutral: 'bg-muted-foreground' }
+function toneText(value: string) { return TONE_TEXT[bucketTone(value)] }
+function toneDot(value: string) { return TONE_DOT[bucketTone(value)] }
 
 // Union of answer keys across all responses (first-seen order), one column each.
 const answerKeys = computed<string[]>(() => {
@@ -173,12 +198,15 @@ async function loadTally() {
   attendanceField.value = d.attendance_field || 'attendance'
 }
 async function loadResponses() {
+  const pairs = Object.entries(selected.value)
   const r = await rsvpService.responses(id, {
     search: searchQuery.value || undefined,
     page: page.value,
     limit: pageSize,
-    title_field: activeFilter.value?.field,
-    title_value: activeFilter.value?.value,
+    title_field: pairs[0]?.[0],
+    title_value: pairs[0]?.[1],
+    title_field2: pairs[1]?.[0],
+    title_value2: pairs[1]?.[1],
   })
   const d = (r.data as any).data || r.data
   responses.value = d.responses || []
@@ -283,29 +311,48 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
       <div class="p-6">
         <div class="max-w-6xl mx-auto space-y-6">
           <div class="space-y-4">
-            <div class="flex flex-wrap gap-3">
+            <!-- Total + active filter chips -->
+            <div class="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 @click="clearFilter"
-                :class="['rounded-lg border px-4 py-3 text-left transition min-w-[120px]', !activeFilter ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/50']"
+                :class="['rounded-xl border px-5 py-3 text-left transition min-w-[130px]', !hasFilter ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:bg-muted/40']"
               >
-                <div class="text-xs text-muted-foreground">{{ t('rsvp.total') }}</div>
-                <div class="text-2xl font-bold">{{ tally.total }}</div>
+                <div class="text-xs font-medium text-muted-foreground">{{ t('rsvp.total') }}</div>
+                <div class="text-3xl font-bold tabular-nums">{{ tally.total }}</div>
               </button>
-            </div>
-            <div v-for="grp in cardGroups" :key="grp.field" class="space-y-2">
-              <div class="text-sm font-medium text-muted-foreground">{{ grp.title }}</div>
-              <div class="flex flex-wrap gap-3">
-                <button
-                  v-for="b in grp.buckets"
-                  :key="b.value"
-                  type="button"
-                  @click="toggleCardFilter(b.field, b.value)"
-                  :class="['rounded-lg border px-4 py-3 text-left transition min-w-[120px]', isActive(b.field, b.value) ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/50']"
+              <div v-if="hasFilter" class="flex flex-wrap items-center gap-2">
+                <span
+                  v-for="c in activeChips"
+                  :key="c.field"
+                  class="inline-flex items-center gap-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium px-3 py-1.5"
                 >
-                  <div class="text-xs text-muted-foreground truncate max-w-[160px]">{{ b.label }}</div>
-                  <div class="text-2xl font-bold">{{ b.count }}</div>
-                </button>
+                  {{ c.group }}: {{ c.label }}
+                  <button type="button" class="hover:text-primary/60" @click="toggleCardFilter(c.field, c.value)">✕</button>
+                </span>
+                <button type="button" class="text-xs text-muted-foreground hover:underline" @click="clearFilter">{{ t('rsvp.clearFilter') }}</button>
+              </div>
+            </div>
+
+            <!-- Member / Spouse groups -->
+            <div class="grid gap-4 md:grid-cols-2">
+              <div v-for="grp in cardGroups" :key="grp.field" class="rounded-xl border bg-card p-4">
+                <div class="mb-3 text-sm font-semibold">{{ grp.title }}</div>
+                <div class="grid grid-cols-3 gap-2">
+                  <button
+                    v-for="b in grp.buckets"
+                    :key="b.value"
+                    type="button"
+                    @click="toggleCardFilter(b.field, b.value)"
+                    :class="['rounded-lg border p-3 text-left transition-all', isActive(b.field, b.value) ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:bg-muted/40']"
+                  >
+                    <div class="flex items-center gap-1.5">
+                      <span :class="['h-2 w-2 shrink-0 rounded-full', toneDot(b.value)]"></span>
+                      <span class="text-xs font-medium text-muted-foreground truncate">{{ b.label }}</span>
+                    </div>
+                    <div :class="['mt-1 text-2xl font-bold tabular-nums', toneText(b.value)]">{{ b.count }}</div>
+                  </button>
+                </div>
               </div>
             </div>
           </div>

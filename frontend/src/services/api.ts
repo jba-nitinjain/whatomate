@@ -1659,7 +1659,7 @@ export const rsvpService = {
   delete: (id: string) => api.delete(`/rsvp-events/${id}`),
   activate: (id: string) => api.post(`/rsvp-events/${id}/activate`),
   close: (id: string) => api.post(`/rsvp-events/${id}/close`),
-  responses: (id: string, params?: { attendance?: string; search?: string; page?: number; limit?: number; title_field?: string; title_value?: string }) =>
+  responses: (id: string, params?: { attendance?: string; search?: string; page?: number; limit?: number; title_field?: string; title_value?: string; title_field2?: string; title_value2?: string }) =>
     api.get(`/rsvp-events/${id}/responses`, { params }),
   updateResponse: (
     id: string,

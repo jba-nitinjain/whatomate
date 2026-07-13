@@ -325,16 +325,21 @@ func (a *App) ListRSVPResponses(r *fastglue.Request) error {
 	if status := string(r.RequestCtx.QueryArgs().Peek("attendance")); status != "" {
 		q = q.Where("rsvp_responses.attendance = ?", status)
 	}
-	// Filter by a dynamic "*_title" answer field value (used by clickable stat cards).
-	// title_value "__pending__" matches rows where the field is unanswered/empty.
-	if tf := string(r.RequestCtx.QueryArgs().Peek("title_field")); tf != "" {
-		tv := string(r.RequestCtx.QueryArgs().Peek("title_value"))
-		if tv == "__pending__" {
-			q = q.Where("(rsvp_responses.answers->>? IS NULL OR rsvp_responses.answers->>? = '')", tf, tf)
-		} else if tv != "" {
-			q = q.Where("rsvp_responses.answers->>? = ?", tf, tv)
+	// Filter by dynamic "*_title" answer field values (used by clickable stat cards).
+	// Two independent pairs may be combined (AND) — e.g. member Attending + spouse
+	// Not Attending. title_value "__pending__" matches rows unanswered/empty.
+	applyTitleFilter := func(field, value string) {
+		if field == "" {
+			return
+		}
+		if value == "__pending__" {
+			q = q.Where("(rsvp_responses.answers->>? IS NULL OR rsvp_responses.answers->>? = '')", field, field)
+		} else if value != "" {
+			q = q.Where("rsvp_responses.answers->>? = ?", field, value)
 		}
 	}
+	applyTitleFilter(string(r.RequestCtx.QueryArgs().Peek("title_field")), string(r.RequestCtx.QueryArgs().Peek("title_value")))
+	applyTitleFilter(string(r.RequestCtx.QueryArgs().Peek("title_field2")), string(r.RequestCtx.QueryArgs().Peek("title_value2")))
 	if search := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("search"))); search != "" {
 		like := "%" + search + "%"
 		q = q.Joins("LEFT JOIN contacts ON contacts.id = rsvp_responses.contact_id").
