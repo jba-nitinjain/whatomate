@@ -396,7 +396,7 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 
 	// Try to match flow trigger keywords first (before greeting to avoid duplicate messages)
 	if flow := a.matchFlowTrigger(account.OrganizationID, account.Name, messageText); flow != nil {
-		a.startFlow(account, session, contact, flow)
+		a.startFlow(account, session, contact, flow, messageText, buttonID)
 		return
 	}
 
@@ -847,7 +847,7 @@ func (a *App) matchFlowTrigger(orgID uuid.UUID, accountName, messageText string)
 }
 
 // startFlow initiates a chatbot flow for a user
-func (a *App) startFlow(account *models.WhatsAppAccount, session *models.ChatbotSession, contact *models.Contact, flow *models.ChatbotFlow) {
+func (a *App) startFlow(account *models.WhatsAppAccount, session *models.ChatbotSession, contact *models.Contact, flow *models.ChatbotFlow, triggerText, triggerButtonID string) {
 	a.Log.Info("Starting flow", "flow_id", flow.ID, "flow_name", flow.Name, "contact", contact.PhoneNumber, "num_steps", len(flow.Steps))
 
 	// Log all steps for debugging
@@ -931,11 +931,47 @@ func (a *App) startFlow(account *models.WhatsAppAccount, session *models.Chatbot
 		session.CurrentStep = firstStep.StepName
 		a.DB.Model(session).Update("current_step", firstStep.StepName)
 
+		// If the flow was triggered by an input that already answers the first
+		// (reply-button) step — e.g. tapping the invite template's Attending / Not
+		// Attending button — consume it as that step's answer and advance to the
+		// next question, instead of asking the same thing again. Later steps still
+		// wait for the guest (reply-button steps never auto-advance), so this cannot
+		// skip ahead to completion.
+		if stepHasReplyButtons(firstStep) && triggerMatchesStepButton(firstStep, triggerText, triggerButtonID) {
+			a.processFlowResponse(account, session, contact, triggerText, triggerButtonID, nil)
+			return
+		}
+
 		a.sendStepWithSkipCheck(account, session, contact, firstStep, flow, nil)
 	} else {
 		// No steps, complete the flow
 		a.completeFlow(account, session, contact, flow)
 	}
+}
+
+// triggerMatchesStepButton reports whether the triggering input matches one of the
+// step's reply buttons, by button id or title (case-insensitive).
+func triggerMatchesStepButton(step *models.ChatbotFlowStep, text, buttonID string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	buttonID = strings.TrimSpace(buttonID)
+	for i, raw := range step.Buttons {
+		b, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id, _ := b["id"].(string)
+		if id == "" {
+			id = fmt.Sprintf("btn_%d", i+1)
+		}
+		title, _ := b["title"].(string)
+		if buttonID != "" && buttonID == id {
+			return true
+		}
+		if text != "" && (strings.ToLower(title) == text || strings.ToLower(id) == text) {
+			return true
+		}
+	}
+	return false
 }
 
 // sendFlowInitialMedia downloads the flow's initial media, uploads it to Meta,

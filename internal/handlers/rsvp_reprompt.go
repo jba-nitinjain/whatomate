@@ -56,7 +56,7 @@ func (a *App) RepromptRSVPFlowSessions(r *fastglue.Request) error {
 			continue
 		}
 		session, _ := a.getOrCreateSession(orgID, contact.ID, account.Name, contact.PhoneNumber, timeoutMins)
-		a.startFlow(account, session, &contact, flow)
+		a.startFlow(account, session, &contact, flow, "", "")
 		reprompted++
 	}
 
