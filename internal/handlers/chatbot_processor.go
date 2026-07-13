@@ -1147,10 +1147,11 @@ func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *mode
 				}
 				if strings.ToLower(btnTitle) == userInputLower || btnID == userInput {
 					isValidButton = true
-					// Set buttonID if not already set (user typed the button text)
-					if buttonID == "" {
-						buttonID = btnID
-					}
+					// Route by the matched button's canonical id, even when the reply
+					// carried a different payload (e.g. a template quick-reply whose
+					// payload differs from the flow's button id). Otherwise
+					// conditional_next lookup misses and falls through to completion.
+					buttonID = btnID
 					break
 				}
 			}
