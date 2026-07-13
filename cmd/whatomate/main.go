@@ -734,6 +734,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/rsvp-events/{id}/flow-form", app.GenerateRSVPFlowForm)
 	g.GET("/api/rsvp-events/{id}/reprompt/preview", app.RepromptPreview)
 	g.POST("/api/rsvp-events/{id}/reprompt", app.RepromptRSVPFlowSessions)
+	g.POST("/api/rsvp-events/{id}/recover-partials", app.RecoverRSVPPartials)
 
 	// Reprocess a received message through the chatbot flow
 	g.POST("/api/chat/messages/{id}/reprocess", app.ReprocessMessageFlow)

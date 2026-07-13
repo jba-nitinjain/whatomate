@@ -18,7 +18,7 @@ import {
 import { PageHeader, DataTable, SearchInput, type Column } from '@/components/shared'
 import { rsvpService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
-import { BarChart3, Download, Pencil, Trash2, Send } from 'lucide-vue-next'
+import { BarChart3, Download, Pencil, Trash2, Send, DownloadCloud } from 'lucide-vue-next'
 
 interface RSVPRow { id: string; phone_number: string; attendance: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; reprompted_at?: string; contact?: { profile_name?: string } }
 
@@ -223,6 +223,22 @@ function attendanceLabel(v: string): string {
 }
 function exportXlsx() { window.open(rsvpService.exportUrl(id), '_blank') }
 
+const recovering = ref(false)
+// Commit partial answers left in abandoned chatbot sessions into the results.
+async function recoverPartials() {
+  recovering.value = true
+  try {
+    const r = await rsvpService.recoverPartials(id)
+    const n = (r.data as any)?.data?.recovered ?? (r.data as any)?.recovered ?? 0
+    toast.success(t('rsvp.recoverDone', { count: n }))
+    await Promise.all([loadTally(), loadResponses()])
+  } catch (error: any) {
+    toast.error(error?.response?.data?.message || t('rsvp.recoverFailed'))
+  } finally {
+    recovering.value = false
+  }
+}
+
 const reprompting = ref(false)
 const repromptOpen = ref(false)
 const repromptTargets = ref<{ phone: string; name: string; reason: string; reprompted_at?: string }[]>([])
@@ -296,6 +312,10 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
   <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <PageHeader :title="t('rsvp.resultsTitle')" :icon="BarChart3" back-link="/rsvp">
       <template #actions>
+        <Button variant="outline" size="sm" :disabled="recovering" @click="recoverPartials" :title="t('rsvp.recoverHint')">
+          <DownloadCloud class="h-4 w-4 mr-2" />
+          {{ t('rsvp.recover') }}
+        </Button>
         <Button variant="outline" size="sm" :disabled="reprompting" @click="reprompt">
           <Send class="h-4 w-4 mr-2" />
           {{ t('rsvp.reprompt') }}

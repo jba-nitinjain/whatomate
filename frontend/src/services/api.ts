@@ -1673,6 +1673,7 @@ export const rsvpService = {
   repromptPreview: (id: string) => api.get(`/rsvp-events/${id}/reprompt/preview`),
   reprompt: (id: string, phones?: string[]) =>
     api.post(`/rsvp-events/${id}/reprompt`, phones && phones.length ? { phones } : {}),
+  recoverPartials: (id: string) => api.post(`/rsvp-events/${id}/recover-partials`),
   sendInvites: (id: string, contactIds: string[]) =>
     api.post(`/rsvp-events/${id}/send-invites`, { contact_ids: contactIds }),
   exportUrl: (id: string) => `${api.defaults.baseURL}/rsvp-events/${id}/export`,
