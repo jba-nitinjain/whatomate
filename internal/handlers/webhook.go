@@ -116,6 +116,10 @@ type WebhookPayload struct {
 					Text      *struct {
 						Body string `json:"body"`
 					} `json:"text,omitempty"`
+					Button *struct {
+						Payload string `json:"payload"`
+						Text    string `json:"text"`
+					} `json:"button,omitempty"`
 					Image *struct {
 						ID       string `json:"id"`
 						MimeType string `json:"mime_type"`
