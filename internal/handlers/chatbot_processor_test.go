@@ -629,7 +629,7 @@ func TestStartFlow_UpdatesSession(t *testing.T) {
 	require.NoError(t, app.DB.Create(flow).Error)
 
 	// startFlow with no steps should call completeFlow
-	app.startFlow(account, session, contact, flow, "", "")
+	app.startFlow(account, session, contact, flow)
 
 	// Verify session was updated: since there are no steps, completeFlow is called
 	var dbSession models.ChatbotSession
@@ -680,7 +680,7 @@ func TestStartFlow_WithSteps(t *testing.T) {
 	require.NoError(t, app.DB.Create(flow).Error)
 
 	// startFlow sets current_flow_id and current_step on the session
-	app.startFlow(account, session, contact, flow, "", "")
+	app.startFlow(account, session, contact, flow)
 
 	var dbSession models.ChatbotSession
 	require.NoError(t, app.DB.First(&dbSession, session.ID).Error)

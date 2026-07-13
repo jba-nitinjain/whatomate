@@ -60,6 +60,6 @@ func (a *App) runFlowEntryForMessage(account *models.WhatsAppAccount, contact *m
 		return
 	}
 	if flow := a.matchFlowTrigger(account.OrganizationID, account.Name, messageText); flow != nil {
-		a.startFlow(account, session, contact, flow, messageText, "")
+		a.startFlow(account, session, contact, flow)
 	}
 }

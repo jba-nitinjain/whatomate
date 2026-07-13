@@ -18,7 +18,7 @@ import {
 import { PageHeader, DataTable, type Column } from '@/components/shared'
 import { rsvpService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
-import { BarChart3, Download, Pencil, Trash2 } from 'lucide-vue-next'
+import { BarChart3, Download, Pencil, Trash2, Send } from 'lucide-vue-next'
 
 interface RSVPRow { id: string; phone_number: string; attendance: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; contact?: { profile_name?: string } }
 
@@ -140,6 +140,20 @@ function attendanceLabel(v: string): string {
 }
 function exportXlsx() { window.open(rsvpService.exportUrl(id), '_blank') }
 
+const reprompting = ref(false)
+async function reprompt() {
+  reprompting.value = true
+  try {
+    const r = await rsvpService.reprompt(id)
+    const n = (r.data as any)?.data?.reprompted ?? (r.data as any)?.reprompted ?? 0
+    toast.success(t('rsvp.repromptSent', { count: n }))
+  } catch (error: any) {
+    toast.error(error?.response?.data?.message || t('rsvp.repromptFailed'))
+  } finally {
+    reprompting.value = false
+  }
+}
+
 onMounted(async () => {
   isLoading.value = true
   try {
@@ -156,6 +170,10 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
   <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <PageHeader :title="t('rsvp.resultsTitle')" :icon="BarChart3" back-link="/rsvp">
       <template #actions>
+        <Button variant="outline" size="sm" :disabled="reprompting" @click="reprompt">
+          <Send class="h-4 w-4 mr-2" />
+          {{ t('rsvp.reprompt') }}
+        </Button>
         <Button variant="outline" size="sm" @click="exportXlsx">
           <Download class="h-4 w-4 mr-2" />
           {{ t('rsvp.export') }}
