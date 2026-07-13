@@ -57,3 +57,8 @@ audio/
 
 # Test results
 test-results/
+
+# Playwright MCP debug artifacts
+.playwright-mcp/
+chat-*.png
+chat-console.log
