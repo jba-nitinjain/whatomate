@@ -6,9 +6,11 @@ import (
 	"github.com/zerodha/fastglue"
 )
 
-// RepromptRSVPFlowSessions re-sends the current step's message to guests who are
-// stuck mid-flow for an event (active sessions that never completed), so replies
-// missed earlier can be answered and captured.
+// RepromptRSVPFlowSessions re-runs the RSVP flow for guests whose response is
+// still pending — i.e. they started the flow but never recorded a valid
+// attendance (stuck mid-flow, or completed the flow without their answer being
+// captured). Pending rows don't trip the duplicate guard, so the flow restarts
+// cleanly and their answers are captured this time.
 func (a *App) RepromptRSVPFlowSessions(r *fastglue.Request) error {
 	orgID, err := a.getOrgID(r)
 	if err != nil {
@@ -31,41 +33,35 @@ func (a *App) RepromptRSVPFlowSessions(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load flow", nil, "")
 	}
 
-	var sessions []models.ChatbotSession
-	if err := a.DB.Where("organization_id = ? AND current_flow_id = ? AND status = ?",
-		orgID, *event.FlowID, models.SessionStatus("active")).Find(&sessions).Error; err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load sessions", nil, "")
+	var pending []models.RSVPResponse
+	if err := a.DB.Where("organization_id = ? AND rsvp_event_id = ? AND attendance = ?",
+		orgID, event.ID, models.RSVPAttendancePending).Find(&pending).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load responses", nil, "")
 	}
 
-	stepByName := make(map[string]*models.ChatbotFlowStep, len(flow.Steps))
-	for i := range flow.Steps {
-		stepByName[flow.Steps[i].StepName] = &flow.Steps[i]
+	timeoutMins := 1440
+	if settings, err := a.getChatbotSettingsCached(orgID, event.WhatsAppAccount); err == nil && settings.SessionTimeoutMins > 0 {
+		timeoutMins = settings.SessionTimeoutMins
 	}
 
 	reprompted := 0
-	for i := range sessions {
-		s := &sessions[i]
-		if evID, _ := s.SessionData[rsvpEventIDKey].(string); evID != event.ID.String() {
-			continue
-		}
-		step := stepByName[s.CurrentStep]
-		if step == nil {
-			continue
-		}
-		account, err := a.resolveWhatsAppAccount(orgID, s.WhatsAppAccount)
+	for i := range pending {
+		resp := &pending[i]
+		account, err := a.resolveWhatsAppAccount(orgID, event.WhatsAppAccount)
 		if err != nil {
 			continue
 		}
 		var contact models.Contact
-		if err := a.DB.Where("id = ? AND organization_id = ?", s.ContactID, orgID).First(&contact).Error; err != nil {
+		if err := a.DB.Where("id = ? AND organization_id = ?", resp.ContactID, orgID).First(&contact).Error; err != nil {
 			continue
 		}
-		a.sendStepMessage(account, s, &contact, step)
+		session, _ := a.getOrCreateSession(orgID, contact.ID, account.Name, contact.PhoneNumber, timeoutMins)
+		a.startFlow(account, session, &contact, flow)
 		reprompted++
 	}
 
 	return r.SendEnvelope(map[string]interface{}{
 		"reprompted": reprompted,
-		"message":    "Re-prompt sent to guests still in the flow.",
+		"message":    "Re-sent the RSVP flow to guests with a pending response.",
 	})
 }
