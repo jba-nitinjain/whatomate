@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+
 	"github.com/google/uuid"
 	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
@@ -148,6 +150,28 @@ func (a *App) RepromptRSVPFlowSessions(r *fastglue.Request) error {
 	targets, err := a.computeRepromptTargets(orgID, event)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to compute targets", nil, "")
+	}
+
+	// Optional: restrict to a selected subset of phone numbers (matched by trailing
+	// digits so format differences don't matter).
+	var body struct {
+		Phones []string `json:"phones"`
+	}
+	_ = json.Unmarshal(r.RequestCtx.PostBody(), &body)
+	if len(body.Phones) > 0 {
+		selected := map[string]bool{}
+		for _, p := range body.Phones {
+			if suffix := phoneMatchSuffix(p); suffix != "" {
+				selected[suffix] = true
+			}
+		}
+		filtered := targets[:0]
+		for _, t := range targets {
+			if selected[phoneMatchSuffix(t.Phone)] {
+				filtered = append(filtered, t)
+			}
+		}
+		targets = filtered
 	}
 
 	timeoutMins := 1440

@@ -15,7 +15,7 @@ import {
 import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '@/components/ui/select'
-import { PageHeader, DataTable, type Column } from '@/components/shared'
+import { PageHeader, DataTable, SearchInput, type Column } from '@/components/shared'
 import { rsvpService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
 import { BarChart3, Download, Pencil, Trash2, Send } from 'lucide-vue-next'
@@ -29,6 +29,11 @@ const id = route.params.id as string
 const tally = ref<Record<string, number>>({ yes: 0, no: 0, maybe: 0, pending: 0, total: 0 })
 const responses = ref<RSVPRow[]>([])
 const isLoading = ref(true)
+const searchQuery = ref('')
+const page = ref(1)
+const pageSize = 20
+const total = ref(0)
+let searchTimer: number | undefined
 let timer: number | undefined
 const cards = ['yes', 'no', 'maybe', 'pending', 'total']
 const attendanceOptions = ['pending', 'yes', 'no', 'maybe']
@@ -130,10 +135,16 @@ async function loadTally() {
   tally.value = (r.data as any).data || r.data
 }
 async function loadResponses() {
-  const r = await rsvpService.responses(id)
+  const r = await rsvpService.responses(id, { search: searchQuery.value || undefined, page: page.value, limit: pageSize })
   const d = (r.data as any).data || r.data
   responses.value = d.responses || []
+  total.value = d.total || 0
 }
+function onSearch() {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(() => { page.value = 1; loadResponses() }, 300)
+}
+function onPageChange(p: number) { page.value = p; loadResponses() }
 function attendanceLabel(v: string): string {
   const key = 'rsvp.' + v
   return t(key) !== key ? t(key) : v
@@ -144,6 +155,25 @@ const reprompting = ref(false)
 const repromptOpen = ref(false)
 const repromptTargets = ref<{ phone: string; name: string; reason: string }[]>([])
 const repromptMessage = ref('')
+const repromptSearch = ref('')
+const selectedPhones = ref<Set<string>>(new Set())
+
+const filteredTargets = computed(() => {
+  const q = repromptSearch.value.toLowerCase().trim()
+  if (!q) return repromptTargets.value
+  return repromptTargets.value.filter(t => (t.name || '').toLowerCase().includes(q) || (t.phone || '').includes(q))
+})
+
+function toggleTarget(phone: string) {
+  const s = new Set(selectedPhones.value)
+  if (s.has(phone)) s.delete(phone); else s.add(phone)
+  selectedPhones.value = s
+}
+function toggleAllVisible(check: boolean) {
+  const s = new Set(selectedPhones.value)
+  filteredTargets.value.forEach(t => { if (check) s.add(t.phone); else s.delete(t.phone) })
+  selectedPhones.value = s
+}
 
 // Preview who will be messaged and what, before sending.
 async function reprompt() {
@@ -153,6 +183,8 @@ async function reprompt() {
     const d = (r.data as any)?.data || r.data
     repromptTargets.value = d.targets || []
     repromptMessage.value = d.message || ''
+    repromptSearch.value = ''
+    selectedPhones.value = new Set(repromptTargets.value.map(t => t.phone))
     repromptOpen.value = true
   } catch (error: any) {
     toast.error(error?.response?.data?.message || t('rsvp.repromptFailed'))
@@ -164,7 +196,7 @@ async function reprompt() {
 async function confirmReprompt() {
   reprompting.value = true
   try {
-    const r = await rsvpService.reprompt(id)
+    const r = await rsvpService.reprompt(id, [...selectedPhones.value])
     const n = (r.data as any)?.data?.reprompted ?? (r.data as any)?.reprompted ?? 0
     toast.success(t('rsvp.repromptSent', { count: n }))
     repromptOpen.value = false
@@ -215,6 +247,9 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 
           <Card>
             <CardContent class="pt-6">
+              <div class="mb-4 flex justify-end">
+                <SearchInput v-model="searchQuery" :placeholder="t('rsvp.searchResponses')" class="w-72" @update:model-value="onSearch" />
+              </div>
               <DataTable
                 :items="responses"
                 :columns="columns"
@@ -222,6 +257,11 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                 :empty-icon="BarChart3"
                 :empty-title="t('rsvp.noResponses')"
                 item-name="responses"
+                server-pagination
+                :current-page="page"
+                :total-items="total"
+                :page-size="pageSize"
+                @page-change="onPageChange"
               >
                 <template #cell-name="{ item }">
                   <span class="font-medium">{{ item.contact?.profile_name || '—' }}</span>
@@ -267,20 +307,28 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
             <div class="text-xs bg-muted/40 rounded p-2 max-h-32 overflow-y-auto whitespace-pre-wrap">{{ repromptMessage || '—' }}</div>
           </div>
           <div class="space-y-1">
-            <Label class="text-xs">{{ t('rsvp.repromptRecipients') }} ({{ repromptTargets.length }})</Label>
-            <div class="border rounded max-h-56 overflow-y-auto divide-y">
-              <div v-for="(tg, i) in repromptTargets" :key="i" class="flex items-center justify-between px-2 py-1 text-xs">
-                <span>{{ tg.name || '—' }} <span class="text-muted-foreground">{{ tg.phone }}</span></span>
-                <span class="text-[10px] text-muted-foreground">{{ tg.reason }}</span>
+            <div class="flex items-center justify-between">
+              <Label class="text-xs">{{ t('rsvp.repromptRecipients') }} ({{ selectedPhones.size }}/{{ repromptTargets.length }})</Label>
+              <div class="flex items-center gap-2">
+                <button type="button" class="text-[10px] text-primary hover:underline" @click="toggleAllVisible(true)">{{ t('rsvp.selectAll') }}</button>
+                <button type="button" class="text-[10px] text-primary hover:underline" @click="toggleAllVisible(false)">{{ t('rsvp.clearSelection') }}</button>
               </div>
-              <div v-if="!repromptTargets.length" class="px-2 py-3 text-center text-xs text-muted-foreground">{{ t('rsvp.noResponses') }}</div>
+            </div>
+            <Input v-model="repromptSearch" :placeholder="t('rsvp.searchResponses')" class="h-7 text-xs" />
+            <div class="border rounded max-h-56 overflow-y-auto divide-y">
+              <label v-for="(tg, i) in filteredTargets" :key="i" class="flex items-center gap-2 px-2 py-1 text-xs cursor-pointer">
+                <input type="checkbox" :checked="selectedPhones.has(tg.phone)" @change="toggleTarget(tg.phone)" />
+                <span class="flex-1">{{ tg.name || '—' }} <span class="text-muted-foreground">{{ tg.phone }}</span></span>
+                <span class="text-[10px] text-muted-foreground">{{ tg.reason }}</span>
+              </label>
+              <div v-if="!filteredTargets.length" class="px-2 py-3 text-center text-xs text-muted-foreground">{{ t('rsvp.noResponses') }}</div>
             </div>
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" @click="repromptOpen = false" :disabled="reprompting">{{ t('common.cancel') }}</Button>
-          <Button @click="confirmReprompt" :disabled="reprompting || !repromptTargets.length">
-            {{ t('rsvp.repromptSendNow', { count: repromptTargets.length }) }}
+          <Button @click="confirmReprompt" :disabled="reprompting || !selectedPhones.size">
+            {{ t('rsvp.repromptSendNow', { count: selectedPhones.size }) }}
           </Button>
         </DialogFooter>
       </DialogContent>

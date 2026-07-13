@@ -1220,6 +1220,10 @@ func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *mode
 		a.Log.Info("Stored WhatsApp Flow response in session", "fields", len(flowResponseData))
 	}
 
+	// Persist the RSVP response incrementally so a partial answer set is kept even
+	// if the guest abandons the flow before completing it. No-op for non-RSVP flows.
+	a.finalizeRSVPFromSession(session)
+
 	// Determine next step
 	nextStepName := currentStep.NextStep
 	if nextStepName == "" && currentStepIndex+1 < len(flow.Steps) {

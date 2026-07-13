@@ -1659,7 +1659,7 @@ export const rsvpService = {
   delete: (id: string) => api.delete(`/rsvp-events/${id}`),
   activate: (id: string) => api.post(`/rsvp-events/${id}/activate`),
   close: (id: string) => api.post(`/rsvp-events/${id}/close`),
-  responses: (id: string, params?: { attendance?: string; page?: number; limit?: number }) =>
+  responses: (id: string, params?: { attendance?: string; search?: string; page?: number; limit?: number }) =>
     api.get(`/rsvp-events/${id}/responses`, { params }),
   updateResponse: (
     id: string,
@@ -1671,7 +1671,8 @@ export const rsvpService = {
   tally: (id: string) => api.get(`/rsvp-events/${id}/tally`),
   generateFlowForm: (id: string) => api.post(`/rsvp-events/${id}/flow-form`),
   repromptPreview: (id: string) => api.get(`/rsvp-events/${id}/reprompt/preview`),
-  reprompt: (id: string) => api.post(`/rsvp-events/${id}/reprompt`),
+  reprompt: (id: string, phones?: string[]) =>
+    api.post(`/rsvp-events/${id}/reprompt`, phones && phones.length ? { phones } : {}),
   sendInvites: (id: string, contactIds: string[]) =>
     api.post(`/rsvp-events/${id}/send-invites`, { contact_ids: contactIds }),
   exportUrl: (id: string) => `${api.defaults.baseURL}/rsvp-events/${id}/export`,

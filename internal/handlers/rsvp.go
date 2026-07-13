@@ -321,9 +321,14 @@ func (a *App) ListRSVPResponses(r *fastglue.Request) error {
 	}
 	pg := parsePagination(r)
 	q := a.DB.Model(&models.RSVPResponse{}).
-		Where("organization_id = ? AND rsvp_event_id = ?", orgID, eventID)
+		Where("rsvp_responses.organization_id = ? AND rsvp_responses.rsvp_event_id = ?", orgID, eventID)
 	if status := string(r.RequestCtx.QueryArgs().Peek("attendance")); status != "" {
-		q = q.Where("attendance = ?", status)
+		q = q.Where("rsvp_responses.attendance = ?", status)
+	}
+	if search := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("search"))); search != "" {
+		like := "%" + search + "%"
+		q = q.Joins("LEFT JOIN contacts ON contacts.id = rsvp_responses.contact_id").
+			Where("rsvp_responses.phone_number LIKE ? OR contacts.profile_name ILIKE ?", like, like)
 	}
 	var total int64
 	q.Count(&total)
