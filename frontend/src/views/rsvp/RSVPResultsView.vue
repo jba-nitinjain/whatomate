@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, onErrorCaptured, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
@@ -46,9 +46,26 @@ const spouseFilter = ref('')
 const selectedGuestIds = ref<Set<string>>(new Set())
 const guestManagerOpen = ref(false)
 const reminderManagerOpen = ref(false)
+const reminderRenderError = ref('')
 let searchTimer: number | undefined
 let timer: number | undefined
 const attendanceOptions = ['pending', 'yes', 'no', 'maybe']
+
+function openReminderManager() {
+  reminderRenderError.value = ''
+  reminderManagerOpen.value = true
+}
+
+function closeReminderManager() {
+  reminderManagerOpen.value = false
+  reminderRenderError.value = ''
+}
+
+onErrorCaptured((error) => {
+  if (!reminderManagerOpen.value) return
+  reminderRenderError.value = error instanceof Error ? error.message : String(error)
+  return false
+})
 
 interface Bucket { label: string; field: 'member_status' | 'spouse_status'; value: string; count: number }
 interface CardGroup { title: string; field: string; buckets: Bucket[] }
@@ -341,7 +358,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
       <template #actions>
         <Button variant="outline" size="sm" @click="guestManagerOpen = true"><Users class="h-4 w-4 mr-2" />{{ t('rsvp.manageGuests') }}</Button>
         <Button variant="outline" size="sm" :disabled="!selectedRows.length" @click="sendInvitations"><Mail class="h-4 w-4 mr-2" />{{ t('rsvp.sendInvites') }}</Button>
-        <Button variant="outline" size="sm" @click="reminderManagerOpen = true"><Bell class="h-4 w-4 mr-2" />{{ t('rsvp.reminders') }}</Button>
+        <Button variant="outline" size="sm" @click="openReminderManager"><Bell class="h-4 w-4 mr-2" />{{ t('rsvp.reminders') }}</Button>
         <Button variant="outline" size="sm" :disabled="recovering" @click="recoverPartials" :title="t('rsvp.recoverHint')">
           <DownloadCloud class="h-4 w-4 mr-2" />
           {{ t('rsvp.recover') }}
@@ -454,7 +471,18 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
     </ScrollArea>
 
     <RSVPGuestManagerDialog v-model:open="guestManagerOpen" :event-id="id" @changed="loadResponses" />
-    <RSVPReminderDialog v-model:open="reminderManagerOpen" :event-id="id" :selected-ids="selectedReminderIds" @changed="loadResponses" />
+    <RSVPReminderDialog v-if="!reminderRenderError" v-model:open="reminderManagerOpen" :event-id="id" :selected-ids="selectedReminderIds" @changed="loadResponses" />
+    <Teleport to="body">
+      <div v-if="reminderManagerOpen && reminderRenderError" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+        <section role="alertdialog" aria-modal="true" aria-labelledby="rsvp-reminder-error-title" class="w-full max-w-lg space-y-4 rounded-lg border bg-background p-6 shadow-lg">
+          <div>
+            <h2 id="rsvp-reminder-error-title" class="text-lg font-semibold">{{ t('rsvp.reminderLoadFailed') }}</h2>
+            <p class="mt-2 break-words rounded-md bg-destructive/10 p-3 text-sm text-destructive">{{ reminderRenderError }}</p>
+          </div>
+          <div class="flex justify-end"><Button variant="outline" @click="closeReminderManager">{{ t('common.close') }}</Button></div>
+        </section>
+      </div>
+    </Teleport>
 
     <Dialog v-model:open="repromptOpen">
       <DialogContent class="max-w-lg">
