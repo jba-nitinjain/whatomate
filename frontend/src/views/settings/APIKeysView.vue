@@ -118,6 +118,7 @@ async function createAPIKey() {
     closeCreateDialog()
     isKeyDisplayOpen.value = true
     formData.value = { ...defaultFormData }
+    currentPage.value = 1
     await fetchItems()
     toast.success(t('common.createdSuccess', { resource: t('resources.APIKey') }))
   } catch (error) { toast.error(getErrorMessage(error, t('common.failedCreate', { resource: t('resources.APIKey') }))) }
