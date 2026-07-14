@@ -485,6 +485,11 @@ func (a *App) GetRSVPTally(r *fastglue.Request) error {
 	if err != nil {
 		return nil
 	}
+	var ev models.RSVPEvent
+	if err := a.DB.Select("attendance_field", "spouse_mobile_field").
+		Where("id = ? AND organization_id = ?", eventID, orgID).First(&ev).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "RSVP event not found", nil, "")
+	}
 	type row struct {
 		Attendance models.RSVPAttendance
 		Count      int
@@ -527,17 +532,23 @@ func (a *App) GetRSVPTally(r *fastglue.Request) error {
 	}
 
 	attendanceField := "attendance"
-	var ev models.RSVPEvent
-	if err := a.DB.Select("attendance_field").
-		Where("id = ? AND organization_id = ?", eventID, orgID).First(&ev).Error; err == nil && ev.AttendanceField != "" {
+	if ev.AttendanceField != "" {
 		attendanceField = ev.AttendanceField
 	}
+	var responses []models.RSVPResponse
+	if err := a.DB.Select("attendance", "answers").
+		Where("organization_id = ? AND rsvp_event_id = ?", orgID, eventID).Find(&responses).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to tally RSVP responses", nil, "")
+	}
+	attendanceBreakdown := buildRSVPAttendanceBreakdown(responses, ev.SpouseMobileField)
 
 	return r.SendEnvelope(map[string]interface{}{
 		"yes": out["yes"], "no": out["no"], "maybe": out["maybe"],
 		"pending": out["pending"], "total": out["total"],
-		"breakdowns":       breakdowns,
-		"attendance_field": attendanceField,
+		"breakdowns":        breakdowns,
+		"attendance_field":  attendanceField,
+		"member_attendance": attendanceBreakdown.Member,
+		"spouse_attendance": attendanceBreakdown.Spouse,
 	})
 }
 

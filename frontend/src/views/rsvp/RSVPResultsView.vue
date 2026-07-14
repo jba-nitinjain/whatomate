@@ -23,15 +23,16 @@ import { formatDateTimeIST } from '@/lib/utils'
 import { BarChart3, Bell, Download, Mail, Pencil, Trash2, Send, DownloadCloud, Users } from 'lucide-vue-next'
 
 interface RSVPRow { id: string; contact_id: string; phone_number: string; attendance: string; source: string; journey_status: string; invite_sent_at?: string; reminder_count: number; last_reminder_at?: string; rsvp_started_at?: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; reprompted_at?: string; contact?: { profile_name?: string } }
+interface AttendanceCounts { attending: number; not_attending: number; maybe: number; pending: number }
+interface RSVPTally extends AttendanceCounts { yes: number; no: number; total: number; member_attendance: AttendanceCounts; spouse_attendance: AttendanceCounts }
 
 const { t } = useI18n()
 const route = useRoute()
 const id = route.params.id as string
 
-const tally = ref<Record<string, number>>({ yes: 0, no: 0, maybe: 0, pending: 0, total: 0 })
-const breakdowns = ref<Record<string, Record<string, number>>>({})
+const emptyAttendance = (): AttendanceCounts => ({ attending: 0, not_attending: 0, maybe: 0, pending: 0 })
+const tally = ref<RSVPTally>({ yes: 0, no: 0, total: 0, ...emptyAttendance(), member_attendance: emptyAttendance(), spouse_attendance: emptyAttendance() })
 const attendanceField = ref('attendance')
-const selected = ref<Record<string, string>>({}) // title field -> value (member + spouse combine as AND)
 const responses = ref<RSVPRow[]>([])
 const isLoading = ref(true)
 const searchQuery = ref('')
@@ -40,7 +41,8 @@ const pageSize = 20
 const total = ref(0)
 const journeyCounts = ref({ not_started: 0, in_progress: 0, responded: 0 })
 const journeyFilter = ref('')
-const attendanceFilter = ref('')
+const memberFilter = ref('')
+const spouseFilter = ref('')
 const selectedGuestIds = ref<Set<string>>(new Set())
 const guestManagerOpen = ref(false)
 const reminderManagerOpen = ref(false)
@@ -48,53 +50,34 @@ let searchTimer: number | undefined
 let timer: number | undefined
 const attendanceOptions = ['pending', 'yes', 'no', 'maybe']
 
-interface Bucket { label: string; field: string; value: string; count: number }
+interface Bucket { label: string; field: 'member_status' | 'spouse_status'; value: string; count: number }
 interface CardGroup { title: string; field: string; buckets: Bucket[] }
 
-// Build a clickable card group for a "*_title" answer field: one card per actual
-// value (dynamic) plus a Pending card for unanswered guests.
-function buildGroup(title: string, field: string): CardGroup {
-  const map = breakdowns.value[field] || {}
-  const buckets: Bucket[] = Object.entries(map)
-    .sort((a, b) => b[1] - a[1])
-    .map(([value, count]) => ({ label: value, field, value, count }))
-  const answered = buckets.reduce((s, b) => s + b.count, 0)
-  buckets.push({ label: t('rsvp.pending'), field, value: '__pending__', count: Math.max((tally.value.total || 0) - answered, 0) })
+function buildGroup(title: string, field: 'member_status' | 'spouse_status', counts: AttendanceCounts): CardGroup {
+  const buckets: Bucket[] = [
+    { label: t('rsvp.yes'), field, value: 'attending', count: counts.attending },
+    { label: t('rsvp.no'), field, value: 'not_attending', count: counts.not_attending },
+  ]
+  if (counts.maybe > 0) buckets.push({ label: t('rsvp.maybe'), field, value: 'maybe', count: counts.maybe })
+  buckets.push({ label: t('rsvp.pending'), field, value: 'pending', count: counts.pending })
   return { title, field, buckets }
 }
 
-const memberGroup = computed(() => buildGroup(t('rsvp.memberAttendance'), attendanceField.value + '_title'))
-const spouseGroup = computed(() => {
-  const key = Object.keys(breakdowns.value).find(k => k.includes('spouse')) || 'spouse_attendance_title'
-  return buildGroup(t('rsvp.spouseAttendance'), key)
-})
+const memberGroup = computed(() => buildGroup(t('rsvp.memberAttendance'), 'member_status', tally.value.member_attendance))
+const spouseGroup = computed(() => buildGroup(t('rsvp.spouseAttendance'), 'spouse_status', tally.value.spouse_attendance))
 const cardGroups = computed<CardGroup[]>(() => [memberGroup.value, spouseGroup.value])
 
-function isActive(field: string, value: string) { return selected.value[field] === value }
-function toggleCardFilter(field: string, value: string) {
-  const next = { ...selected.value }
-  if (next[field] === value) delete next[field]
-  else next[field] = value
-  selected.value = next
+function isActive(field: string, value: string) { return (field === 'member_status' ? memberFilter.value : spouseFilter.value) === value }
+function toggleCardFilter(field: 'member_status' | 'spouse_status', value: string) {
+  const target = field === 'member_status' ? memberFilter : spouseFilter
+  target.value = target.value === value ? '' : value
   page.value = 1
   loadResponses()
 }
-function clearFilter() { selected.value = {}; page.value = 1; loadResponses() }
-const hasFilter = computed(() => Object.keys(selected.value).length > 0)
-
-// Active-filter chips (one per selected group) shown above the table.
-const activeChips = computed(() =>
-  cardGroups.value
-    .filter(g => selected.value[g.field] != null)
-    .map(g => {
-      const v = selected.value[g.field]
-      return { field: g.field, value: v, group: g.title, label: v === '__pending__' ? t('rsvp.pending') : v }
-    }),
-)
 
 // Semantic colour for a bucket value: attending=green, not-attending=red, pending=amber.
 function bucketTone(value: string): 'yes' | 'no' | 'pending' | 'neutral' {
-  if (value === '__pending__') return 'pending'
+  if (value === 'pending') return 'pending'
   const v = value.toLowerCase()
   if (v.includes('not') || v === 'no') return 'no'
   if (v.includes('attend') || v.includes('yes')) return 'yes'
@@ -117,6 +100,8 @@ const answerKeys = computed<string[]>(() => {
 })
 
 function prettyKey(k: string): string {
+  if (k === attendanceField.value + '_title') return t('rsvp.memberAttendance')
+  if (k === 'spouse_attendance_title') return t('rsvp.spouseAttendance')
   return k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
@@ -206,8 +191,12 @@ async function confirmDelete() {
 async function loadTally() {
   const r = await rsvpService.tally(id)
   const d = (r.data as any).data || r.data
-  tally.value = { yes: d.yes || 0, no: d.no || 0, maybe: d.maybe || 0, pending: d.pending || 0, total: d.total || 0 }
-  breakdowns.value = d.breakdowns || {}
+  tally.value = {
+    yes: d.yes || 0, no: d.no || 0, maybe: d.maybe || 0, pending: d.pending || 0, total: d.total || 0,
+    attending: d.yes || 0, not_attending: d.no || 0,
+    member_attendance: { ...emptyAttendance(), ...(d.member_attendance || {}) },
+    spouse_attendance: { ...emptyAttendance(), ...(d.spouse_attendance || {}) },
+  }
   attendanceField.value = d.attendance_field || 'attendance'
 }
 async function loadResponses() {
@@ -216,7 +205,8 @@ async function loadResponses() {
     page: page.value,
     limit: pageSize,
     journey_status: journeyFilter.value || undefined,
-    attendance: attendanceFilter.value || undefined,
+    member_status: memberFilter.value || undefined,
+    spouse_status: spouseFilter.value || undefined,
   })
   const d = (r.data as any).data || r.data
   responses.value = d.guests || []
@@ -235,7 +225,6 @@ function attendanceLabel(v: string): string {
 function exportXlsx() { window.open(rsvpService.exportUrl(id), '_blank') }
 
 function setJourneyFilter(value: string) { journeyFilter.value = journeyFilter.value === value ? '' : value; page.value = 1; loadResponses() }
-function setAttendanceFilter(value: string) { attendanceFilter.value = attendanceFilter.value === value ? '' : value; page.value = 1; loadResponses() }
 function journeyCount(value: string) { return journeyCounts.value[value as keyof typeof journeyCounts.value] || 0 }
 function toggleGuest(id: string) { const next = new Set(selectedGuestIds.value); if (next.has(id)) next.delete(id); else next.add(id); selectedGuestIds.value = next }
 const selectedRows = computed(() => responses.value.filter(row => selectedGuestIds.value.has(row.id)))
@@ -365,34 +354,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
             <button type="button" class="rounded-xl border p-4 text-left" :class="!journeyFilter ? 'border-primary bg-primary/5' : ''" @click="journeyFilter = ''; loadResponses()"><div class="text-xs text-muted-foreground">{{ t('rsvp.total') }}</div><div class="text-3xl font-bold">{{ tally.total }}</div></button>
             <button v-for="status in ['not_started', 'in_progress', 'responded']" :key="status" type="button" class="rounded-xl border p-4 text-left" :class="journeyFilter === status ? 'border-primary bg-primary/5' : ''" @click="setJourneyFilter(status)"><div class="text-xs text-muted-foreground">{{ t('rsvp.' + status) }}</div><div class="text-3xl font-bold">{{ journeyCount(status) }}</div></button>
           </div>
-          <div class="grid gap-3 sm:grid-cols-3">
-            <button v-for="status in ['yes', 'no', 'maybe']" :key="status" type="button" class="rounded-xl border p-3 text-left" :class="attendanceFilter === status ? 'border-primary bg-primary/5' : ''" @click="setAttendanceFilter(status)"><div class="text-xs text-muted-foreground">{{ t('rsvp.' + status) }}</div><div class="text-2xl font-bold">{{ tally[status] || 0 }}</div></button>
-          </div>
-          <div v-if="false" class="space-y-4">
-            <!-- Total + active filter chips -->
-            <div class="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                @click="clearFilter"
-                :class="['rounded-xl border px-5 py-3 text-left transition min-w-[130px]', !hasFilter ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:bg-muted/40']"
-              >
-                <div class="text-xs font-medium text-muted-foreground">{{ t('rsvp.total') }}</div>
-                <div class="text-3xl font-bold tabular-nums">{{ tally.total }}</div>
-              </button>
-              <div v-if="hasFilter" class="flex flex-wrap items-center gap-2">
-                <span
-                  v-for="c in activeChips"
-                  :key="c.field"
-                  class="inline-flex items-center gap-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium px-3 py-1.5"
-                >
-                  {{ c.group }}: {{ c.label }}
-                  <button type="button" class="hover:text-primary/60" @click="toggleCardFilter(c.field, c.value)">✕</button>
-                </span>
-                <button type="button" class="text-xs text-muted-foreground hover:underline" @click="clearFilter">{{ t('rsvp.clearFilter') }}</button>
-              </div>
-            </div>
-
-            <!-- Member / Spouse groups -->
+          <div class="space-y-4">
             <div class="grid gap-4 md:grid-cols-2">
               <div v-for="grp in cardGroups" :key="grp.field" class="rounded-xl border bg-card p-4">
                 <div class="mb-3 text-sm font-semibold">{{ grp.title }}</div>

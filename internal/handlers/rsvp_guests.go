@@ -142,7 +142,8 @@ func (a *App) ListRSVPGuests(r *fastglue.Request) error {
 	if err != nil {
 		return nil
 	}
-	if _, err = findByIDAndOrg[models.RSVPEvent](a.DB, r, eventID, orgID, "RSVP event"); err != nil {
+	event, err := findByIDAndOrg[models.RSVPEvent](a.DB, r, eventID, orgID, "RSVP event")
+	if err != nil {
 		return nil
 	}
 	pg := parsePagination(r)
@@ -157,6 +158,31 @@ func (a *App) ListRSVPGuests(r *fastglue.Request) error {
 	}
 	if v := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("attendance"))); v != "" {
 		q = q.Where("rsvp_responses.attendance = ?", v)
+	}
+	if v := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("member_status"))); v != "" {
+		attendance := map[string]string{"attending": "yes", "not_attending": "no", "maybe": "maybe", "pending": "pending"}[v]
+		if attendance != "" {
+			q = q.Where("rsvp_responses.attendance = ?", attendance)
+		}
+	}
+	if v := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("spouse_status"))); v != "" {
+		mobileField := event.SpouseMobileField
+		if strings.TrimSpace(mobileField) == "" {
+			mobileField = "spouse_mobile"
+		}
+		answerSQL := `LOWER(TRIM(COALESCE(NULLIF(rsvp_responses.answers ->> 'spouse_attendance', ''), rsvp_responses.answers ->> 'spouse_attendance_title', '')))`
+		phoneSQL := `LENGTH(regexp_replace(COALESCE(rsvp_responses.answers ->> ?, ''), '[^0-9]', '', 'g'))`
+		switch v {
+		case "attending":
+			q = q.Where(answerSQL+" IN ?", []string{"yes", "attending"})
+		case "not_attending":
+			q = q.Where(answerSQL+" IN ?", []string{"no", "not attending", "not_attending"})
+		case "maybe":
+			q = q.Where(answerSQL + " = 'maybe'")
+		case "pending":
+			q = q.Where("("+answerSQL+" IN ? AND "+phoneSQL+" < 10) OR NOT ("+answerSQL+" IN ? OR "+answerSQL+" IN ? OR "+answerSQL+" = 'maybe')",
+				[]string{"yes", "attending"}, mobileField, []string{"yes", "attending"}, []string{"no", "not attending", "not_attending"})
+		}
 	}
 	if v := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("source"))); v != "" {
 		q = q.Where("rsvp_responses.source = ?", v)

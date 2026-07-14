@@ -1661,7 +1661,7 @@ export const rsvpService = {
   close: (id: string) => api.post(`/rsvp-events/${id}/close`),
   responses: (id: string, params?: { attendance?: string; search?: string; page?: number; limit?: number; title_field?: string; title_value?: string; title_field2?: string; title_value2?: string }) =>
     api.get(`/rsvp-events/${id}/responses`, { params }),
-  guests: (id: string, params?: { journey_status?: string; attendance?: string; source?: string; reminded?: string; search?: string; page?: number; limit?: number }) =>
+  guests: (id: string, params?: { journey_status?: string; attendance?: string; member_status?: string; spouse_status?: string; source?: string; reminded?: string; search?: string; page?: number; limit?: number }) =>
     api.get(`/rsvp-events/${id}/guests`, { params }),
   guestCandidates: (id: string, params?: { search?: string; page?: number; limit?: number }) =>
     api.get(`/rsvp-events/${id}/guest-candidates`, { params }),

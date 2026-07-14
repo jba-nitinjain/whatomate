@@ -39,6 +39,7 @@ If the local shell does not have Go installed, note that explicitly instead of c
 - The chat repair backend flows are preview/scan/apply under `/api/admin/chat-repair`; opening the tab remains read-only, and the explicit `Scan Candidates` action auto-applies safe move candidates, including same-location chats whose active messages still drift from the resolved organization/account.
 - WhatsApp onboarding now has a resumable hybrid wizard under Settings → Accounts, backed by `/api/accounts/onboarding/sessions/*` plus super-admin-only app-level Meta config at `/api/settings/meta-onboarding`. Keep new onboarding work session-first and preserve the legacy `/api/accounts` CRUD/manual editor for break-glass maintenance.
 - RSVP events support `guest_list` and `open_keyword` admission. `RSVPResponse` is the unified guest/response roster: `rsvp_started_at` distinguishes never-started guests from incomplete flows, reminders target only never-started guests, and incomplete flows remain under the re-prompt workflow. Adding or importing guests never sends a message; invitations and reminders are explicit actions.
+- RSVP result tallies expose independent Member Attendance and Spouse Attendance counts. An attending spouse without a valid configured spouse-mobile answer is counted in both Spouse Attending and Spouse Pending until the contact is completed; this does not change the member's attendance count.
 
 ## Docker Publishing Rule
 
