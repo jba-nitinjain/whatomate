@@ -140,6 +140,7 @@ type RSVPReminderSchedule struct {
 	OrganizationID uuid.UUID                  `gorm:"type:uuid;index;not null" json:"organization_id"`
 	ScheduledAt    time.Time                  `gorm:"index;not null" json:"scheduled_at"`
 	TemplateID     uuid.UUID                  `gorm:"type:uuid;not null" json:"template_id"`
+	TemplateParams JSONB                      `gorm:"type:jsonb;default:'{}'" json:"template_params"`
 	Status         RSVPReminderScheduleStatus `gorm:"size:40;index;not null;default:'pending'" json:"status"`
 	SentCount      int                        `json:"sent_count"`
 	FailedCount    int                        `json:"failed_count"`

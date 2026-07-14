@@ -68,7 +68,7 @@ func (a *App) ListTemplates(r *fastglue.Request) error {
 		query = query.Where("whats_app_account = ?", accountName)
 	}
 	if status != "" {
-		query = query.Where("status = ?", status)
+		query = query.Where("UPPER(status) = UPPER(?)", status)
 	}
 	if category != "" {
 		query = query.Where("category = ?", category)

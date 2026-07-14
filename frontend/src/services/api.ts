@@ -1689,10 +1689,10 @@ export const rsvpService = {
     api.post(`/rsvp-events/${id}/send-invites`, { contact_ids: contactIds }),
   reminderPreview: (id: string, responseIds?: string[]) =>
     api.get(`/rsvp-events/${id}/reminders/preview`, { params: responseIds?.length ? { response_ids: responseIds.join(',') } : undefined }),
-  sendReminders: (id: string, data: { response_ids?: string[]; all_not_started?: boolean; template_id?: string }) =>
+  sendReminders: (id: string, data: { response_ids?: string[]; exclude_response_ids?: string[]; all_not_started?: boolean; template_id?: string; template_params?: Record<string, string> }) =>
     api.post(`/rsvp-events/${id}/reminders/send`, data),
   listReminders: (id: string) => api.get(`/rsvp-events/${id}/reminders`),
-  createReminder: (id: string, data: { scheduled_at: string; template_id: string }) =>
+  createReminder: (id: string, data: { scheduled_at: string; template_id: string; template_params?: Record<string, string> }) =>
     api.post(`/rsvp-events/${id}/reminders`, data),
   cancelReminder: (id: string, scheduleId: string) =>
     api.delete(`/rsvp-events/${id}/reminders/${scheduleId}`),

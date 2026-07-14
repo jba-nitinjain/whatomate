@@ -48,10 +48,14 @@ func TestLoadNotStartedRSVPGuests(t *testing.T) {
 	}
 	require.NoError(t, db.Create(&rows).Error)
 
-	eligible, err := app.loadNotStartedRSVPGuests(org.ID, event.ID, nil)
+	eligible, err := app.loadNotStartedRSVPGuests(org.ID, event.ID, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, eligible, 1)
 	assert.Equal(t, contactA.ID, eligible[0].ContactID)
+
+	excluded, err := app.loadNotStartedRSVPGuests(org.ID, event.ID, nil, []uuid.UUID{rows[0].ID})
+	require.NoError(t, err)
+	assert.Empty(t, excluded)
 	assert.True(t, app.rsvpGuestListed(event.ID, contactA.ID))
 	assert.False(t, app.rsvpGuestListed(event.ID, uuid.New()))
 }
@@ -60,4 +64,32 @@ func TestRSVPAccessModeValidation(t *testing.T) {
 	assert.True(t, validRSVPAccessMode(models.RSVPAccessModeGuestList))
 	assert.True(t, validRSVPAccessMode(models.RSVPAccessModeOpenKeyword))
 	assert.False(t, validRSVPAccessMode(models.RSVPAccessMode("public")))
+}
+
+func TestResolveRSVPReminderParams(t *testing.T) {
+	eventDate := time.Date(2026, time.July, 19, 0, 0, 0, 0, time.UTC)
+	event := &models.RSVPEvent{Name: "Annual Gathering", Description: "Main hall", Keyword: "JOIN", EventDate: &eventDate}
+	contact := &models.Contact{ProfileName: "Asha Member", PhoneNumber: "919876543210"}
+	response := &models.RSVPResponse{PhoneNumber: contact.PhoneNumber, Contact: contact, Answers: models.JSONB{"city": "Chennai"}}
+
+	got := resolveRSVPReminderParams(map[string]string{
+		"1": "{{member_name}}",
+		"2": "{{event_name}} on {{event_date}}",
+		"3": "Desk A",
+		"4": "{{answer.city}}",
+	}, event, response)
+
+	assert.Equal(t, "Asha Member", got["1"])
+	assert.Equal(t, "Annual Gathering on 19/07/2026", got["2"])
+	assert.Equal(t, "Desk A", got["3"])
+	assert.Equal(t, "Chennai", got["4"])
+}
+
+func TestValidateRSVPReminderParams(t *testing.T) {
+	template := &models.Template{BodyContent: "Hello {{1}}, welcome to {{event_label}}"}
+	err := validateRSVPReminderParams(template, map[string]string{"1": "{{member_name}}"})
+	require.EqualError(t, err, "map reminder template parameters: event_label")
+	require.NoError(t, validateRSVPReminderParams(template, map[string]string{
+		"1": "{{member_name}}", "event_label": "{{event_name}}",
+	}))
 }

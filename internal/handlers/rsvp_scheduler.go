@@ -44,12 +44,12 @@ func (a *App) ProcessDueRSVPReminders(ctx context.Context) {
 			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": 1, "processed_at": now})
 			continue
 		}
-		rows, err := a.loadNotStartedRSVPGuests(schedule.OrganizationID, schedule.RSVPEventID, nil)
+		rows, err := a.loadNotStartedRSVPGuests(schedule.OrganizationID, schedule.RSVPEventID, nil, nil)
 		if err != nil {
 			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": 1, "processed_at": now})
 			continue
 		}
-		result := a.sendRSVPReminders(&event, &schedule.TemplateID, rows, models.RSVPReminderDeliveryScheduled, &schedule.ID, nil)
+		result := a.sendRSVPReminders(&event, &schedule.TemplateID, jsonbToStringMap(schedule.TemplateParams), rows, models.RSVPReminderDeliveryScheduled, &schedule.ID, nil)
 		sent := result["sent"].(int)
 		failed := result["failed"].(int)
 		status := models.RSVPReminderScheduleCompleted

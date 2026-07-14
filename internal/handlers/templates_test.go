@@ -296,7 +296,7 @@ func TestApp_ListTemplates_FilterByAccount(t *testing.T) {
 	}
 }
 
-func TestApp_ListTemplates_FilterByStatus(t *testing.T) {
+func TestApp_ListTemplates_FilterByStatusCaseInsensitive(t *testing.T) {
 	t.Parallel()
 
 	app := newTestApp(t)
@@ -310,7 +310,9 @@ func TestApp_ListTemplates_FilterByStatus(t *testing.T) {
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
-	testutil.SetQueryParam(req, "status", "APPROVED")
+	// Frontend query parameters are lowercase while Meta statuses are stored
+	// uppercase. The API must treat those representations as equivalent.
+	testutil.SetQueryParam(req, "status", "approved")
 
 	err := app.ListTemplates(req)
 	require.NoError(t, err)

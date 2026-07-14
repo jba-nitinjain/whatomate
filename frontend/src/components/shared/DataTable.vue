@@ -53,6 +53,7 @@ const emit = defineEmits<{
 
 defineSlots<{
   [key: `cell-${string}`]: (props: { item: T; index: number }) => any
+  [key: `header-${string}`]: (props: { column: Column<T> }) => any
   empty: () => any
   'empty-action': () => any
 }>()
@@ -209,26 +210,28 @@ function getRowKey(item: T, index: number): string {
               ]"
               @click="handleSort(col)"
             >
-              <div
-                :class="[
-                  'flex items-center gap-1',
-                  col.align === 'right' && 'justify-end',
-                  col.align === 'center' && 'justify-center',
-                ]"
-              >
-                {{ col.label }}
-                <template v-if="col.sortable">
-                  <ArrowUp
-                    v-if="sortKey === (col.sortKey || col.key) && sortDirection === 'asc'"
-                    class="h-3 w-3"
-                  />
-                  <ArrowDown
-                    v-else-if="sortKey === (col.sortKey || col.key) && sortDirection === 'desc'"
-                    class="h-3 w-3"
-                  />
-                  <ArrowUpDown v-else class="h-3 w-3 opacity-30" />
-                </template>
-              </div>
+              <slot :name="`header-${col.key}`" :column="col">
+                <div
+                  :class="[
+                    'flex items-center gap-1',
+                    col.align === 'right' && 'justify-end',
+                    col.align === 'center' && 'justify-center',
+                  ]"
+                >
+                  {{ col.label }}
+                  <template v-if="col.sortable">
+                    <ArrowUp
+                      v-if="sortKey === (col.sortKey || col.key) && sortDirection === 'asc'"
+                      class="h-3 w-3"
+                    />
+                    <ArrowDown
+                      v-else-if="sortKey === (col.sortKey || col.key) && sortDirection === 'desc'"
+                      class="h-3 w-3"
+                    />
+                    <ArrowUpDown v-else class="h-3 w-3 opacity-30" />
+                  </template>
+                </div>
+              </slot>
             </TableHead>
           </TableRow>
         </TableHeader>

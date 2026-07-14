@@ -47,8 +47,11 @@ async function loadFlows() {
 }
 async function loadTemplates() {
   try {
-    const list = unwrap(await templatesService.list({ status: 'approved', limit: 200 }), 'templates')
-    templates.value = list.length ? list : unwrap(await templatesService.list({ limit: 200 }), 'templates')
+    templates.value = unwrap(await templatesService.list({
+      status: 'APPROVED',
+      account: form.value.whatsapp_account || undefined,
+      limit: 200,
+    }), 'templates')
   } catch { templates.value = [] }
 }
 
@@ -72,7 +75,8 @@ async function load() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadAccounts(), loadFlows(), loadTemplates(), load()])
+  await load()
+  await Promise.all([loadAccounts(), loadFlows(), loadTemplates()])
 })
 
 function payload() {

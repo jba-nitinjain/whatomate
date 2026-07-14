@@ -210,6 +210,8 @@ async function loadResponses() {
   })
   const d = (r.data as any).data || r.data
   responses.value = d.guests || []
+  const visibleIds = new Set(responses.value.map(row => row.id))
+  selectedGuestIds.value = new Set([...selectedGuestIds.value].filter(responseId => visibleIds.has(responseId)))
   total.value = d.total || 0
   journeyCounts.value = d.journey_counts || { not_started: 0, in_progress: 0, responded: 0 }
 }
@@ -227,6 +229,14 @@ function exportXlsx() { window.open(rsvpService.exportUrl(id), '_blank') }
 function setJourneyFilter(value: string) { journeyFilter.value = journeyFilter.value === value ? '' : value; page.value = 1; loadResponses() }
 function journeyCount(value: string) { return journeyCounts.value[value as keyof typeof journeyCounts.value] || 0 }
 function toggleGuest(id: string) { const next = new Set(selectedGuestIds.value); if (next.has(id)) next.delete(id); else next.add(id); selectedGuestIds.value = next }
+const allVisibleSelected = computed(() => responses.value.length > 0 && responses.value.every(row => selectedGuestIds.value.has(row.id)))
+const someVisibleSelected = computed(() => !allVisibleSelected.value && responses.value.some(row => selectedGuestIds.value.has(row.id)))
+function toggleVisibleGuests() {
+  const next = new Set(selectedGuestIds.value)
+  if (allVisibleSelected.value) responses.value.forEach(row => next.delete(row.id))
+  else responses.value.forEach(row => next.add(row.id))
+  selectedGuestIds.value = next
+}
 const selectedRows = computed(() => responses.value.filter(row => selectedGuestIds.value.has(row.id)))
 const selectedReminderIds = computed(() => selectedRows.value.filter(row => row.journey_status === 'not_started').map(row => row.id))
 async function sendInvitations() {
@@ -380,7 +390,10 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
           <Card>
             <CardContent class="pt-6">
               <div class="mb-4 flex items-center justify-between gap-3">
-                <span class="text-sm text-muted-foreground">{{ t('rsvp.selectedGuests', { count: selectedGuestIds.size }) }}</span>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm text-muted-foreground">{{ t('rsvp.selectedGuests', { count: selectedGuestIds.size }) }}</span>
+                  <Button variant="ghost" size="sm" :disabled="!responses.length" @click="toggleVisibleGuests">{{ allVisibleSelected ? t('rsvp.clearSelection') : t('rsvp.selectAll') }}</Button>
+                </div>
                 <SearchInput v-model="searchQuery" :placeholder="t('rsvp.searchResponses')" class="w-72" @update:model-value="onSearch" />
               </div>
               <DataTable
@@ -396,6 +409,9 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                 :page-size="pageSize"
                 @page-change="onPageChange"
               >
+                <template #header-select>
+                  <input type="checkbox" :checked="allVisibleSelected" :indeterminate="someVisibleSelected" :aria-label="t('rsvp.selectAll')" @change="toggleVisibleGuests" />
+                </template>
                 <template #cell-select="{ item }"><input type="checkbox" :checked="selectedGuestIds.has(item.id)" @change="toggleGuest(item.id)" /></template>
                 <template #cell-name="{ item }">
                   <span class="font-medium">{{ item.contact?.profile_name || '—' }}</span>

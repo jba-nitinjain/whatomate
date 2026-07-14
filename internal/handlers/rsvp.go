@@ -13,6 +13,7 @@ import (
 	"github.com/zerodha/fastglue"
 
 	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/templateutil"
 	"github.com/nikyjain/whatomate/pkg/whatsapp"
 )
 
@@ -626,6 +627,10 @@ func (a *App) SendRSVPInvites(r *fastglue.Request) error {
 // sendRSVPInviteTemplate sends the given template to one contact using the WhatsApp client.
 // Best-effort: logs and returns on any misconfiguration or send error.
 func (a *App) sendRSVPInviteTemplate(event *models.RSVPEvent, templateID *uuid.UUID, contact *models.Contact) (string, error) {
+	return a.sendRSVPTemplateWithParams(event, templateID, contact, nil)
+}
+
+func (a *App) sendRSVPTemplateWithParams(event *models.RSVPEvent, templateID *uuid.UUID, contact *models.Contact, templateParams map[string]string) (string, error) {
 	if templateID == nil {
 		return "", fmt.Errorf("template is not configured")
 	}
@@ -644,9 +649,14 @@ func (a *App) sendRSVPInviteTemplate(event *models.RSVPEvent, templateID *uuid.U
 	if a.WhatsApp == nil {
 		return "", fmt.Errorf("WhatsApp client is unavailable")
 	}
+	if err := validateRSVPReminderParams(&template, templateParams); err != nil {
+		return "", err
+	}
 	// Build template components the same way campaign/template sends do, and honor the
 	// account's delivery route (marketing-lite vs standard).
-	components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(nil, nil, nil, template.Buttons, template.HeaderType, "", "")
+	bodyParams := templateutil.ResolveParamsMapFromMap(templateutil.ExtParamNames(template.BodyContent), templateParams)
+	buttonParams, _ := templateutil.ResolveURLButtonParamsFromMap(template.Buttons, templateParams)
+	components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(bodyParams, buttonParams, nil, template.Buttons, template.HeaderType, "", "")
 	waAccount := a.toWhatsAppAccount(&account)
 	var messageID string
 	var err error

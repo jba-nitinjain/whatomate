@@ -1,52 +1,126 @@
 package handlers
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/templateutil"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 )
 
 type rsvpReminderSendRequest struct {
-	ResponseIDs   []string `json:"response_ids"`
-	AllNotStarted bool     `json:"all_not_started"`
-	TemplateID    *string  `json:"template_id"`
+	ResponseIDs        []string          `json:"response_ids"`
+	ExcludeResponseIDs []string          `json:"exclude_response_ids"`
+	AllNotStarted      bool              `json:"all_not_started"`
+	TemplateID         *string           `json:"template_id"`
+	TemplateParams     map[string]string `json:"template_params"`
 }
 
 type rsvpReminderScheduleRequest struct {
-	ScheduledAt time.Time `json:"scheduled_at"`
-	TemplateID  string    `json:"template_id"`
+	ScheduledAt    time.Time         `json:"scheduled_at"`
+	TemplateID     string            `json:"template_id"`
+	TemplateParams map[string]string `json:"template_params"`
 }
 
-func (a *App) rsvpReminderTemplate(orgID uuid.UUID, event *models.RSVPEvent, raw *string) (*uuid.UUID, error) {
+func rsvpReminderRequiredParams(template *models.Template) []string {
+	seen := map[string]bool{}
+	params := []string{}
+	for _, name := range append(templateutil.ExtParamNames(template.BodyContent), templateutil.ExtractURLButtonParamNames(template.Buttons)...) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			params = append(params, name)
+		}
+	}
+	return params
+}
+
+func validateRSVPReminderParams(template *models.Template, params map[string]string) error {
+	missing := []string{}
+	for _, name := range rsvpReminderRequiredParams(template) {
+		if strings.TrimSpace(params[name]) == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("map reminder template parameters: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func rsvpReminderParamsJSON(params map[string]string) models.JSONB {
+	out := models.JSONB{}
+	for key, value := range params {
+		out[key] = value
+	}
+	return out
+}
+
+func resolveRSVPReminderParams(params map[string]string, event *models.RSVPEvent, response *models.RSVPResponse) map[string]string {
+	if len(params) == 0 {
+		return nil
+	}
+	memberName := response.PhoneNumber
+	if response.Contact != nil && strings.TrimSpace(response.Contact.ProfileName) != "" {
+		memberName = response.Contact.ProfileName
+	}
+	eventDate := ""
+	if event.EventDate != nil {
+		eventDate = event.EventDate.Format("02/01/2006")
+	}
+	replacer := strings.NewReplacer(
+		"{{member_name}}", memberName, "{{member.name}}", memberName,
+		"{{member_phone}}", response.PhoneNumber, "{{member.phone}}", response.PhoneNumber,
+		"{{event_name}}", event.Name, "{{event.name}}", event.Name,
+		"{{event_date}}", eventDate, "{{event.date}}", eventDate,
+		"{{event_description}}", event.Description, "{{event.description}}", event.Description,
+		"{{event_keyword}}", event.Keyword, "{{event.keyword}}", event.Keyword,
+	)
+	resolved := make(map[string]string, len(params))
+	for key, raw := range params {
+		value := replacer.Replace(raw)
+		for answerKey, answerValue := range response.Answers {
+			value = strings.ReplaceAll(value, "{{answer."+answerKey+"}}", fmt.Sprint(answerValue))
+		}
+		resolved[key] = value
+	}
+	return resolved
+}
+
+func (a *App) rsvpReminderTemplate(orgID uuid.UUID, event *models.RSVPEvent, raw *string) (*uuid.UUID, *models.Template, error) {
 	templateID := event.ReminderTemplateID
 	if raw != nil && strings.TrimSpace(*raw) != "" {
 		parsed, err := uuid.Parse(strings.TrimSpace(*raw))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		templateID = &parsed
 	}
 	if templateID == nil {
-		return nil, &rsvpError{"reminder template is required"}
+		return nil, nil, &rsvpError{"reminder template is required"}
 	}
 	var template models.Template
 	if err := a.DB.Where("id = ? AND organization_id = ? AND whats_app_account = ?", *templateID, orgID, event.WhatsAppAccount).First(&template).Error; err != nil {
-		return nil, &rsvpError{"reminder template was not found for this WhatsApp account"}
+		return nil, nil, &rsvpError{"reminder template was not found for this WhatsApp account"}
 	}
 	if !strings.EqualFold(template.Status, "APPROVED") {
-		return nil, &rsvpError{"reminder template must be approved"}
+		return nil, nil, &rsvpError{"reminder template must be approved"}
 	}
-	return templateID, nil
+	return templateID, &template, nil
 }
 
-func (a *App) loadNotStartedRSVPGuests(orgID, eventID uuid.UUID, responseIDs []uuid.UUID) ([]models.RSVPResponse, error) {
+func (a *App) loadNotStartedRSVPGuests(orgID, eventID uuid.UUID, responseIDs, excludeResponseIDs []uuid.UUID) ([]models.RSVPResponse, error) {
 	q := a.DB.Where("organization_id = ? AND rsvp_event_id = ? AND rsvp_started_at IS NULL AND responded_at IS NULL", orgID, eventID)
 	if len(responseIDs) > 0 {
 		q = q.Where("id IN ?", responseIDs)
+	}
+	if len(excludeResponseIDs) > 0 {
+		q = q.Where("id NOT IN ?", excludeResponseIDs)
 	}
 	var rows []models.RSVPResponse
 	err := q.Preload("Contact").Find(&rows).Error
@@ -91,7 +165,7 @@ func (a *App) RSVPReminderPreview(r *fastglue.Request) error {
 		parts = strings.Split(raw, ",")
 	}
 	ids, invalid := parseRSVPResponseIDs(parts)
-	rows, loadErr := a.loadNotStartedRSVPGuests(orgID, eventID, ids)
+	rows, loadErr := a.loadNotStartedRSVPGuests(orgID, eventID, ids, nil)
 	if loadErr != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to preview reminders", nil, "")
 	}
@@ -99,7 +173,7 @@ func (a *App) RSVPReminderPreview(r *fastglue.Request) error {
 	return r.SendEnvelope(map[string]interface{}{"eligible": len(rows), "ineligible": maxInt(0, len(parts)-len(rows)), "invalid": invalid, "configured": configured})
 }
 
-func (a *App) sendRSVPReminders(event *models.RSVPEvent, templateID *uuid.UUID, rows []models.RSVPResponse, deliveryType models.RSVPReminderDeliveryType, scheduleID *uuid.UUID, initiatedBy *uuid.UUID) map[string]interface{} {
+func (a *App) sendRSVPReminders(event *models.RSVPEvent, templateID *uuid.UUID, templateParams map[string]string, rows []models.RSVPResponse, deliveryType models.RSVPReminderDeliveryType, scheduleID *uuid.UUID, initiatedBy *uuid.UUID) map[string]interface{} {
 	sent, failed, skipped := 0, 0, 0
 	errors := []map[string]string{}
 	for i := range rows {
@@ -117,7 +191,8 @@ func (a *App) sendRSVPReminders(event *models.RSVPEvent, templateID *uuid.UUID, 
 			skipped++
 			continue
 		}
-		messageID, err := a.sendRSVPInviteTemplate(event, templateID, fresh.Contact)
+		resolvedParams := resolveRSVPReminderParams(templateParams, event, &fresh)
+		messageID, err := a.sendRSVPTemplateWithParams(event, templateID, fresh.Contact, resolvedParams)
 		if err != nil {
 			failed++
 			a.DB.Model(&delivery).Updates(map[string]interface{}{"status": models.RSVPReminderDeliveryFailed, "error_message": err.Error()})
@@ -151,21 +226,25 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 		return nil
 	}
 	ids, invalid := parseRSVPResponseIDs(req.ResponseIDs)
+	excludedIDs, _ := parseRSVPResponseIDs(req.ExcludeResponseIDs)
 	if !req.AllNotStarted && len(ids) == 0 {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Select guests or request all not-started guests", nil, "")
 	}
-	templateID, err := a.rsvpReminderTemplate(orgID, event, req.TemplateID)
+	templateID, template, err := a.rsvpReminderTemplate(orgID, event, req.TemplateID)
 	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
+	if err := validateRSVPReminderParams(template, req.TemplateParams); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 	if req.AllNotStarted {
 		ids = nil
 	}
-	rows, err := a.loadNotStartedRSVPGuests(orgID, eventID, ids)
+	rows, err := a.loadNotStartedRSVPGuests(orgID, eventID, ids, excludedIDs)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load reminder recipients", nil, "")
 	}
-	result := a.sendRSVPReminders(event, templateID, rows, models.RSVPReminderDeliveryManual, nil, &userID)
+	result := a.sendRSVPReminders(event, templateID, req.TemplateParams, rows, models.RSVPReminderDeliveryManual, nil, &userID)
 	result["skipped"] = result["skipped"].(int) + invalid + maxInt(0, len(ids)-len(rows))
 	if req.AllNotStarted {
 		result["requested"] = len(rows)
@@ -228,11 +307,14 @@ func (a *App) CreateRSVPReminderSchedule(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "scheduled_at must be in the future", nil, "")
 	}
 	templateRaw := req.TemplateID
-	templateID, err := a.rsvpReminderTemplate(orgID, event, &templateRaw)
+	templateID, template, err := a.rsvpReminderTemplate(orgID, event, &templateRaw)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
-	schedule := models.RSVPReminderSchedule{BaseModel: models.BaseModel{ID: uuid.New()}, RSVPEventID: eventID, OrganizationID: orgID, ScheduledAt: req.ScheduledAt.UTC(), TemplateID: *templateID, Status: models.RSVPReminderSchedulePending, CreatedBy: userID}
+	if err := validateRSVPReminderParams(template, req.TemplateParams); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
+	schedule := models.RSVPReminderSchedule{BaseModel: models.BaseModel{ID: uuid.New()}, RSVPEventID: eventID, OrganizationID: orgID, ScheduledAt: req.ScheduledAt.UTC(), TemplateID: *templateID, TemplateParams: rsvpReminderParamsJSON(req.TemplateParams), Status: models.RSVPReminderSchedulePending, CreatedBy: userID}
 	if err := a.DB.Create(&schedule).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to schedule reminder", nil, "")
 	}
