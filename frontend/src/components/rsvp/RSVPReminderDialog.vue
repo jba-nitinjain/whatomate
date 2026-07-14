@@ -4,6 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import { rsvpService, templatesService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/api-utils'
+import { responseCollection, responsePayload, templateParameterNames } from './reminder-dialog-utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
@@ -22,6 +24,7 @@ const templateParams = ref<Record<string, string>>({})
 const scheduledAt = ref('')
 const loading = ref(false)
 const guestLoading = ref(false)
+const loadError = ref('')
 const guests = ref<Guest[]>([])
 const guestSearch = ref('')
 const guestPage = ref(1)
@@ -35,16 +38,7 @@ const guestPages = computed(() => Math.max(1, Math.ceil(filteredGuestTotal.value
 const includedCount = computed(() => Math.max(0, recipientTotal.value - excludedIds.value.size))
 const selectedSendCount = computed(() => props.selectedIds.filter(id => !excludedIds.value.has(id)).length)
 const selectedTemplate = computed(() => templates.value.find(template => template.id === templateId.value))
-const templateParamNames = computed(() => {
-  const template = selectedTemplate.value
-  if (!template) return []
-  const contents = [template.body_content || '']
-  for (const button of template.buttons || []) {
-    if (String(button?.type || '').toUpperCase() === 'URL') contents.push(button.url || '')
-  }
-  const matches = contents.join('\n').match(/\{\{([^}]+)\}\}/g) || []
-  return [...new Set(matches.map(value => value.replace(/\{\{|\}\}/g, '').trim()).filter(Boolean))]
-})
+const templateParamNames = computed(() => templateParameterNames(selectedTemplate.value))
 const missingTemplateParams = computed(() => templateParamNames.value.filter(name => !String(templateParams.value[name] || '').trim()))
 
 function syncTemplateParams() {
@@ -53,8 +47,26 @@ function syncTemplateParams() {
   templateParams.value = next
 }
 
-function unwrap(response: any, key: string) { const data = response?.data?.data || response?.data || {}; return data[key] || [] }
 function formatTemplateParam(name: string) { return '{' + '{' + name + '}' + '}' }
+function isRecord(value: unknown): value is Record<string, any> { return !!value && typeof value === 'object' && !Array.isArray(value) }
+function isGuest(value: unknown): value is Guest { return isRecord(value) && typeof value.id === 'string' && typeof value.phone_number === 'string' }
+function validSchedules(response: any) {
+  return responseCollection<Schedule>(response, 'reminders').filter(item => isRecord(item) && typeof item.id === 'string' && typeof item.scheduled_at === 'string')
+}
+function validTemplates(response: any) { return responseCollection<any>(response, 'templates').filter(isRecord) }
+function formatScheduleDate(value: unknown) { return typeof value === 'string' ? formatDateTimeIST(value) : '' }
+
+function applyRecipientResponse(response: any) {
+  const data = responsePayload(response)
+  guests.value = Array.isArray(data.guests) ? data.guests.filter(isGuest) : []
+  filteredGuestTotal.value = typeof data.total === 'number' ? data.total : 0
+  if (!guestSearch.value) recipientTotal.value = filteredGuestTotal.value
+}
+
+function loadErrorMessage(error?: unknown) {
+  const fallback = t('rsvp.reminderLoadFailed')
+  return error ? getErrorMessage(error, fallback) : fallback
+}
 
 async function loadRecipients() {
   guestLoading.value = true
@@ -63,10 +75,12 @@ async function loadRecipients() {
       journey_status: 'not_started', search: guestSearch.value || undefined,
       page: guestPage.value, limit: guestLimit,
     })
-    const data = (response.data as any).data || response.data
-    guests.value = data.guests || []
-    filteredGuestTotal.value = data.total || 0
-    if (!guestSearch.value) recipientTotal.value = data.total || 0
+    applyRecipientResponse(response)
+  } catch (error) {
+    guests.value = []
+    filteredGuestTotal.value = 0
+    loadError.value = loadErrorMessage(error)
+    toast.error(loadError.value)
   } finally { guestLoading.value = false }
 }
 
@@ -76,18 +90,40 @@ async function load() {
   templateParams.value = {}
   guestSearch.value = ''
   guestPage.value = 1
+  loadError.value = ''
   try {
     const eventResponse = await rsvpService.get(props.eventId)
-    const event = (eventResponse.data as any).data || eventResponse.data
-    const [scheduleResponse, templateResponse] = await Promise.all([
+    const event = responsePayload(eventResponse)
+    const [scheduleResult, templateResult, recipientResult] = await Promise.allSettled([
       rsvpService.listReminders(props.eventId),
       templatesService.list({ status: 'APPROVED', account: event.whatsapp_account, limit: 200 }),
-      loadRecipients(),
+      rsvpService.guests(props.eventId, { journey_status: 'not_started', page: 1, limit: guestLimit }),
     ])
-    schedules.value = unwrap(scheduleResponse, 'reminders')
-    templates.value = unwrap(templateResponse, 'templates')
+    const errors: unknown[] = []
+
+    if (scheduleResult.status === 'fulfilled') schedules.value = validSchedules(scheduleResult.value)
+    else { schedules.value = []; errors.push(scheduleResult.reason) }
+
+    if (templateResult.status === 'fulfilled') templates.value = validTemplates(templateResult.value)
+    else { templates.value = []; errors.push(templateResult.reason) }
+
+    if (recipientResult.status === 'fulfilled') applyRecipientResponse(recipientResult.value)
+    else { guests.value = []; filteredGuestTotal.value = 0; recipientTotal.value = 0; errors.push(recipientResult.reason) }
+
     templateId.value = event.reminder_template_id || ''
     syncTemplateParams()
+    if (errors.length) {
+      loadError.value = loadErrorMessage(errors[0])
+      toast.error(loadError.value)
+    }
+  } catch (error) {
+    schedules.value = []
+    templates.value = []
+    guests.value = []
+    filteredGuestTotal.value = 0
+    recipientTotal.value = 0
+    loadError.value = loadErrorMessage(error)
+    toast.error(loadError.value)
   } finally { loading.value = false }
 }
 
@@ -138,6 +174,9 @@ async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.e
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent class="max-w-2xl max-h-[90vh] overflow-y-auto">
       <DialogHeader><DialogTitle>{{ t('rsvp.remindersTitle') }}</DialogTitle><DialogDescription>{{ t('rsvp.remindersHint') }}</DialogDescription></DialogHeader>
+      <div v-if="loadError" role="alert" class="flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <span>{{ loadError }}</span><Button variant="outline" size="sm" :disabled="loading" @click="load">{{ t('common.retry') }}</Button>
+      </div>
       <div v-if="loading" class="flex justify-center p-2"><Loader2 class="h-5 w-5 animate-spin" /></div>
       <div class="space-y-5">
         <label class="block text-sm"><span>{{ t('rsvp.reminderTemplate') }}</span><select v-model="templateId" class="mt-1 w-full rounded border bg-transparent px-2 py-2"><option value="">{{ t('rsvp.selectTemplate') }}</option><option v-for="tpl in templates" :key="tpl.id" :value="tpl.id">{{ tpl.name }}</option></select></label>
@@ -181,7 +220,7 @@ async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.e
 
         <div class="grid gap-2 sm:grid-cols-2"><Button :disabled="loading || !selectedSendCount" @click="send(false)"><Send class="mr-2 h-4 w-4" />{{ t('rsvp.remindSelected', { count: selectedSendCount }) }}</Button><Button variant="outline" :disabled="loading || !includedCount" @click="send(true)">{{ t('rsvp.remindAllNotStarted') }} ({{ includedCount }})</Button></div>
         <div class="rounded-lg border p-4 space-y-3"><div class="font-medium">{{ t('rsvp.scheduleReminder') }}</div><div class="flex gap-2"><Input v-model="scheduledAt" type="datetime-local" /><Button :disabled="!scheduledAt || !templateId || loading" @click="schedule">{{ t('rsvp.schedule') }}</Button></div></div>
-        <div class="space-y-2"><div class="font-medium">{{ t('rsvp.scheduledReminders') }}</div><p v-if="!schedules.length" class="text-sm text-muted-foreground">{{ t('rsvp.noScheduledReminders') }}</p><div v-for="item in schedules" :key="item.id" class="flex items-center justify-between rounded-lg border p-3 text-sm"><div><div>{{ formatDateTimeIST(item.scheduled_at) }}</div><div class="text-xs text-muted-foreground">{{ item.status }} · {{ item.sent_count }} sent · {{ item.failed_count }} failed</div></div><Button v-if="item.status === 'pending'" variant="ghost" size="icon" @click="cancel(item)"><Trash2 class="h-4 w-4" /></Button></div></div>
+        <div class="space-y-2"><div class="font-medium">{{ t('rsvp.scheduledReminders') }}</div><p v-if="!schedules.length" class="text-sm text-muted-foreground">{{ t('rsvp.noScheduledReminders') }}</p><div v-for="item in schedules" :key="item.id" class="flex items-center justify-between rounded-lg border p-3 text-sm"><div><div>{{ formatScheduleDate(item.scheduled_at) }}</div><div class="text-xs text-muted-foreground">{{ item.status }} · {{ item.sent_count }} sent · {{ item.failed_count }} failed</div></div><Button v-if="item.status === 'pending'" variant="ghost" size="icon" @click="cancel(item)"><Trash2 class="h-4 w-4" /></Button></div></div>
       </div>
       <DialogFooter><Button variant="outline" @click="emit('update:open', false)">{{ t('common.close') }}</Button></DialogFooter>
     </DialogContent>
