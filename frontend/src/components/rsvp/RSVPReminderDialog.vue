@@ -199,7 +199,7 @@ async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.e
           <div><div class="font-medium">{{ t('rsvp.reminderVariableMappings') }}</div><p class="text-xs text-muted-foreground">{{ t('rsvp.reminderVariableHint') }}</p></div>
           <label v-for="name in templateParamNames" :key="name" class="grid gap-1 text-sm sm:grid-cols-[120px_1fr] sm:items-center">
             <span class="font-mono">{{ formatTemplateParam(name) }}</span>
-            <Input v-model="templateParams[name]" list="rsvp-reminder-variable-values" :placeholder="t('rsvp.reminderVariablePlaceholder')" />
+            <Input v-model="templateParams[name]" list="rsvp-reminder-variable-values" :placeholder="t('rsvp.reminderVariablePlaceholder', { token: formatTemplateParam('member_name') })" />
           </label>
           <datalist id="rsvp-reminder-variable-values">
             <option value="{{member_name}}">Member name</option><option value="{{member_phone}}">Member phone</option>

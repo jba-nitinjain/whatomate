@@ -1598,7 +1598,7 @@
     "selectReminderTemplate": "Select an approved reminder template",
     "reminderVariableMappings": "Template variables",
     "reminderVariableHint": "Choose a dynamic value or enter fixed text. Values are resolved separately for each member.",
-    "reminderVariablePlaceholder": "e.g. {{member_name}} or fixed text",
+    "reminderVariablePlaceholder": "e.g. {token} or fixed text",
     "reminderVariablesRequired": "Map every reminder template variable",
     "reminderResult": "Sent {sent}; skipped {skipped}; failed {failed}.",
     "reminderFailed": "Failed to send reminder",
