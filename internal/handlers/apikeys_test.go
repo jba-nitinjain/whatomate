@@ -390,6 +390,89 @@ func TestApp_ListAPIKeys_ExcludesDeletedKeys(t *testing.T) {
 	assert.Equal(t, keyToKeep.ID, resp.Data.APIKeys[0].ID)
 }
 
+func TestApp_ListAPIKeys_SuperAdmin_SeesAllOrgs(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	org1 := testutil.CreateTestOrganization(t, app.DB)
+	org2 := testutil.CreateTestOrganization(t, app.DB)
+	admin := testutil.CreateTestUser(t, app.DB, org1.ID, testutil.WithEmail(testutil.UniqueEmail("list-super-admin")), testutil.WithSuperAdmin())
+
+	createTestAPIKey(t, app, org1.ID, admin.ID, "Org1 Key")
+	createTestAPIKey(t, app, org2.ID, admin.ID, "Org2 Key")
+	createTestSuperAdminAPIKey(t, app, admin.ID, "Platform Key")
+
+	req := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(req, org1.ID, admin.ID)
+
+	err := app.ListAPIKeys(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data struct {
+			APIKeys []handlers.APIKeyResponse `json:"api_keys"`
+			Total   int                       `json:"total"`
+		} `json:"data"`
+	}
+	err = json.Unmarshal(testutil.GetResponseBody(req), &resp)
+	require.NoError(t, err)
+	// GreaterOrEqual (not Equal) because this handlers test package shares one
+	// database across all parallel tests with no per-test isolation: the
+	// super-admin listing is intentionally global (no org filter), so it may
+	// also see keys created by sibling tests running concurrently in the same
+	// `go test` invocation. What matters here is that our 3 keys are present.
+	assert.GreaterOrEqual(t, resp.Data.Total, 3)
+
+	var sawOrg1, sawOrg2, sawPlatform bool
+	for _, k := range resp.Data.APIKeys {
+		switch k.Name {
+		case "Org1 Key":
+			sawOrg1 = true
+			assert.Equal(t, org1.Name, k.OrganizationName)
+			assert.False(t, k.IsSuperAdminKey)
+		case "Org2 Key":
+			sawOrg2 = true
+			assert.Equal(t, org2.Name, k.OrganizationName)
+		case "Platform Key":
+			sawPlatform = true
+			assert.True(t, k.IsSuperAdminKey)
+			assert.Empty(t, k.OrganizationName)
+		}
+	}
+	assert.True(t, sawOrg1 && sawOrg2 && sawPlatform)
+}
+
+func TestApp_ListAPIKeys_ResponseIncludesOrgName(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	perms := getAPIKeyPermissions(t, app)
+	role := testutil.CreateTestRoleExact(t, app.DB, org.ID, "API Key Reader OrgName", false, false, perms)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("list-orgname")), testutil.WithRoleID(&role.ID))
+
+	createTestAPIKey(t, app, org.ID, user.ID, "Named Org Key")
+
+	req := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+
+	err := app.ListAPIKeys(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data struct {
+			APIKeys []handlers.APIKeyResponse `json:"api_keys"`
+		} `json:"data"`
+	}
+	err = json.Unmarshal(testutil.GetResponseBody(req), &resp)
+	require.NoError(t, err)
+	require.Len(t, resp.Data.APIKeys, 1)
+	assert.Equal(t, org.Name, resp.Data.APIKeys[0].OrganizationName)
+	assert.False(t, resp.Data.APIKeys[0].IsSuperAdminKey)
+}
+
 // --- CreateAPIKey Additional Tests ---
 
 func TestApp_CreateAPIKey_KeyFormat(t *testing.T) {

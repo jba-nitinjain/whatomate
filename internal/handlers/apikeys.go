@@ -22,13 +22,15 @@ type APIKeyRequest struct {
 
 // APIKeyResponse represents an API key in list responses
 type APIKeyResponse struct {
-	ID         uuid.UUID  `json:"id"`
-	Name       string     `json:"name"`
-	KeyPrefix  string     `json:"key_prefix"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	IsActive   bool       `json:"is_active"`
-	CreatedAt  string     `json:"created_at"`
+	ID               uuid.UUID  `json:"id"`
+	Name             string     `json:"name"`
+	KeyPrefix        string     `json:"key_prefix"`
+	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
+	IsActive         bool       `json:"is_active"`
+	CreatedAt        string     `json:"created_at"`
+	OrganizationName string     `json:"organization_name,omitempty"`
+	IsSuperAdminKey  bool       `json:"is_super_admin_key"`
 }
 
 // APIKeyCreateResponse includes the full key (only shown once)
@@ -50,21 +52,33 @@ func generateAPIKey() (string, error) {
 	return "whm_" + hex.EncodeToString(bytes), nil
 }
 
-// ListAPIKeys returns all API keys for the organization
+// ListAPIKeys returns API keys. Regular users see only their own organization's
+// keys; super admins see every key across every organization plus platform-wide
+// super-admin keys.
 func (a *App) ListAPIKeys(r *fastglue.Request) error {
-	orgID, userID, err := a.getOrgAndUserID(r)
-	if err != nil {
+	userID, ok := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	if !ok {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
+	isSuperAdmin := a.IsSuperAdmin(userID)
 
-	if err := a.requirePermission(r, userID, models.ResourceAPIKeys, models.ActionRead); err != nil {
-		return nil
+	if !isSuperAdmin {
+		if err := a.requirePermission(r, userID, models.ResourceAPIKeys, models.ActionRead); err != nil {
+			return nil
+		}
 	}
 
 	pg := parsePagination(r)
 	search := string(r.RequestCtx.QueryArgs().Peek("search"))
 
-	query := a.DB.Model(&models.APIKey{}).Where("organization_id = ?", orgID)
+	query := a.DB.Model(&models.APIKey{}).Preload("Organization")
+	if !isSuperAdmin {
+		orgID, err := a.getOrgID(r)
+		if err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		}
+		query = query.Where("organization_id = ?", orgID)
+	}
 
 	// Apply search filter - search by name or key prefix (case-insensitive)
 	if search != "" {
@@ -84,14 +98,20 @@ func (a *App) ListAPIKeys(r *fastglue.Request) error {
 
 	response := make([]APIKeyResponse, len(apiKeys))
 	for i, key := range apiKeys {
+		orgName := ""
+		if key.Organization != nil {
+			orgName = key.Organization.Name
+		}
 		response[i] = APIKeyResponse{
-			ID:         key.ID,
-			Name:       key.Name,
-			KeyPrefix:  key.KeyPrefix,
-			LastUsedAt: key.LastUsedAt,
-			ExpiresAt:  key.ExpiresAt,
-			IsActive:   key.IsActive,
-			CreatedAt:  key.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:               key.ID,
+			Name:             key.Name,
+			KeyPrefix:        key.KeyPrefix,
+			LastUsedAt:       key.LastUsedAt,
+			ExpiresAt:        key.ExpiresAt,
+			IsActive:         key.IsActive,
+			CreatedAt:        key.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			OrganizationName: orgName,
+			IsSuperAdminKey:  key.IsSuperAdminKey,
 		}
 	}
 
