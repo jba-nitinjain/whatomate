@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import { rsvpService, templatesService } from '@/services/api'
@@ -8,8 +8,7 @@ import { getErrorMessage } from '@/lib/api-utils'
 import { responseCollection, responsePayload, templateParameterNames } from './reminder-dialog-utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
-import { Loader2, Search, Send, Trash2 } from 'lucide-vue-next'
+import { Loader2, Search, Send, Trash2, X } from 'lucide-vue-next'
 
 interface Schedule { id: string; scheduled_at: string; template_id: string; status: string; sent_count: number; failed_count: number }
 interface Guest { id: string; phone_number: string; contact?: { profile_name?: string } }
@@ -33,8 +32,6 @@ const filteredGuestTotal = ref(0)
 const recipientTotal = ref(0)
 const excludedIds = ref<Set<string>>(new Set())
 let searchTimer: number | undefined
-let openedAt = 0
-const initialCloseGuardMs = 500
 
 const guestPages = computed(() => Math.max(1, Math.ceil(filteredGuestTotal.value / guestLimit)))
 const includedCount = computed(() => Math.max(0, recipientTotal.value - excludedIds.value.size))
@@ -130,21 +127,16 @@ async function load() {
 }
 
 watch(() => props.open, value => {
-  if (value) {
-    openedAt = Date.now()
-    load()
-  }
+  if (value) load()
 }, { flush: 'sync' })
 watch(templateParamNames, syncTemplateParams)
 
-function onDialogOpenChange(value: boolean) {
-  // Reka can emit a stale close immediately after this externally-triggered
-  // controlled dialog mounts. Accepting it unmounts the dialog before its
-  // API requests settle. Real dismissals remain enabled after the opening
-  // interaction has completed; the explicit Close button is always immediate.
-  if (!value && Date.now() - openedAt < initialCloseGuardMs) return
-  emit('update:open', value)
+function close() { emit('update:open', false) }
+function closeOnEscape(event: KeyboardEvent) {
+  if (props.open && event.key === 'Escape') close()
 }
+onMounted(() => window.addEventListener('keydown', closeOnEscape))
+onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
 
 function onRecipientSearch() {
   if (searchTimer) window.clearTimeout(searchTimer)
@@ -187,9 +179,16 @@ async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.e
 </script>
 
 <template>
-  <Dialog :open="open" @update:open="onDialogOpenChange">
-    <DialogContent class="max-w-2xl max-h-[90vh] overflow-y-auto">
-      <DialogHeader><DialogTitle>{{ t('rsvp.remindersTitle') }}</DialogTitle><DialogDescription>{{ t('rsvp.remindersHint') }}</DialogDescription></DialogHeader>
+  <Teleport to="body">
+    <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" @click.self="close">
+      <section role="dialog" aria-modal="true" aria-labelledby="rsvp-reminder-dialog-title" class="relative grid w-full max-w-2xl max-h-[90vh] gap-4 overflow-y-auto rounded-lg border bg-background p-6 shadow-lg">
+        <button type="button" class="absolute right-4 top-4 rounded-sm opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2" :aria-label="t('common.close')" @click="close">
+          <X class="h-4 w-4" />
+        </button>
+        <header class="flex flex-col space-y-1.5 text-center sm:text-left">
+          <h2 id="rsvp-reminder-dialog-title" class="text-lg font-semibold leading-none tracking-tight">{{ t('rsvp.remindersTitle') }}</h2>
+          <p class="text-sm text-muted-foreground">{{ t('rsvp.remindersHint') }}</p>
+        </header>
       <div v-if="loadError" role="alert" class="flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
         <span>{{ loadError }}</span><Button variant="outline" size="sm" :disabled="loading" @click="load">{{ t('common.retry') }}</Button>
       </div>
@@ -238,7 +237,8 @@ async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.e
         <div class="rounded-lg border p-4 space-y-3"><div class="font-medium">{{ t('rsvp.scheduleReminder') }}</div><div class="flex gap-2"><Input v-model="scheduledAt" type="datetime-local" /><Button :disabled="!scheduledAt || !templateId || loading" @click="schedule">{{ t('rsvp.schedule') }}</Button></div></div>
         <div class="space-y-2"><div class="font-medium">{{ t('rsvp.scheduledReminders') }}</div><p v-if="!schedules.length" class="text-sm text-muted-foreground">{{ t('rsvp.noScheduledReminders') }}</p><div v-for="item in schedules" :key="item.id" class="flex items-center justify-between rounded-lg border p-3 text-sm"><div><div>{{ formatScheduleDate(item.scheduled_at) }}</div><div class="text-xs text-muted-foreground">{{ item.status }} · {{ item.sent_count }} sent · {{ item.failed_count }} failed</div></div><Button v-if="item.status === 'pending'" variant="ghost" size="icon" @click="cancel(item)"><Trash2 class="h-4 w-4" /></Button></div></div>
       </div>
-      <DialogFooter><Button variant="outline" @click="emit('update:open', false)">{{ t('common.close') }}</Button></DialogFooter>
-    </DialogContent>
-  </Dialog>
+        <footer class="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2"><Button variant="outline" @click="close">{{ t('common.close') }}</Button></footer>
+      </section>
+    </div>
+  </Teleport>
 </template>
