@@ -92,6 +92,15 @@ test.describe('API Keys Management', () => {
     await apiKeysPage.cancelDialog()
     await apiKeysPage.expectDialogHidden()
   })
+
+  test('should show organization label in create dialog for a regular admin', async () => {
+    await apiKeysPage.openCreateDialog()
+    await expect(apiKeysPage.dialog).toContainText('Creating key for:')
+  })
+
+  test('should show Organization column in the table', async () => {
+    await expect(apiKeysPage.table).toContainText('Organization')
+  })
 })
 
 test.describe('API Keys - Table Sorting', () => {

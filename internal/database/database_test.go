@@ -259,6 +259,40 @@ func TestCreateDefaultAdmin_SkipsWhenSuperAdminAlreadyExists(t *testing.T) {
 	assert.Equal(t, int64(0), newAdminCount, "should not create configured default admin when a super admin already exists")
 }
 
+// --- CreateIndexes / api_keys.organization_id nullability migration ---
+
+func TestCreateIndexes_DropsApiKeysOrganizationIdNotNull(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	cleanAll(t, db)
+
+	// Simulate a "fresh"/unmigrated database where api_keys.organization_id
+	// is still NOT NULL (the state before this migration line existed).
+	require.NoError(t, db.Exec(`ALTER TABLE api_keys ALTER COLUMN organization_id SET NOT NULL`).Error)
+
+	var nullableBefore string
+	require.NoError(t, db.Raw(`SELECT is_nullable FROM information_schema.columns WHERE table_name = 'api_keys' AND column_name = 'organization_id'`).Scan(&nullableBefore).Error)
+	require.Equal(t, "NO", nullableBefore, "precondition: column should be NOT NULL before running the migration")
+
+	// Run the same migration path used at startup. Note: the test schema
+	// (testutil.SetupTestDB) only AutoMigrates a subset of models, so later
+	// index statements referencing tables not covered by that subset (e.g.
+	// conversation_notes, call_logs) will fail here - that's a pre-existing
+	// gap in the test harness, unrelated to this migration. The
+	// organization_id ALTER runs early in the statement list (before those
+	// unrelated failures), so we only assert on its effect, not on
+	// CreateIndexes returning nil.
+	_ = database.CreateIndexes(db)
+
+	var nullableAfter string
+	require.NoError(t, db.Raw(`SELECT is_nullable FROM information_schema.columns WHERE table_name = 'api_keys' AND column_name = 'organization_id'`).Scan(&nullableAfter).Error)
+	assert.Equal(t, "YES", nullableAfter, "CreateIndexes should drop the NOT NULL constraint on api_keys.organization_id")
+
+	// Running it again should be a no-op (idempotent).
+	_ = database.CreateIndexes(db)
+	require.NoError(t, db.Raw(`SELECT is_nullable FROM information_schema.columns WHERE table_name = 'api_keys' AND column_name = 'organization_id'`).Scan(&nullableAfter).Error)
+	assert.Equal(t, "YES", nullableAfter, "running CreateIndexes a second time should remain nullable")
+}
+
 func TestCreateDefaultAdmin_UsesExistingOrg(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	cleanAll(t, db)

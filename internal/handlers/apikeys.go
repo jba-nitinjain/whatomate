@@ -14,19 +14,23 @@ import (
 
 // APIKeyRequest represents the request body for creating an API key
 type APIKeyRequest struct {
-	Name      string  `json:"name"`
-	ExpiresAt *string `json:"expires_at,omitempty"`
+	Name            string     `json:"name"`
+	ExpiresAt       *string    `json:"expires_at,omitempty"`
+	OrganizationID  *uuid.UUID `json:"organization_id,omitempty"`
+	IsSuperAdminKey bool       `json:"is_super_admin_key,omitempty"`
 }
 
 // APIKeyResponse represents an API key in list responses
 type APIKeyResponse struct {
-	ID         uuid.UUID  `json:"id"`
-	Name       string     `json:"name"`
-	KeyPrefix  string     `json:"key_prefix"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	IsActive   bool       `json:"is_active"`
-	CreatedAt  string     `json:"created_at"`
+	ID               uuid.UUID  `json:"id"`
+	Name             string     `json:"name"`
+	KeyPrefix        string     `json:"key_prefix"`
+	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
+	IsActive         bool       `json:"is_active"`
+	CreatedAt        string     `json:"created_at"`
+	OrganizationName string     `json:"organization_name,omitempty"`
+	IsSuperAdminKey  bool       `json:"is_super_admin_key"`
 }
 
 // APIKeyCreateResponse includes the full key (only shown once)
@@ -48,21 +52,33 @@ func generateAPIKey() (string, error) {
 	return "whm_" + hex.EncodeToString(bytes), nil
 }
 
-// ListAPIKeys returns all API keys for the organization
+// ListAPIKeys returns API keys. Regular users see only their own organization's
+// keys; super admins see every key across every organization plus platform-wide
+// super-admin keys.
 func (a *App) ListAPIKeys(r *fastglue.Request) error {
-	orgID, userID, err := a.getOrgAndUserID(r)
-	if err != nil {
+	userID, ok := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	if !ok {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
+	isSuperAdmin := a.IsSuperAdmin(userID)
 
-	if err := a.requirePermission(r, userID, models.ResourceAPIKeys, models.ActionRead); err != nil {
-		return nil
+	if !isSuperAdmin {
+		if err := a.requirePermission(r, userID, models.ResourceAPIKeys, models.ActionRead); err != nil {
+			return nil
+		}
 	}
 
 	pg := parsePagination(r)
 	search := string(r.RequestCtx.QueryArgs().Peek("search"))
 
-	query := a.DB.Model(&models.APIKey{}).Where("organization_id = ?", orgID)
+	query := a.DB.Model(&models.APIKey{}).Preload("Organization")
+	if !isSuperAdmin {
+		orgID, err := a.getOrgID(r)
+		if err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		}
+		query = query.Where("organization_id = ?", orgID)
+	}
 
 	// Apply search filter - search by name or key prefix (case-insensitive)
 	if search != "" {
@@ -82,14 +98,20 @@ func (a *App) ListAPIKeys(r *fastglue.Request) error {
 
 	response := make([]APIKeyResponse, len(apiKeys))
 	for i, key := range apiKeys {
+		orgName := ""
+		if key.Organization != nil {
+			orgName = key.Organization.Name
+		}
 		response[i] = APIKeyResponse{
-			ID:         key.ID,
-			Name:       key.Name,
-			KeyPrefix:  key.KeyPrefix,
-			LastUsedAt: key.LastUsedAt,
-			ExpiresAt:  key.ExpiresAt,
-			IsActive:   key.IsActive,
-			CreatedAt:  key.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:               key.ID,
+			Name:             key.Name,
+			KeyPrefix:        key.KeyPrefix,
+			LastUsedAt:       key.LastUsedAt,
+			ExpiresAt:        key.ExpiresAt,
+			IsActive:         key.IsActive,
+			CreatedAt:        key.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			OrganizationName: orgName,
+			IsSuperAdminKey:  key.IsSuperAdminKey,
 		}
 	}
 
@@ -101,25 +123,51 @@ func (a *App) ListAPIKeys(r *fastglue.Request) error {
 	})
 }
 
-// CreateAPIKey creates a new API key
+// CreateAPIKey creates a new API key.
+// Regular users always get a key scoped to their own organization; any
+// organization_id/is_super_admin_key fields they send are ignored.
+// Super admins may create a key scoped to any organization, or a platform-wide
+// super-admin key (is_super_admin_key: true) that is not tied to any org.
 func (a *App) CreateAPIKey(r *fastglue.Request) error {
-	orgID, userID, err := a.getOrgAndUserID(r)
-	if err != nil {
+	userID, ok := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	if !ok {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-
-	if err := a.requirePermission(r, userID, models.ResourceAPIKeys, models.ActionWrite); err != nil {
-		return nil
-	}
+	isSuperAdmin := a.IsSuperAdmin(userID)
 
 	var req APIKeyRequest
 	if err := a.decodeRequest(r, &req); err != nil {
 		return nil
 	}
 
-	// Validate required fields
 	if req.Name == "" {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Name is required", nil, "")
+	}
+
+	var targetOrgID *uuid.UUID
+	isSuperAdminKey := false
+
+	switch {
+	case isSuperAdmin && req.IsSuperAdminKey:
+		isSuperAdminKey = true
+	case isSuperAdmin && req.OrganizationID != nil:
+		var count int64
+		if err := a.DB.Table("organizations").Where("id = ?", *req.OrganizationID).Count(&count).Error; err != nil || count == 0 {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Organization not found", nil, "")
+		}
+		targetOrgID = req.OrganizationID
+	default:
+		orgID, err := a.getOrgID(r)
+		if err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "organization_id or is_super_admin_key is required", nil, "")
+		}
+		targetOrgID = &orgID
+	}
+
+	if !isSuperAdmin {
+		if targetOrgID == nil || !a.HasPermission(userID, models.ResourceAPIKeys, models.ActionWrite, *targetOrgID) {
+			return r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
+		}
 	}
 
 	// Parse expiration date if provided
@@ -150,13 +198,14 @@ func (a *App) CreateAPIKey(r *fastglue.Request) error {
 	keyPrefix := fullKey[4:20]
 
 	apiKey := models.APIKey{
-		OrganizationID: orgID,
-		UserID:         userID,
-		Name:           req.Name,
-		KeyPrefix:      keyPrefix,
-		KeyHash:        string(hashedKey),
-		ExpiresAt:      expiresAt,
-		IsActive:       true,
+		OrganizationID:  targetOrgID,
+		UserID:          userID,
+		Name:            req.Name,
+		KeyPrefix:       keyPrefix,
+		KeyHash:         string(hashedKey),
+		ExpiresAt:       expiresAt,
+		IsActive:        true,
+		IsSuperAdminKey: isSuperAdminKey,
 	}
 
 	if err := a.DB.Create(&apiKey).Error; err != nil {

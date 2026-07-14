@@ -409,3 +409,33 @@ func GenerateTestRefreshToken(t *testing.T, user *models.User, secret string, ex
 	require.NoError(t, err)
 	return tokenString
 }
+
+// APIKeyFixture is the minimal set of fields needed to insert a test API key
+// directly into the database from packages that cannot import internal/handlers
+// or internal/models without an import cycle (e.g. internal/middleware tests).
+type APIKeyFixture struct {
+	ID              uuid.UUID
+	OrganizationID  *uuid.UUID
+	UserID          uuid.UUID
+	Name            string
+	KeyPrefix       string
+	KeyHash         string
+	IsActive        bool
+	IsSuperAdminKey bool
+}
+
+// CreateTestAPIKeyFixture inserts an APIKeyFixture into the api_keys table.
+func CreateTestAPIKeyFixture(t *testing.T, db *gorm.DB, f *APIKeyFixture) {
+	t.Helper()
+
+	require.NoError(t, db.Table("api_keys").Create(map[string]any{
+		"id":                 f.ID,
+		"organization_id":    f.OrganizationID,
+		"user_id":            f.UserID,
+		"name":               f.Name,
+		"key_prefix":         f.KeyPrefix,
+		"key_hash":           f.KeyHash,
+		"is_active":          f.IsActive,
+		"is_super_admin_key": f.IsSuperAdminKey,
+	}).Error)
+}

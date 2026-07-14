@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -17,8 +18,13 @@ import { getErrorMessage } from '@/lib/api-utils'
 import { formatDate } from '@/lib/utils'
 import { useDebounceFn } from '@vueuse/core'
 import { useViewRefresh } from '@/composables/useViewRefresh'
+import { useAuthStore } from '@/stores/auth'
+import { useOrganizationsStore } from '@/stores/organizations'
 
 const { t } = useI18n()
+const authStore = useAuthStore()
+const organizationsStore = useOrganizationsStore()
+const isSuperAdmin = computed(() => authStore.user?.is_super_admin || false)
 
 interface APIKey {
   id: string
@@ -28,6 +34,8 @@ interface APIKey {
   expires_at: string | null
   is_active: boolean
   created_at: string
+  organization_name?: string
+  is_super_admin_key: boolean
 }
 
 interface NewAPIKeyResponse {
@@ -42,14 +50,23 @@ interface NewAPIKeyResponse {
 interface APIKeyFormData {
   name: string
   expires_at: string
+  organization_id: string
+  is_super_admin_key: boolean
 }
 
-const defaultFormData: APIKeyFormData = { name: '', expires_at: '' }
+const defaultFormData: APIKeyFormData = { name: '', expires_at: '', organization_id: '', is_super_admin_key: false }
 
 const {
   items: apiKeys, isLoading, isSubmitting, isDialogOpen: isCreateDialogOpen, deleteDialogOpen: isDeleteDialogOpen, itemToDelete: keyToDelete,
   formData, openCreateDialog: openCreateDialogBase, openDeleteDialog, closeDialog: closeCreateDialog, closeDeleteDialog,
 } = useCrudState<APIKey, APIKeyFormData>(defaultFormData)
+
+function openCreateDialog() {
+  openCreateDialogBase()
+  if (isSuperAdmin.value) {
+    formData.value.organization_id = authStore.organizationId
+  }
+}
 
 const isKeyDisplayOpen = ref(false)
 const newlyCreatedKey = ref<NewAPIKeyResponse | null>(null)
@@ -61,6 +78,7 @@ const pageSize = 20
 
 const columns = computed<Column<APIKey>[]>(() => [
   { key: 'name', label: t('apiKeys.name'), sortable: true },
+  { key: 'organization', label: t('apiKeys.organization') },
   { key: 'key', label: t('apiKeys.key') },
   { key: 'last_used', label: t('apiKeys.lastUsed'), sortable: true, sortKey: 'last_used_at' },
   { key: 'expires', label: t('apiKeys.expires'), sortable: true, sortKey: 'expires_at' },
@@ -111,8 +129,13 @@ async function createAPIKey() {
   if (!formData.value.name.trim()) { toast.error(t('apiKeys.nameRequired')); return }
   isSubmitting.value = true
   try {
-    const payload: { name: string; expires_at?: string } = { name: formData.value.name.trim() }
+    const payload: { name: string; expires_at?: string; organization_id?: string; is_super_admin_key?: boolean } = { name: formData.value.name.trim() }
     if (formData.value.expires_at) payload.expires_at = new Date(formData.value.expires_at).toISOString()
+    if (isSuperAdmin.value && formData.value.is_super_admin_key) {
+      payload.is_super_admin_key = true
+    } else if (isSuperAdmin.value && formData.value.organization_id) {
+      payload.organization_id = formData.value.organization_id
+    }
     const response = await apiKeysService.create(payload)
     newlyCreatedKey.value = response.data.data
     closeCreateDialog()
@@ -135,7 +158,10 @@ function copyToClipboard(text: string) { navigator.clipboard.writeText(text); to
 function formatDateTime(dateStr: string | null) { return dateStr ? formatDate(dateStr, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : t('apiKeys.never') }
 function isExpired(expiresAt: string | null) { return expiresAt ? new Date(expiresAt) < new Date() : false }
 
-onMounted(() => fetchItems())
+onMounted(() => {
+  fetchItems()
+  if (isSuperAdmin.value) organizationsStore.fetchOrganizations()
+})
 </script>
 
 <template>
@@ -143,7 +169,7 @@ onMounted(() => fetchItems())
     <PageHeader :title="$t('apiKeys.title')" :subtitle="$t('apiKeys.subtitle')" :icon="Key" icon-gradient="bg-gradient-to-br from-amber-500 to-orange-600 shadow-amber-500/20">
       <template #actions>
         <RefreshButton :refreshing="isRefreshingView" :label="$t('common.refresh')" @refresh="refreshNow(true)" />
-        <Button variant="outline" size="sm" @click="openCreateDialogBase"><Plus class="h-4 w-4 mr-2" />{{ $t('apiKeys.createApiKey') }}</Button>
+        <Button variant="outline" size="sm" @click="openCreateDialog"><Plus class="h-4 w-4 mr-2" />{{ $t('apiKeys.createApiKey') }}</Button>
       </template>
     </PageHeader>
 
@@ -163,6 +189,10 @@ onMounted(() => fetchItems())
             <CardContent>
               <DataTable :items="apiKeys" :columns="columns" :is-loading="isLoading" :empty-icon="Key" :empty-title="searchQuery ? $t('apiKeys.noMatchingApiKeys') : $t('apiKeys.noApiKeysYet')" :empty-description="searchQuery ? $t('apiKeys.noMatchingApiKeysDesc') : $t('apiKeys.noApiKeysYetDesc')" v-model:sort-key="sortKey" v-model:sort-direction="sortDirection" server-pagination :current-page="currentPage" :total-items="totalItems" :page-size="pageSize" item-name="API keys" @page-change="handlePageChange">
                 <template #cell-name="{ item: key }"><span class="font-medium">{{ key.name }}</span></template>
+                <template #cell-organization="{ item: key }">
+                  <Badge v-if="key.is_super_admin_key" variant="outline" class="border-amber-500 text-amber-600">{{ $t('apiKeys.superAdminBadge') }}</Badge>
+                  <span v-else class="text-sm">{{ key.organization_name }}</span>
+                </template>
                 <template #cell-key="{ item: key }"><code class="bg-muted px-2 py-1 rounded text-sm">whm_{{ key.key_prefix }}...</code></template>
                 <template #cell-last_used="{ item: key }">{{ formatDateTime(key.last_used_at) }}</template>
                 <template #cell-expires="{ item: key }">{{ formatDateTime(key.expires_at) }}</template>
@@ -175,7 +205,7 @@ onMounted(() => fetchItems())
                   <Button variant="ghost" size="icon" @click="openDeleteDialog(key)"><Trash2 class="h-4 w-4 text-destructive" /></Button>
                 </template>
                 <template #empty-action>
-                  <Button variant="outline" size="sm" @click="openCreateDialogBase"><Plus class="h-4 w-4 mr-2" />{{ $t('apiKeys.createApiKey') }}</Button>
+                  <Button variant="outline" size="sm" @click="openCreateDialog"><Plus class="h-4 w-4 mr-2" />{{ $t('apiKeys.createApiKey') }}</Button>
                 </template>
               </DataTable>
             </CardContent>
@@ -187,6 +217,20 @@ onMounted(() => fetchItems())
     <CrudFormDialog v-model:open="isCreateDialogOpen" :is-editing="false" :is-submitting="isSubmitting" :create-title="$t('apiKeys.createTitle')" :create-description="$t('apiKeys.createDesc')" :create-submit-label="$t('apiKeys.createSubmit')" @submit="createAPIKey">
       <div class="space-y-4">
         <div class="space-y-2"><Label for="name">{{ $t('apiKeys.name') }}</Label><Input id="name" v-model="formData.name" :placeholder="$t('apiKeys.namePlaceholder')" /></div>
+        <div v-if="!isSuperAdmin" class="space-y-2">
+          <Label>{{ $t('apiKeys.organization') }}</Label>
+          <p class="text-sm text-muted-foreground">{{ $t('apiKeys.creatingKeyFor', { org: authStore.user?.organization_name || '' }) }}</p>
+        </div>
+        <div v-else class="space-y-2">
+          <Label for="key-org">{{ $t('apiKeys.organization') }}</Label>
+          <Select :model-value="formData.is_super_admin_key ? 'super_admin' : formData.organization_id" @update:model-value="(val) => { if (val === 'super_admin') { formData.is_super_admin_key = true; formData.organization_id = '' } else { formData.is_super_admin_key = false; formData.organization_id = String(val) } }">
+            <SelectTrigger id="key-org"><SelectValue :placeholder="$t('apiKeys.organizationPlaceholder')" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="super_admin">{{ $t('apiKeys.superAdminAllOrgs') }}</SelectItem>
+              <SelectItem v-for="org in organizationsStore.organizations" :key="org.id" :value="org.id">{{ org.name }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div class="space-y-2">
           <Label for="expiry">{{ $t('apiKeys.expiration') }}</Label>
           <Input id="expiry" v-model="formData.expires_at" type="datetime-local" />

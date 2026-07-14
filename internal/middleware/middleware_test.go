@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const testJWTSecret = "test-secret-key-must-be-at-least-32-chars"
@@ -572,4 +574,70 @@ func generateTokenWithSecret(t *testing.T, secret string) string {
 	tokenString, err := token.SignedString([]byte(secret))
 	require.NoError(t, err)
 	return tokenString
+}
+
+func TestAuthWithDB_APIKey_SuperAdminKey_OmitsOrgContext(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	org := testutil.CreateTestOrganization(t, db)
+	admin := testutil.CreateTestUser(t, db, org.ID, testutil.WithEmail(testutil.UniqueEmail("mw-super-admin")), testutil.WithSuperAdmin())
+
+	plainKey := "whm_" + strings.Repeat("a", 32)
+	hash, err := bcrypt.GenerateFromPassword([]byte(plainKey), bcrypt.DefaultCost)
+	require.NoError(t, err)
+
+	apiKey := &testutil.APIKeyFixture{
+		ID:              uuid.New(),
+		OrganizationID:  nil,
+		UserID:          admin.ID,
+		Name:            "Platform Key",
+		KeyPrefix:       plainKey[4:20],
+		KeyHash:         string(hash),
+		IsActive:        true,
+		IsSuperAdminKey: true,
+	}
+	testutil.CreateTestAPIKeyFixture(t, db, apiKey)
+
+	req := newTestRequest()
+	req.RequestCtx.Request.Header.Set("X-API-Key", plainKey)
+
+	authMiddleware := middleware.AuthWithDB(testJWTSecret, db)
+	result := authMiddleware(req)
+
+	require.NotNil(t, result, "middleware should not reject a valid super-admin key")
+	assert.Equal(t, admin.ID, result.RequestCtx.UserValue(middleware.ContextKeyUserID))
+	assert.Equal(t, true, result.RequestCtx.UserValue(middleware.ContextKeyIsSuperAdmin))
+	assert.Nil(t, result.RequestCtx.UserValue(middleware.ContextKeyOrganizationID), "super-admin key must not stamp a fixed org into context")
+}
+
+func TestAuthWithDB_APIKey_OrgScopedKey_SetsOrgContext(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+
+	org := testutil.CreateTestOrganization(t, db)
+	user := testutil.CreateTestUser(t, db, org.ID, testutil.WithEmail(testutil.UniqueEmail("mw-org-key")))
+
+	plainKey := "whm_" + strings.Repeat("b", 32)
+	hash, err := bcrypt.GenerateFromPassword([]byte(plainKey), bcrypt.DefaultCost)
+	require.NoError(t, err)
+
+	orgID := org.ID
+	apiKey := &testutil.APIKeyFixture{
+		ID:             uuid.New(),
+		OrganizationID: &orgID,
+		UserID:         user.ID,
+		Name:           "Org Key",
+		KeyPrefix:      plainKey[4:20],
+		KeyHash:        string(hash),
+		IsActive:       true,
+	}
+	testutil.CreateTestAPIKeyFixture(t, db, apiKey)
+
+	req := newTestRequest()
+	req.RequestCtx.Request.Header.Set("X-API-Key", plainKey)
+
+	authMiddleware := middleware.AuthWithDB(testJWTSecret, db)
+	result := authMiddleware(req)
+
+	require.NotNil(t, result)
+	assert.Equal(t, org.ID, result.RequestCtx.UserValue(middleware.ContextKeyOrganizationID))
 }

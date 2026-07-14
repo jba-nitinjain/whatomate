@@ -34,14 +34,33 @@ func getAPIKeyPermissions(t *testing.T, app *handlers.App) []models.Permission {
 func createTestAPIKey(t *testing.T, app *handlers.App, orgID, userID uuid.UUID, name string) *models.APIKey {
 	t.Helper()
 
+	orgIDCopy := orgID
 	apiKey := &models.APIKey{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
-		OrganizationID: orgID,
+		OrganizationID: &orgIDCopy,
 		UserID:         userID,
 		Name:           name,
 		KeyPrefix:      "abcd1234",
 		KeyHash:        "$2a$10$dummyhashvaluefortesting000000000000000000000000000000",
 		IsActive:       true,
+	}
+	require.NoError(t, app.DB.Create(apiKey).Error)
+	return apiKey
+}
+
+// createTestSuperAdminAPIKey creates a platform-wide (org-less) test API key.
+func createTestSuperAdminAPIKey(t *testing.T, app *handlers.App, userID uuid.UUID, name string) *models.APIKey {
+	t.Helper()
+
+	apiKey := &models.APIKey{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  nil,
+		UserID:          userID,
+		Name:            name,
+		KeyPrefix:       "ffff0000",
+		KeyHash:         "$2a$10$dummyhashvaluefortesting000000000000000000000000000000",
+		IsActive:        true,
+		IsSuperAdminKey: true,
 	}
 	require.NoError(t, app.DB.Create(apiKey).Error)
 	return apiKey
@@ -156,7 +175,8 @@ func TestApp_CreateAPIKey(t *testing.T) {
 		var dbKey models.APIKey
 		err = app.DB.Where("id = ?", resp.Data.ID).First(&dbKey).Error
 		require.NoError(t, err)
-		assert.Equal(t, org.ID, dbKey.OrganizationID)
+		require.NotNil(t, dbKey.OrganizationID)
+		assert.Equal(t, org.ID, *dbKey.OrganizationID)
 		assert.Equal(t, user.ID, dbKey.UserID)
 		assert.Equal(t, "My API Key", dbKey.Name)
 		assert.True(t, dbKey.IsActive)
@@ -370,6 +390,89 @@ func TestApp_ListAPIKeys_ExcludesDeletedKeys(t *testing.T) {
 	assert.Equal(t, keyToKeep.ID, resp.Data.APIKeys[0].ID)
 }
 
+func TestApp_ListAPIKeys_SuperAdmin_SeesAllOrgs(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	org1 := testutil.CreateTestOrganization(t, app.DB)
+	org2 := testutil.CreateTestOrganization(t, app.DB)
+	admin := testutil.CreateTestUser(t, app.DB, org1.ID, testutil.WithEmail(testutil.UniqueEmail("list-super-admin")), testutil.WithSuperAdmin())
+
+	createTestAPIKey(t, app, org1.ID, admin.ID, "Org1 Key")
+	createTestAPIKey(t, app, org2.ID, admin.ID, "Org2 Key")
+	createTestSuperAdminAPIKey(t, app, admin.ID, "Platform Key")
+
+	req := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(req, org1.ID, admin.ID)
+
+	err := app.ListAPIKeys(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data struct {
+			APIKeys []handlers.APIKeyResponse `json:"api_keys"`
+			Total   int                       `json:"total"`
+		} `json:"data"`
+	}
+	err = json.Unmarshal(testutil.GetResponseBody(req), &resp)
+	require.NoError(t, err)
+	// GreaterOrEqual (not Equal) because this handlers test package shares one
+	// database across all parallel tests with no per-test isolation: the
+	// super-admin listing is intentionally global (no org filter), so it may
+	// also see keys created by sibling tests running concurrently in the same
+	// `go test` invocation. What matters here is that our 3 keys are present.
+	assert.GreaterOrEqual(t, resp.Data.Total, 3)
+
+	var sawOrg1, sawOrg2, sawPlatform bool
+	for _, k := range resp.Data.APIKeys {
+		switch k.Name {
+		case "Org1 Key":
+			sawOrg1 = true
+			assert.Equal(t, org1.Name, k.OrganizationName)
+			assert.False(t, k.IsSuperAdminKey)
+		case "Org2 Key":
+			sawOrg2 = true
+			assert.Equal(t, org2.Name, k.OrganizationName)
+		case "Platform Key":
+			sawPlatform = true
+			assert.True(t, k.IsSuperAdminKey)
+			assert.Empty(t, k.OrganizationName)
+		}
+	}
+	assert.True(t, sawOrg1 && sawOrg2 && sawPlatform)
+}
+
+func TestApp_ListAPIKeys_ResponseIncludesOrgName(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	perms := getAPIKeyPermissions(t, app)
+	role := testutil.CreateTestRoleExact(t, app.DB, org.ID, "API Key Reader OrgName", false, false, perms)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("list-orgname")), testutil.WithRoleID(&role.ID))
+
+	createTestAPIKey(t, app, org.ID, user.ID, "Named Org Key")
+
+	req := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+
+	err := app.ListAPIKeys(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data struct {
+			APIKeys []handlers.APIKeyResponse `json:"api_keys"`
+		} `json:"data"`
+	}
+	err = json.Unmarshal(testutil.GetResponseBody(req), &resp)
+	require.NoError(t, err)
+	require.Len(t, resp.Data.APIKeys, 1)
+	assert.Equal(t, org.Name, resp.Data.APIKeys[0].OrganizationName)
+	assert.False(t, resp.Data.APIKeys[0].IsSuperAdminKey)
+}
+
 // --- CreateAPIKey Additional Tests ---
 
 func TestApp_CreateAPIKey_KeyFormat(t *testing.T) {
@@ -475,7 +578,8 @@ func TestApp_CreateAPIKey_DatabasePersistence(t *testing.T) {
 	var dbKey models.APIKey
 	err = app.DB.Where("id = ?", resp.Data.ID).First(&dbKey).Error
 	require.NoError(t, err)
-	assert.Equal(t, org.ID, dbKey.OrganizationID)
+	require.NotNil(t, dbKey.OrganizationID)
+	assert.Equal(t, org.ID, *dbKey.OrganizationID)
 	assert.Equal(t, user.ID, dbKey.UserID)
 	assert.Equal(t, "Persisted Key", dbKey.Name)
 	assert.True(t, dbKey.IsActive)
@@ -506,6 +610,104 @@ func TestApp_CreateAPIKey_InvalidJSONBody(t *testing.T) {
 	err := app.CreateAPIKey(req)
 	require.NoError(t, err)
 	assert.Equal(t, fasthttp.StatusBadRequest, testutil.GetResponseStatusCode(req))
+}
+
+func TestApp_CreateAPIKey_SuperAdmin_PlatformKey(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	admin := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("super-create-platform")), testutil.WithSuperAdmin())
+
+	req := testutil.NewJSONRequest(t, map[string]any{
+		"name":                "Platform Key",
+		"is_super_admin_key": true,
+	})
+	testutil.SetAuthContext(req, org.ID, admin.ID)
+
+	err := app.CreateAPIKey(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data handlers.APIKeyCreateResponse `json:"data"`
+	}
+	err = json.Unmarshal(testutil.GetResponseBody(req), &resp)
+	require.NoError(t, err)
+
+	var dbKey models.APIKey
+	err = app.DB.Where("id = ?", resp.Data.ID).First(&dbKey).Error
+	require.NoError(t, err)
+	assert.Nil(t, dbKey.OrganizationID)
+	assert.True(t, dbKey.IsSuperAdminKey)
+	assert.Equal(t, admin.ID, dbKey.UserID)
+}
+
+func TestApp_CreateAPIKey_SuperAdmin_SpecificOrg(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	adminOrg := testutil.CreateTestOrganization(t, app.DB)
+	targetOrg := testutil.CreateTestOrganization(t, app.DB)
+	admin := testutil.CreateTestUser(t, app.DB, adminOrg.ID, testutil.WithEmail(testutil.UniqueEmail("super-create-org")), testutil.WithSuperAdmin())
+
+	req := testutil.NewJSONRequest(t, map[string]any{
+		"name":            "Org Specific Key",
+		"organization_id": targetOrg.ID.String(),
+	})
+	testutil.SetAuthContext(req, adminOrg.ID, admin.ID)
+
+	err := app.CreateAPIKey(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data handlers.APIKeyCreateResponse `json:"data"`
+	}
+	err = json.Unmarshal(testutil.GetResponseBody(req), &resp)
+	require.NoError(t, err)
+
+	var dbKey models.APIKey
+	err = app.DB.Where("id = ?", resp.Data.ID).First(&dbKey).Error
+	require.NoError(t, err)
+	require.NotNil(t, dbKey.OrganizationID)
+	assert.Equal(t, targetOrg.ID, *dbKey.OrganizationID)
+	assert.False(t, dbKey.IsSuperAdminKey)
+}
+
+func TestApp_CreateAPIKey_NonSuperAdmin_IgnoresOrgFields(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	otherOrg := testutil.CreateTestOrganization(t, app.DB)
+	perms := getAPIKeyPermissions(t, app)
+	role := testutil.CreateTestRoleExact(t, app.DB, org.ID, "API Key Creator Ignore", false, false, perms)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("create-ignore-org")), testutil.WithRoleID(&role.ID))
+
+	req := testutil.NewJSONRequest(t, map[string]any{
+		"name":                "Should Stay In Own Org",
+		"organization_id":     otherOrg.ID.String(),
+		"is_super_admin_key": true,
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+
+	err := app.CreateAPIKey(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data handlers.APIKeyCreateResponse `json:"data"`
+	}
+	err = json.Unmarshal(testutil.GetResponseBody(req), &resp)
+	require.NoError(t, err)
+
+	var dbKey models.APIKey
+	err = app.DB.Where("id = ?", resp.Data.ID).First(&dbKey).Error
+	require.NoError(t, err)
+	require.NotNil(t, dbKey.OrganizationID)
+	assert.Equal(t, org.ID, *dbKey.OrganizationID)
+	assert.False(t, dbKey.IsSuperAdminKey)
 }
 
 // --- DeleteAPIKey Tests ---
