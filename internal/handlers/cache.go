@@ -532,13 +532,18 @@ func (a *App) HasAnyPermission(userID uuid.UUID, permissions ...string) bool {
 	return false
 }
 
-// IsSuperAdmin checks if a user is a super admin
+// IsSuperAdmin checks if a user is a super admin.
+// This queries the user record directly rather than going through
+// getUserPermissionsCached, since super admin status must not depend on the
+// user having a role assigned (getUserPermissionsCached returns
+// gorm.ErrRecordNotFound when RoleID is nil, which would otherwise make
+// role-less super admins appear as non-super-admins).
 func (a *App) IsSuperAdmin(userID uuid.UUID) bool {
-	perms, err := a.getUserPermissionsCached(userID)
-	if err != nil {
+	var user models.User
+	if err := a.DB.Select("is_super_admin").Where("id = ?", userID).First(&user).Error; err != nil {
 		return false
 	}
-	return perms.IsSuperAdmin
+	return user.IsSuperAdmin
 }
 
 // ScopedQuery returns a gorm query scoped to the organization
