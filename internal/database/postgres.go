@@ -236,6 +236,8 @@ func getIndexes() []string {
 		`ALTER TABLE chatbot_sessions ALTER COLUMN phone_number TYPE varchar(50)`,
 		`ALTER TABLE agent_transfers ALTER COLUMN phone_number TYPE varchar(50)`,
 		`ALTER TABLE bulk_message_recipients ALTER COLUMN phone_number TYPE varchar(50)`,
+		// Allow NULL organization_id for platform-wide super-admin API keys
+		`ALTER TABLE api_keys ALTER COLUMN organization_id DROP NOT NULL`,
 		// Indexes
 		`CREATE INDEX IF NOT EXISTS idx_messages_contact_created ON messages(contact_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
