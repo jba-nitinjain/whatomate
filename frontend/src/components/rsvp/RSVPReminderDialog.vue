@@ -33,6 +33,8 @@ const filteredGuestTotal = ref(0)
 const recipientTotal = ref(0)
 const excludedIds = ref<Set<string>>(new Set())
 let searchTimer: number | undefined
+let openedAt = 0
+const initialCloseGuardMs = 500
 
 const guestPages = computed(() => Math.max(1, Math.ceil(filteredGuestTotal.value / guestLimit)))
 const includedCount = computed(() => Math.max(0, recipientTotal.value - excludedIds.value.size))
@@ -127,8 +129,22 @@ async function load() {
   } finally { loading.value = false }
 }
 
-watch(() => props.open, value => { if (value) load() })
+watch(() => props.open, value => {
+  if (value) {
+    openedAt = Date.now()
+    load()
+  }
+}, { flush: 'sync' })
 watch(templateParamNames, syncTemplateParams)
+
+function onDialogOpenChange(value: boolean) {
+  // Reka can emit a stale close immediately after this externally-triggered
+  // controlled dialog mounts. Accepting it unmounts the dialog before its
+  // API requests settle. Real dismissals remain enabled after the opening
+  // interaction has completed; the explicit Close button is always immediate.
+  if (!value && Date.now() - openedAt < initialCloseGuardMs) return
+  emit('update:open', value)
+}
 
 function onRecipientSearch() {
   if (searchTimer) window.clearTimeout(searchTimer)
@@ -171,7 +187,7 @@ async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.e
 </script>
 
 <template>
-  <Dialog :open="open" @update:open="emit('update:open', $event)">
+  <Dialog :open="open" @update:open="onDialogOpenChange">
     <DialogContent class="max-w-2xl max-h-[90vh] overflow-y-auto">
       <DialogHeader><DialogTitle>{{ t('rsvp.remindersTitle') }}</DialogTitle><DialogDescription>{{ t('rsvp.remindersHint') }}</DialogDescription></DialogHeader>
       <div v-if="loadError" role="alert" class="flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
