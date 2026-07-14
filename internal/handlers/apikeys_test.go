@@ -34,14 +34,33 @@ func getAPIKeyPermissions(t *testing.T, app *handlers.App) []models.Permission {
 func createTestAPIKey(t *testing.T, app *handlers.App, orgID, userID uuid.UUID, name string) *models.APIKey {
 	t.Helper()
 
+	orgIDCopy := orgID
 	apiKey := &models.APIKey{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
-		OrganizationID: orgID,
+		OrganizationID: &orgIDCopy,
 		UserID:         userID,
 		Name:           name,
 		KeyPrefix:      "abcd1234",
 		KeyHash:        "$2a$10$dummyhashvaluefortesting000000000000000000000000000000",
 		IsActive:       true,
+	}
+	require.NoError(t, app.DB.Create(apiKey).Error)
+	return apiKey
+}
+
+// createTestSuperAdminAPIKey creates a platform-wide (org-less) test API key.
+func createTestSuperAdminAPIKey(t *testing.T, app *handlers.App, userID uuid.UUID, name string) *models.APIKey {
+	t.Helper()
+
+	apiKey := &models.APIKey{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  nil,
+		UserID:          userID,
+		Name:            name,
+		KeyPrefix:       "ffff0000",
+		KeyHash:         "$2a$10$dummyhashvaluefortesting000000000000000000000000000000",
+		IsActive:        true,
+		IsSuperAdminKey: true,
 	}
 	require.NoError(t, app.DB.Create(apiKey).Error)
 	return apiKey
@@ -156,7 +175,8 @@ func TestApp_CreateAPIKey(t *testing.T) {
 		var dbKey models.APIKey
 		err = app.DB.Where("id = ?", resp.Data.ID).First(&dbKey).Error
 		require.NoError(t, err)
-		assert.Equal(t, org.ID, dbKey.OrganizationID)
+		require.NotNil(t, dbKey.OrganizationID)
+		assert.Equal(t, org.ID, *dbKey.OrganizationID)
 		assert.Equal(t, user.ID, dbKey.UserID)
 		assert.Equal(t, "My API Key", dbKey.Name)
 		assert.True(t, dbKey.IsActive)
@@ -475,7 +495,8 @@ func TestApp_CreateAPIKey_DatabasePersistence(t *testing.T) {
 	var dbKey models.APIKey
 	err = app.DB.Where("id = ?", resp.Data.ID).First(&dbKey).Error
 	require.NoError(t, err)
-	assert.Equal(t, org.ID, dbKey.OrganizationID)
+	require.NotNil(t, dbKey.OrganizationID)
+	assert.Equal(t, org.ID, *dbKey.OrganizationID)
 	assert.Equal(t, user.ID, dbKey.UserID)
 	assert.Equal(t, "Persisted Key", dbKey.Name)
 	assert.True(t, dbKey.IsActive)

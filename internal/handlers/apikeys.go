@@ -150,7 +150,7 @@ func (a *App) CreateAPIKey(r *fastglue.Request) error {
 	keyPrefix := fullKey[4:20]
 
 	apiKey := models.APIKey{
-		OrganizationID: orgID,
+		OrganizationID: &orgID,
 		UserID:         userID,
 		Name:           req.Name,
 		KeyPrefix:      keyPrefix,
