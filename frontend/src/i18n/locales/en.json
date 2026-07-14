@@ -1001,7 +1001,12 @@
     "deleteApiKey": "Delete API Key",
     "deleteWarning": "Any applications using this key will stop working.",
     "never": "Never",
-    "nameRequired": "Name is required"
+    "nameRequired": "Name is required",
+    "organization": "Organization",
+    "organizationPlaceholder": "Select organization",
+    "creatingKeyFor": "Creating key for: {org}",
+    "superAdminAllOrgs": "Super Admin (All Organizations)",
+    "superAdminBadge": "Super Admin"
   },
   "webhooks": {
     "title": "Webhooks",
