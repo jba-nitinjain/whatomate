@@ -1661,6 +1661,17 @@ export const rsvpService = {
   close: (id: string) => api.post(`/rsvp-events/${id}/close`),
   responses: (id: string, params?: { attendance?: string; search?: string; page?: number; limit?: number; title_field?: string; title_value?: string; title_field2?: string; title_value2?: string }) =>
     api.get(`/rsvp-events/${id}/responses`, { params }),
+  guests: (id: string, params?: { journey_status?: string; attendance?: string; source?: string; reminded?: string; search?: string; page?: number; limit?: number }) =>
+    api.get(`/rsvp-events/${id}/guests`, { params }),
+  guestCandidates: (id: string, params?: { search?: string; page?: number; limit?: number }) =>
+    api.get(`/rsvp-events/${id}/guest-candidates`, { params }),
+  addGuests: (id: string, contactIds: string[]) =>
+    api.post(`/rsvp-events/${id}/guests`, { contact_ids: contactIds }),
+  importGuests: (id: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post(`/rsvp-events/${id}/guests/import`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
+  },
   updateResponse: (
     id: string,
     responseId: string,
@@ -1676,6 +1687,15 @@ export const rsvpService = {
   recoverPartials: (id: string) => api.post(`/rsvp-events/${id}/recover-partials`),
   sendInvites: (id: string, contactIds: string[]) =>
     api.post(`/rsvp-events/${id}/send-invites`, { contact_ids: contactIds }),
+  reminderPreview: (id: string, responseIds?: string[]) =>
+    api.get(`/rsvp-events/${id}/reminders/preview`, { params: responseIds?.length ? { response_ids: responseIds.join(',') } : undefined }),
+  sendReminders: (id: string, data: { response_ids?: string[]; all_not_started?: boolean; template_id?: string }) =>
+    api.post(`/rsvp-events/${id}/reminders/send`, data),
+  listReminders: (id: string) => api.get(`/rsvp-events/${id}/reminders`),
+  createReminder: (id: string, data: { scheduled_at: string; template_id: string }) =>
+    api.post(`/rsvp-events/${id}/reminders`, data),
+  cancelReminder: (id: string, scheduleId: string) =>
+    api.delete(`/rsvp-events/${id}/reminders/${scheduleId}`),
   exportUrl: (id: string) => `${api.defaults.baseURL}/rsvp-events/${id}/export`,
 };
 

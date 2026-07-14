@@ -41,7 +41,7 @@ func (a *App) rsvpAlreadyResponded(event *models.RSVPEvent, phone string) bool {
 	}
 	like := "%" + suffix
 	q := a.DB.Model(&models.RSVPResponse{}).
-		Where("rsvp_event_id = ? AND attendance <> ?", event.ID, models.RSVPAttendancePending)
+		Where("rsvp_event_id = ? AND (responded_at IS NOT NULL OR attendance <> ?)", event.ID, models.RSVPAttendancePending)
 	if strings.TrimSpace(event.SpouseMobileField) != "" {
 		q = q.Where("phone_number LIKE ? OR answers->>? LIKE ?", like, event.SpouseMobileField, like)
 	} else {
@@ -67,7 +67,11 @@ func (a *App) rsvpEventForFlow(orgID, flowID uuid.UUID) *models.RSVPEvent {
 
 // seedPendingRSVPResponse creates a pending response row for a contact entering an event.
 // No-op if a row already exists (does not overwrite an answered row).
-func (a *App) seedPendingRSVPResponse(orgID uuid.UUID, event *models.RSVPEvent, contactID uuid.UUID, phone string) {
+func (a *App) seedPendingRSVPResponse(orgID uuid.UUID, event *models.RSVPEvent, contactID uuid.UUID, phone string, sources ...models.RSVPGuestSource) {
+	source := models.RSVPGuestSourceAPI
+	if len(sources) > 0 && sources[0] != "" {
+		source = sources[0]
+	}
 	var existing models.RSVPResponse
 	// Unscoped so a previously deleted row is found and revived rather than
 	// colliding with the unique (event, contact) index on create.
@@ -80,6 +84,7 @@ func (a *App) seedPendingRSVPResponse(orgID uuid.UUID, event *models.RSVPEvent, 
 					"answers":      models.JSONB{},
 					"phone_number": phone,
 					"responded_at": nil,
+					"source":       source,
 				})
 		}
 		return
@@ -92,7 +97,22 @@ func (a *App) seedPendingRSVPResponse(orgID uuid.UUID, event *models.RSVPEvent, 
 		PhoneNumber:    phone,
 		Attendance:     models.RSVPAttendancePending,
 		Answers:        models.JSONB{},
+		Source:         source,
 	}).Error
+}
+
+func (a *App) rsvpGuestListed(eventID, contactID uuid.UUID) bool {
+	var count int64
+	a.DB.Model(&models.RSVPResponse{}).
+		Where("rsvp_event_id = ? AND contact_id = ?", eventID, contactID).Count(&count)
+	return count > 0
+}
+
+func (a *App) markRSVPStarted(eventID, contactID uuid.UUID) {
+	now := time.Now().UTC()
+	a.DB.Model(&models.RSVPResponse{}).
+		Where("rsvp_event_id = ? AND contact_id = ? AND rsvp_started_at IS NULL", eventID, contactID).
+		Update("rsvp_started_at", now)
 }
 
 // finalizeRSVPFromSession maps completed-flow SessionData into the RSVPResponse.
@@ -168,6 +188,7 @@ func (a *App) finalizeRSVPFromSession(session *models.ChatbotSession) {
 			Attendance:     attendance,
 			Answers:        answers,
 			RespondedAt:    &now,
+			Source:         models.RSVPGuestSourceOpenKeyword,
 		}).Error
 	}
 }

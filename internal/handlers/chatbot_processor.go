@@ -888,9 +888,23 @@ func (a *App) startFlow(account *models.WhatsAppAccount, session *models.Chatbot
 			a.exitFlow(session)
 			return
 		}
+		if event.AccessMode == models.RSVPAccessModeGuestList && !a.rsvpGuestListed(event.ID, contact.ID) {
+			msg := strings.TrimSpace(event.NotInvitedMessage)
+			if msg == "" {
+				msg = defaultRSVPNotInvitedMessage
+			}
+			if err := a.sendAndSaveTextMessage(account, contact, msg); err != nil {
+				a.Log.Error("Failed to send RSVP not-invited message", "error", err)
+			}
+			a.exitFlow(session)
+			return
+		}
 		session.SessionData[rsvpEventIDKey] = event.ID.String()
 		a.DB.Model(session).Update("session_data", session.SessionData)
-		a.seedPendingRSVPResponse(account.OrganizationID, event, contact.ID, contact.PhoneNumber)
+		if event.AccessMode == models.RSVPAccessModeOpenKeyword {
+			a.seedPendingRSVPResponse(account.OrganizationID, event, contact.ID, contact.PhoneNumber, models.RSVPGuestSourceOpenKeyword)
+		}
+		a.markRSVPStarted(event.ID, contact.ID)
 	}
 
 	// Inject the rich initial message (media + buttons) as a synthetic first step

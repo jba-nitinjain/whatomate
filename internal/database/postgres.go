@@ -81,6 +81,8 @@ func GetMigrationModels() []MigrationModel {
 		{"BulkMessageRecipient", &models.BulkMessageRecipient{}},
 		{"RSVPEvent", &models.RSVPEvent{}},
 		{"RSVPResponse", &models.RSVPResponse{}},
+		{"RSVPReminderSchedule", &models.RSVPReminderSchedule{}},
+		{"RSVPReminderDelivery", &models.RSVPReminderDelivery{}},
 		{"NotificationRule", &models.NotificationRule{}},
 
 		// Chatbot models

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nikyjain/whatomate/internal/models"
 )
 
@@ -20,26 +21,57 @@ func (a *App) dueRSVPReminderEvents() []models.RSVPEvent {
 
 // ProcessDueRSVPReminders re-sends invites to pending guests for due events.
 func (a *App) ProcessDueRSVPReminders(ctx context.Context) {
-	events := a.dueRSVPReminderEvents()
+	a.backfillLegacyRSVPReminderSchedules()
+	now := time.Now().UTC()
+	var schedules []models.RSVPReminderSchedule
+	a.DB.Where("status = ? AND scheduled_at <= ?", models.RSVPReminderSchedulePending, now).
+		Order("scheduled_at").Find(&schedules)
+	for i := range schedules {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		schedule := &schedules[i]
+		claim := a.DB.Model(&models.RSVPReminderSchedule{}).
+			Where("id = ? AND status = ?", schedule.ID, models.RSVPReminderSchedulePending).
+			Update("status", models.RSVPReminderScheduleProcessing)
+		if claim.Error != nil || claim.RowsAffected == 0 {
+			continue
+		}
+		var event models.RSVPEvent
+		if err := a.DB.Where("id = ? AND organization_id = ? AND status = ? AND (rsvp_close_at IS NULL OR rsvp_close_at > ?)", schedule.RSVPEventID, schedule.OrganizationID, models.RSVPEventStatusActive, now).First(&event).Error; err != nil {
+			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": 1, "processed_at": now})
+			continue
+		}
+		rows, err := a.loadNotStartedRSVPGuests(schedule.OrganizationID, schedule.RSVPEventID, nil)
+		if err != nil {
+			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": 1, "processed_at": now})
+			continue
+		}
+		result := a.sendRSVPReminders(&event, &schedule.TemplateID, rows, models.RSVPReminderDeliveryScheduled, &schedule.ID, nil)
+		sent := result["sent"].(int)
+		failed := result["failed"].(int)
+		status := models.RSVPReminderScheduleCompleted
+		if failed > 0 {
+			status = models.RSVPReminderScheduleCompletedWithErrors
+		}
+		processed := time.Now().UTC()
+		a.DB.Model(schedule).Updates(map[string]interface{}{"status": status, "sent_count": sent, "failed_count": failed, "processed_at": processed})
+	}
+}
+
+func (a *App) backfillLegacyRSVPReminderSchedules() {
+	var events []models.RSVPEvent
+	a.DB.Where("reminder_enabled = ? AND reminder_at IS NOT NULL AND reminder_sent_at IS NULL AND reminder_template_id IS NOT NULL", true).Find(&events)
 	for i := range events {
 		event := &events[i]
-		var pending []models.RSVPResponse
-		a.DB.Where("rsvp_event_id = ? AND attendance = ?", event.ID, models.RSVPAttendancePending).
-			Find(&pending)
-
-		for j := range pending {
-			p := &pending[j]
-			if event.ReminderTemplateID == nil || event.WhatsAppAccount == "" {
-				continue
-			}
-			var contact models.Contact
-			if err := a.DB.Where("id = ?", p.ContactID).First(&contact).Error; err != nil {
-				continue
-			}
-			a.sendRSVPInviteTemplate(event, event.ReminderTemplateID, &contact)
+		var count int64
+		a.DB.Model(&models.RSVPReminderSchedule{}).Where("rsvp_event_id = ? AND scheduled_at = ?", event.ID, *event.ReminderAt).Count(&count)
+		if count == 0 {
+			a.DB.Create(&models.RSVPReminderSchedule{BaseModel: models.BaseModel{ID: uuid.New()}, RSVPEventID: event.ID, OrganizationID: event.OrganizationID, ScheduledAt: event.ReminderAt.UTC(), TemplateID: *event.ReminderTemplateID, Status: models.RSVPReminderSchedulePending, CreatedBy: event.CreatedBy})
 		}
-		now := time.Now()
-		a.DB.Model(event).Update("reminder_sent_at", now)
+		a.DB.Model(event).Update("reminder_enabled", false)
 	}
 }
 

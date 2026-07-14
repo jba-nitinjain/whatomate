@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -35,6 +36,14 @@ type rsvpEventRequest struct {
 	ReminderEnabled    bool         `json:"reminder_enabled"`
 	ReminderAt         *time.Time   `json:"reminder_at"`
 	ReminderTemplateID *string      `json:"reminder_template_id"`
+	AccessMode         *string      `json:"access_mode"`
+	NotInvitedMessage  *string      `json:"not_invited_message"`
+}
+
+const defaultRSVPNotInvitedMessage = "Sorry, this RSVP is limited to invited guests."
+
+func validRSVPAccessMode(v models.RSVPAccessMode) bool {
+	return v == models.RSVPAccessModeGuestList || v == models.RSVPAccessModeOpenKeyword
 }
 
 func parseOptionalUUID(s *string) (*uuid.UUID, bool) {
@@ -67,6 +76,16 @@ func (a *App) applyRSVPEventRequest(e *models.RSVPEvent, req rsvpEventRequest) b
 	e.DuplicateMessage = strings.TrimSpace(req.DuplicateMessage)
 	e.ReminderEnabled = req.ReminderEnabled
 	e.ReminderAt = req.ReminderAt
+	if req.AccessMode != nil {
+		mode := models.RSVPAccessMode(strings.TrimSpace(*req.AccessMode))
+		if !validRSVPAccessMode(mode) {
+			return false
+		}
+		e.AccessMode = mode
+	}
+	if req.NotInvitedMessage != nil {
+		e.NotInvitedMessage = strings.TrimSpace(*req.NotInvitedMessage)
+	}
 	if fid, ok := parseOptionalUUID(req.FlowID); ok {
 		e.FlowID = fid
 	} else {
@@ -134,14 +153,16 @@ func (a *App) CreateRSVPEvent(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Name is required", nil, "")
 	}
 	event := models.RSVPEvent{
-		BaseModel:       models.BaseModel{ID: uuid.New()},
-		OrganizationID:  orgID,
-		Status:          models.RSVPEventStatusDraft,
-		AttendanceField: "attendance",
-		CreatedBy:       userID,
+		BaseModel:         models.BaseModel{ID: uuid.New()},
+		OrganizationID:    orgID,
+		Status:            models.RSVPEventStatusDraft,
+		AttendanceField:   "attendance",
+		CreatedBy:         userID,
+		AccessMode:        models.RSVPAccessModeGuestList,
+		NotInvitedMessage: defaultRSVPNotInvitedMessage,
 	}
 	if !a.applyRSVPEventRequest(&event, req) {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid UUID field", nil, "")
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid RSVP field", nil, "")
 	}
 	if err := a.DB.Create(&event).Error; err != nil {
 		a.Log.Error("Failed to create rsvp event", "error", err)
@@ -184,11 +205,19 @@ func (a *App) UpdateRSVPEvent(r *fastglue.Request) error {
 		return nil
 	}
 	if !a.applyRSVPEventRequest(event, req) {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid UUID field", nil, "")
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid RSVP field", nil, "")
+	}
+	if event.Status == models.RSVPEventStatusActive {
+		if verr := a.validateUniqueActiveKeyword(orgID, event.Keyword, event.ID); verr != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusConflict, verr.Error(), nil, "")
+		}
 	}
 	if err := a.DB.Save(event).Error; err != nil {
 		a.Log.Error("Failed to update rsvp event", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update RSVP event", nil, "")
+	}
+	if event.Status == models.RSVPEventStatusActive {
+		a.syncRSVPFlowKeyword(event)
 	}
 	return r.SendEnvelope(map[string]interface{}{"id": event.ID})
 }
@@ -407,6 +436,10 @@ func (a *App) UpdateRSVPResponse(r *fastglue.Request) error {
 	}
 	if req.Answers != nil {
 		resp.Answers = models.JSONB(req.Answers)
+		if resp.RespondedAt == nil {
+			now := time.Now().UTC()
+			resp.RespondedAt = &now
+		}
 	}
 	if req.Notes != nil {
 		resp.Notes = strings.TrimSpace(*req.Notes)
@@ -517,9 +550,12 @@ type sendInvitesRequest struct {
 }
 
 func (a *App) SendRSVPInvites(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+	if err := a.requirePermission(r, userID, models.ResourceRSVP, models.ActionExecute); err != nil {
+		return nil
 	}
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -534,60 +570,85 @@ func (a *App) SendRSVPInvites(r *fastglue.Request) error {
 		return nil
 	}
 
-	seeded := 0
+	requested, sent, skipped, failed := len(req.ContactIDs), 0, 0, 0
+	errors := []map[string]string{}
 	for _, cidStr := range req.ContactIDs {
 		cid, perr := uuid.Parse(cidStr)
 		if perr != nil {
+			skipped++
 			continue
 		}
 		var contact models.Contact
 		if err := a.DB.Where("id = ? AND organization_id = ?", cid, orgID).First(&contact).Error; err != nil {
+			skipped++
 			continue
 		}
-		a.seedPendingRSVPResponse(orgID, event, contact.ID, contact.PhoneNumber)
-		seeded++
+		a.seedPendingRSVPResponse(orgID, event, contact.ID, contact.PhoneNumber, models.RSVPGuestSourceAPI)
+		var response models.RSVPResponse
+		if err := a.DB.Where("rsvp_event_id = ? AND contact_id = ?", event.ID, contact.ID).First(&response).Error; err != nil {
+			failed++
+			continue
+		}
+		if response.RespondedAt != nil {
+			skipped++
+			continue
+		}
 		// Sending is best-effort: a send failure must not fail seeding.
 		if event.TemplateID != nil && event.WhatsAppAccount != "" {
-			a.sendRSVPInviteTemplate(event, event.TemplateID, &contact)
+			messageID, sendErr := a.sendRSVPInviteTemplate(event, event.TemplateID, &contact)
+			if sendErr != nil {
+				failed++
+				errors = append(errors, map[string]string{"contact_id": contact.ID.String(), "error": sendErr.Error()})
+				continue
+			}
+			now := time.Now().UTC()
+			a.DB.Model(&response).Updates(map[string]interface{}{"invite_sent_at": now, "invite_message_id": messageID})
+			sent++
+		} else {
+			failed++
+			errors = append(errors, map[string]string{"contact_id": contact.ID.String(), "error": "invite template or WhatsApp account is not configured"})
 		}
 	}
-	return r.SendEnvelope(map[string]interface{}{"seeded": seeded})
+	return r.SendEnvelope(map[string]interface{}{"requested": requested, "sent": sent, "skipped": skipped, "failed": failed, "errors": errors})
 }
 
 // sendRSVPInviteTemplate sends the given template to one contact using the WhatsApp client.
 // Best-effort: logs and returns on any misconfiguration or send error.
-func (a *App) sendRSVPInviteTemplate(event *models.RSVPEvent, templateID *uuid.UUID, contact *models.Contact) {
+func (a *App) sendRSVPInviteTemplate(event *models.RSVPEvent, templateID *uuid.UUID, contact *models.Contact) (string, error) {
 	if templateID == nil {
-		return
+		return "", fmt.Errorf("template is not configured")
 	}
 	var account models.WhatsAppAccount
 	if err := a.DB.Where("organization_id = ? AND name = ?", event.OrganizationID, event.WhatsAppAccount).
 		First(&account).Error; err != nil {
 		a.Log.Error("RSVP invite: account not found", "account", event.WhatsAppAccount, "error", err)
-		return
+		return "", fmt.Errorf("account not found: %w", err)
 	}
 	var template models.Template
 	if err := a.DB.Where("id = ? AND organization_id = ?", *templateID, event.OrganizationID).
 		First(&template).Error; err != nil {
 		a.Log.Error("RSVP invite: template not found", "error", err)
-		return
+		return "", fmt.Errorf("template not found: %w", err)
 	}
 	if a.WhatsApp == nil {
-		return
+		return "", fmt.Errorf("WhatsApp client is unavailable")
 	}
 	// Build template components the same way campaign/template sends do, and honor the
 	// account's delivery route (marketing-lite vs standard).
 	components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(nil, nil, nil, template.Buttons, template.HeaderType, "", "")
 	waAccount := a.toWhatsAppAccount(&account)
+	var messageID string
 	var err error
 	if models.ResolveTemplateDeliveryRoute(&account, &template) == models.TemplateDeliveryRouteMarketingMessagesLite {
-		_, err = a.WhatsApp.SendMarketingTemplateMessage(context.Background(), waAccount, contact.PhoneNumber, template.Name, template.Language, components)
+		messageID, err = a.WhatsApp.SendMarketingTemplateMessage(context.Background(), waAccount, contact.PhoneNumber, template.Name, template.Language, components)
 	} else {
-		_, err = a.WhatsApp.SendTemplateMessage(context.Background(), waAccount, contact.PhoneNumber, template.Name, template.Language, components)
+		messageID, err = a.WhatsApp.SendTemplateMessage(context.Background(), waAccount, contact.PhoneNumber, template.Name, template.Language, components)
 	}
 	if err != nil {
 		a.Log.Error("RSVP invite send failed", "error", err)
+		return "", err
 	}
+	return messageID, nil
 }
 
 // ---------------------------------------------------------------------------

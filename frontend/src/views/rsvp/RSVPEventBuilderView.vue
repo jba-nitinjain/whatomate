@@ -20,7 +20,8 @@ const form = ref<any>({
   name: '', description: '', keyword: '', event_date: '', rsvp_close_at: '',
   whatsapp_account: '', flow_id: '', template_id: '', reminder_enabled: false,
   reminder_at: '', reminder_template_id: '',
-  spouse_mobile_field: '', duplicate_message: ''
+  spouse_mobile_field: '', duplicate_message: '', access_mode: 'guest_list',
+  not_invited_message: 'Sorry, this RSVP is limited to invited guests.'
 })
 const status = ref('draft')
 const saving = ref(false)
@@ -63,7 +64,9 @@ async function load() {
     template_id: e.template_id || '', reminder_enabled: !!e.reminder_enabled,
     reminder_at: e.reminder_at ? String(e.reminder_at).substring(0, 16) : '',
     reminder_template_id: e.reminder_template_id || '',
-    spouse_mobile_field: e.spouse_mobile_field || '', duplicate_message: e.duplicate_message || ''
+    spouse_mobile_field: e.spouse_mobile_field || '', duplicate_message: e.duplicate_message || '',
+    access_mode: e.access_mode || 'open_keyword',
+    not_invited_message: e.not_invited_message || 'Sorry, this RSVP is limited to invited guests.'
   }
   status.value = e.status || 'draft'
 }
@@ -87,7 +90,9 @@ function payload() {
     template_id: f.template_id || null,
     reminder_template_id: f.reminder_template_id || null,
     spouse_mobile_field: f.spouse_mobile_field || '',
-    duplicate_message: f.duplicate_message || ''
+    duplicate_message: f.duplicate_message || '',
+    access_mode: f.access_mode,
+    not_invited_message: f.not_invited_message || ''
   }
 }
 
@@ -226,6 +231,22 @@ const templateExampleBody = "You're invited to {{1}}! Tap below to RSVP."
               <label class="block"><span class="text-sm">{{ t('rsvp.keyword') }}</span>
                 <input v-model="form.keyword" :class="inputClass" /></label>
 
+              <div class="space-y-2">
+                <span class="text-sm">{{ t('rsvp.accessMode') }}</span>
+                <div class="grid gap-2 sm:grid-cols-2">
+                  <button type="button" :class="['rounded-lg border p-3 text-left text-sm', form.access_mode === 'guest_list' ? 'border-primary bg-primary/5' : 'border-border']" @click="form.access_mode = 'guest_list'">
+                    <span class="font-medium">{{ t('rsvp.guestListOnly') }}</span>
+                    <span class="mt-1 block text-xs text-muted-foreground">{{ t('rsvp.guestListOnlyHint') }}</span>
+                  </button>
+                  <button type="button" :class="['rounded-lg border p-3 text-left text-sm', form.access_mode === 'open_keyword' ? 'border-primary bg-primary/5' : 'border-border']" @click="form.access_mode = 'open_keyword'">
+                    <span class="font-medium">{{ t('rsvp.openKeyword') }}</span>
+                    <span class="mt-1 block text-xs text-muted-foreground">{{ t('rsvp.openKeywordHint') }}</span>
+                  </button>
+                </div>
+              </div>
+              <label v-if="form.access_mode === 'guest_list'" class="block"><span class="text-sm">{{ t('rsvp.notInvitedMessage') }}</span>
+                <textarea v-model="form.not_invited_message" :class="inputClass"></textarea></label>
+
               <label class="block"><span class="text-sm">{{ t('rsvp.spouseMobileField') }}</span>
                 <input v-model="form.spouse_mobile_field" :class="inputClass" :placeholder="t('rsvp.spouseMobileFieldPlaceholder')" />
                 <span class="text-xs text-muted-foreground">{{ t('rsvp.spouseMobileFieldHint') }}</span></label>
@@ -299,19 +320,13 @@ const templateExampleBody = "You're invited to {{1}}! Tap below to RSVP."
                 </p>
               </div>
 
-              <label class="flex items-center gap-2">
-                <input type="checkbox" v-model="form.reminder_enabled" /> <span class="text-sm">{{ t('rsvp.reminder') }}</span>
-              </label>
-              <div v-if="form.reminder_enabled" class="grid grid-cols-2 gap-4">
-                <label class="block"><span class="text-sm">{{ t('rsvp.reminderAt') }}</span>
-                  <input type="datetime-local" v-model="form.reminder_at" :class="inputClass" /></label>
-                <div>
-                  <span class="text-sm">{{ t('rsvp.reminderTemplate') }}</span>
-                  <select v-model="form.reminder_template_id" :class="inputClass">
-                    <option value="">{{ t('rsvp.selectTemplate') }}</option>
-                    <option v-for="tpl in templates" :key="tpl.id" :value="tpl.id">{{ tpl.name }}</option>
-                  </select>
-                </div>
+              <div>
+                <span class="text-sm">{{ t('rsvp.reminderTemplate') }}</span>
+                <select v-model="form.reminder_template_id" :class="inputClass">
+                  <option value="">{{ t('rsvp.selectTemplate') }}</option>
+                  <option v-for="tpl in templates" :key="tpl.id" :value="tpl.id">{{ tpl.name }}</option>
+                </select>
+                <p class="text-xs text-muted-foreground mt-1">{{ t('rsvp.reminderTemplateHint') }}</p>
               </div>
 
               <div class="flex gap-2 pt-2">

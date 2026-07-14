@@ -16,11 +16,13 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '@/components/ui/select'
 import { PageHeader, DataTable, SearchInput, type Column } from '@/components/shared'
+import RSVPGuestManagerDialog from '@/components/rsvp/RSVPGuestManagerDialog.vue'
+import RSVPReminderDialog from '@/components/rsvp/RSVPReminderDialog.vue'
 import { rsvpService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
-import { BarChart3, Download, Pencil, Trash2, Send, DownloadCloud } from 'lucide-vue-next'
+import { BarChart3, Bell, Download, Mail, Pencil, Trash2, Send, DownloadCloud, Users } from 'lucide-vue-next'
 
-interface RSVPRow { id: string; phone_number: string; attendance: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; reprompted_at?: string; contact?: { profile_name?: string } }
+interface RSVPRow { id: string; contact_id: string; phone_number: string; attendance: string; source: string; journey_status: string; invite_sent_at?: string; reminder_count: number; last_reminder_at?: string; rsvp_started_at?: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; reprompted_at?: string; contact?: { profile_name?: string } }
 
 const { t } = useI18n()
 const route = useRoute()
@@ -36,6 +38,12 @@ const searchQuery = ref('')
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
+const journeyCounts = ref({ not_started: 0, in_progress: 0, responded: 0 })
+const journeyFilter = ref('')
+const attendanceFilter = ref('')
+const selectedGuestIds = ref<Set<string>>(new Set())
+const guestManagerOpen = ref(false)
+const reminderManagerOpen = ref(false)
 let searchTimer: number | undefined
 let timer: number | undefined
 const attendanceOptions = ['pending', 'yes', 'no', 'maybe']
@@ -113,13 +121,18 @@ function prettyKey(k: string): string {
 }
 
 const columns = computed<Column<RSVPRow>[]>(() => [
+  { key: 'select', label: '' },
   { key: 'name', label: t('rsvp.name') },
   { key: 'mobile', label: 'Mobile' },
+  { key: 'source', label: t('rsvp.source') },
+  { key: 'invite', label: t('rsvp.inviteStatus') },
+  { key: 'journey', label: t('rsvp.journey') },
   { key: 'attendance', label: t('rsvp.status') },
   ...answerKeys.value.map(k => ({ key: `answers.${k}`, label: prettyKey(k) })),
   { key: 'notes', label: t('rsvp.notes') },
   { key: 'responded_at', label: t('rsvp.respondedAt') },
   { key: 'reprompted', label: t('rsvp.reprompted') },
+  { key: 'reminders', label: t('rsvp.reminders') },
   { key: 'actions', label: '' },
 ])
 
@@ -198,19 +211,17 @@ async function loadTally() {
   attendanceField.value = d.attendance_field || 'attendance'
 }
 async function loadResponses() {
-  const pairs = Object.entries(selected.value)
-  const r = await rsvpService.responses(id, {
+  const r = await rsvpService.guests(id, {
     search: searchQuery.value || undefined,
     page: page.value,
     limit: pageSize,
-    title_field: pairs[0]?.[0],
-    title_value: pairs[0]?.[1],
-    title_field2: pairs[1]?.[0],
-    title_value2: pairs[1]?.[1],
+    journey_status: journeyFilter.value || undefined,
+    attendance: attendanceFilter.value || undefined,
   })
   const d = (r.data as any).data || r.data
-  responses.value = d.responses || []
+  responses.value = d.guests || []
   total.value = d.total || 0
+  journeyCounts.value = d.journey_counts || { not_started: 0, in_progress: 0, responded: 0 }
 }
 function onSearch() {
   if (searchTimer) clearTimeout(searchTimer)
@@ -222,6 +233,23 @@ function attendanceLabel(v: string): string {
   return t(key) !== key ? t(key) : v
 }
 function exportXlsx() { window.open(rsvpService.exportUrl(id), '_blank') }
+
+function setJourneyFilter(value: string) { journeyFilter.value = journeyFilter.value === value ? '' : value; page.value = 1; loadResponses() }
+function setAttendanceFilter(value: string) { attendanceFilter.value = attendanceFilter.value === value ? '' : value; page.value = 1; loadResponses() }
+function journeyCount(value: string) { return journeyCounts.value[value as keyof typeof journeyCounts.value] || 0 }
+function toggleGuest(id: string) { const next = new Set(selectedGuestIds.value); if (next.has(id)) next.delete(id); else next.add(id); selectedGuestIds.value = next }
+const selectedRows = computed(() => responses.value.filter(row => selectedGuestIds.value.has(row.id)))
+const selectedReminderIds = computed(() => selectedRows.value.filter(row => row.journey_status === 'not_started').map(row => row.id))
+async function sendInvitations() {
+  const contactIds = selectedRows.value.filter(row => !row.responded_at).map(row => row.contact_id)
+  if (!contactIds.length) return
+  try {
+    const response = await rsvpService.sendInvites(id, contactIds)
+    const data = (response.data as any).data || response.data
+    toast.success(t('rsvp.inviteResult', { sent: data.sent || 0, failed: data.failed || 0 }))
+    selectedGuestIds.value = new Set(); await loadResponses()
+  } catch (error: any) { toast.error(error?.response?.data?.message || t('rsvp.inviteFailed')) }
+}
 
 const recovering = ref(false)
 // Commit partial answers left in abandoned chatbot sessions into the results.
@@ -312,6 +340,9 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
   <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <PageHeader :title="t('rsvp.resultsTitle')" :icon="BarChart3" back-link="/rsvp">
       <template #actions>
+        <Button variant="outline" size="sm" @click="guestManagerOpen = true"><Users class="h-4 w-4 mr-2" />{{ t('rsvp.manageGuests') }}</Button>
+        <Button variant="outline" size="sm" :disabled="!selectedRows.length" @click="sendInvitations"><Mail class="h-4 w-4 mr-2" />{{ t('rsvp.sendInvites') }}</Button>
+        <Button variant="outline" size="sm" @click="reminderManagerOpen = true"><Bell class="h-4 w-4 mr-2" />{{ t('rsvp.reminders') }}</Button>
         <Button variant="outline" size="sm" :disabled="recovering" @click="recoverPartials" :title="t('rsvp.recoverHint')">
           <DownloadCloud class="h-4 w-4 mr-2" />
           {{ t('rsvp.recover') }}
@@ -330,7 +361,14 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
     <ScrollArea class="flex-1">
       <div class="p-6">
         <div class="max-w-6xl mx-auto space-y-6">
-          <div class="space-y-4">
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <button type="button" class="rounded-xl border p-4 text-left" :class="!journeyFilter ? 'border-primary bg-primary/5' : ''" @click="journeyFilter = ''; loadResponses()"><div class="text-xs text-muted-foreground">{{ t('rsvp.total') }}</div><div class="text-3xl font-bold">{{ tally.total }}</div></button>
+            <button v-for="status in ['not_started', 'in_progress', 'responded']" :key="status" type="button" class="rounded-xl border p-4 text-left" :class="journeyFilter === status ? 'border-primary bg-primary/5' : ''" @click="setJourneyFilter(status)"><div class="text-xs text-muted-foreground">{{ t('rsvp.' + status) }}</div><div class="text-3xl font-bold">{{ journeyCount(status) }}</div></button>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-3">
+            <button v-for="status in ['yes', 'no', 'maybe']" :key="status" type="button" class="rounded-xl border p-3 text-left" :class="attendanceFilter === status ? 'border-primary bg-primary/5' : ''" @click="setAttendanceFilter(status)"><div class="text-xs text-muted-foreground">{{ t('rsvp.' + status) }}</div><div class="text-2xl font-bold">{{ tally[status] || 0 }}</div></button>
+          </div>
+          <div v-if="false" class="space-y-4">
             <!-- Total + active filter chips -->
             <div class="flex flex-wrap items-center gap-3">
               <button
@@ -379,7 +417,8 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 
           <Card>
             <CardContent class="pt-6">
-              <div class="mb-4 flex justify-end">
+              <div class="mb-4 flex items-center justify-between gap-3">
+                <span class="text-sm text-muted-foreground">{{ t('rsvp.selectedGuests', { count: selectedGuestIds.size }) }}</span>
                 <SearchInput v-model="searchQuery" :placeholder="t('rsvp.searchResponses')" class="w-72" @update:model-value="onSearch" />
               </div>
               <DataTable
@@ -395,12 +434,16 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                 :page-size="pageSize"
                 @page-change="onPageChange"
               >
+                <template #cell-select="{ item }"><input type="checkbox" :checked="selectedGuestIds.has(item.id)" @change="toggleGuest(item.id)" /></template>
                 <template #cell-name="{ item }">
                   <span class="font-medium">{{ item.contact?.profile_name || '—' }}</span>
                 </template>
                 <template #cell-mobile="{ item }">
                   <span class="text-sm">{{ item.phone_number }}</span>
                 </template>
+                <template #cell-source="{ item }"><span class="text-xs">{{ t('rsvp.source_' + item.source) }}</span></template>
+                <template #cell-invite="{ item }"><span class="text-xs text-muted-foreground">{{ item.invite_sent_at ? formatDateTimeIST(item.invite_sent_at) : t('rsvp.notSent') }}</span></template>
+                <template #cell-journey="{ item }"><span class="text-xs font-medium">{{ t('rsvp.' + item.journey_status) }}</span></template>
                 <template #cell-attendance="{ item }">
                   {{ attendanceLabel(item.attendance) }}
                 </template>
@@ -414,6 +457,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                   <span v-if="item.reprompted_at" class="text-xs text-blue-600" :title="formatDateTimeIST(item.reprompted_at)">✓ {{ formatDateTimeIST(item.reprompted_at) }}</span>
                   <span v-else class="text-sm text-muted-foreground">—</span>
                 </template>
+                <template #cell-reminders="{ item }"><span class="text-xs">{{ item.reminder_count || 0 }}<span v-if="item.last_reminder_at" class="block text-muted-foreground">{{ formatDateTimeIST(item.last_reminder_at) }}</span></span></template>
                 <template #cell-actions="{ item }">
                   <div class="flex items-center justify-end gap-1">
                     <Button variant="ghost" size="icon" class="h-8 w-8" @click="openEdit(item)" :title="t('rsvp.editResponse')">
@@ -430,6 +474,9 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
         </div>
       </div>
     </ScrollArea>
+
+    <RSVPGuestManagerDialog v-model:open="guestManagerOpen" :event-id="id" @changed="loadResponses" />
+    <RSVPReminderDialog v-model:open="reminderManagerOpen" :event-id="id" :selected-ids="selectedReminderIds" @changed="loadResponses" />
 
     <Dialog v-model:open="repromptOpen">
       <DialogContent class="max-w-lg">
