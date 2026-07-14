@@ -1600,6 +1600,8 @@
     "reminderVariableHint": "Choose a dynamic value or enter fixed text. Values are resolved separately for each member.",
     "reminderVariablePlaceholder": "e.g. {token} or fixed text",
     "reminderVariablesRequired": "Map every reminder template variable",
+    "recipientSelectionSummary": "{selected} selected of {total} total",
+    "clearAllRecipients": "Clear all",
     "reminderResult": "Sent {sent}; skipped {skipped}; failed {failed}.",
     "reminderFailed": "Failed to send reminder",
     "reminderLoadFailed": "Failed to load reminder settings",

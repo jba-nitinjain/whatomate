@@ -10,7 +10,11 @@ const api = vi.hoisted(() => ({
   templates: vi.fn(),
 }))
 
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', () => ({ useI18n: () => ({
+  t: (key: string, params?: Record<string, number>) => key === 'rsvp.recipientSelectionSummary'
+    ? `${params?.selected} selected of ${params?.total} total`
+    : key,
+}) }))
 vi.mock('vue-sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 vi.mock('@/services/api', () => ({
   rsvpService: {
@@ -46,6 +50,7 @@ describe('RSVPReminderDialog', () => {
     const wrapper = mount(RSVPReminderDialog, {
       attachTo: document.body,
       props: { open: false, eventId: 'event-1', selectedIds: [] },
+      global: { stubs: { Teleport: true } },
     })
     await wrapper.setProps({ open: true })
     await flushPromises()
@@ -53,6 +58,19 @@ describe('RSVPReminderDialog', () => {
     expect(document.body.textContent).toContain('rsvp.remindersTitle')
     expect(document.body.textContent).toContain('rsvp_message_1')
     expect(document.body.textContent).toContain('Member One')
+    expect(wrapper.text()).toContain('1 selected of 1 total')
+
+    const clearAll = wrapper.findAll('button').find(button => button.text() === 'rsvp.clearAllRecipients')
+    expect(clearAll).toBeDefined()
+    await clearAll!.trigger('click')
+    expect(wrapper.text()).toContain('0 selected of 1 total')
+    expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false)
+
+    const selectAll = wrapper.findAll('button').find(button => button.text() === 'common.selectAll')
+    expect(selectAll).toBeDefined()
+    await selectAll!.trigger('click')
+    expect(wrapper.text()).toContain('1 selected of 1 total')
+    expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
     expect(wrapper.emitted('update:open')).toBeUndefined()
     wrapper.unmount()
   })

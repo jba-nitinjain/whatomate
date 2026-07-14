@@ -6,6 +6,7 @@ import { rsvpService, templatesService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
 import { getErrorMessage } from '@/lib/api-utils'
 import { responseCollection, responsePayload, templateParameterNames } from './reminder-dialog-utils'
+import { useReminderRecipientSelection } from './reminder-recipient-selection'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Loader2, Search, Send, Trash2, X } from 'lucide-vue-next'
@@ -30,12 +31,21 @@ const guestPage = ref(1)
 const guestLimit = 10
 const filteredGuestTotal = ref(0)
 const recipientTotal = ref(0)
-const excludedIds = ref<Set<string>>(new Set())
 let searchTimer: number | undefined
 
+const {
+  allSelected: allRecipientsSelected,
+  excludedIds,
+  includedIds,
+  selectedCount: includedCount,
+  selectAll: selectAllRecipients,
+  clearAll: clearAllRecipients,
+  isSelected: isRecipientSelected,
+  toggle: toggleRecipient,
+} = useReminderRecipientSelection(recipientTotal)
+
 const guestPages = computed(() => Math.max(1, Math.ceil(filteredGuestTotal.value / guestLimit)))
-const includedCount = computed(() => Math.max(0, recipientTotal.value - excludedIds.value.size))
-const selectedSendCount = computed(() => props.selectedIds.filter(id => !excludedIds.value.has(id)).length)
+const selectedSendCount = computed(() => props.selectedIds.filter(isRecipientSelected).length)
 const selectedTemplate = computed(() => templates.value.find(template => template.id === templateId.value))
 const templateParamNames = computed(() => templateParameterNames(selectedTemplate.value))
 const missingTemplateParams = computed(() => templateParamNames.value.filter(name => !String(templateParams.value[name] || '').trim()))
@@ -85,7 +95,7 @@ async function loadRecipients() {
 
 async function load() {
   loading.value = true
-  excludedIds.value = new Set()
+  selectAllRecipients()
   templateParams.value = {}
   guestSearch.value = ''
   guestPage.value = 1
@@ -143,21 +153,17 @@ function onRecipientSearch() {
   searchTimer = window.setTimeout(() => { guestPage.value = 1; loadRecipients() }, 300)
 }
 function setGuestPage(page: number) { guestPage.value = page; loadRecipients() }
-function toggleRecipient(id: string) {
-  const next = new Set(excludedIds.value)
-  if (next.has(id)) next.delete(id); else next.add(id)
-  excludedIds.value = next
-}
-
 async function send(all: boolean) {
   if (!templateId.value) { toast.error(t('rsvp.selectReminderTemplate')); return }
   if (missingTemplateParams.value.length) { toast.error(t('rsvp.reminderVariablesRequired')); return }
-  const responseIds = props.selectedIds.filter(id => !excludedIds.value.has(id))
+  const responseIds = props.selectedIds.filter(isRecipientSelected)
   if ((!all && !responseIds.length) || (all && !includedCount.value)) return
   loading.value = true
   try {
     const response = await rsvpService.sendReminders(props.eventId, all
-      ? { all_not_started: true, exclude_response_ids: [...excludedIds.value], template_id: templateId.value, template_params: templateParams.value }
+      ? allRecipientsSelected.value
+        ? { all_not_started: true, exclude_response_ids: [...excludedIds.value], template_id: templateId.value, template_params: templateParams.value }
+        : { response_ids: [...includedIds.value], template_id: templateId.value, template_params: templateParams.value }
       : { response_ids: responseIds, template_id: templateId.value, template_params: templateParams.value })
     const data = (response.data as any).data || response.data
     toast.success(t('rsvp.reminderResult', { sent: data.sent || 0, skipped: data.skipped || 0, failed: data.failed || 0 }))
@@ -209,9 +215,13 @@ async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.e
         </div>
 
         <div class="space-y-3 rounded-lg border p-4">
-          <div class="flex items-center justify-between gap-3">
+          <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="font-medium">{{ t('rsvp.repromptRecipients') }}</div>
-            <div class="text-sm text-muted-foreground">{{ t('rsvp.selectedGuests', { count: includedCount }) }}</div>
+            <div class="text-sm text-muted-foreground">{{ t('rsvp.recipientSelectionSummary', { selected: includedCount, total: recipientTotal }) }}</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <Button variant="outline" size="sm" :disabled="allRecipientsSelected && !excludedIds.size" @click="selectAllRecipients">{{ t('common.selectAll') }}</Button>
+            <Button variant="outline" size="sm" :disabled="!includedCount" @click="clearAllRecipients">{{ t('rsvp.clearAllRecipients') }}</Button>
           </div>
           <div class="relative">
             <Search class="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -221,9 +231,9 @@ async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.e
           <div v-else-if="!guests.length" class="py-4 text-center text-sm text-muted-foreground">{{ t('rsvp.noResponses') }}</div>
           <div v-else class="max-h-56 divide-y overflow-y-auto rounded-md border">
             <label v-for="guest in guests" :key="guest.id" class="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-muted/40">
-              <input type="checkbox" :checked="!excludedIds.has(guest.id)" @change="toggleRecipient(guest.id)" />
+              <input type="checkbox" :checked="isRecipientSelected(guest.id)" @change="toggleRecipient(guest.id)" />
               <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">{{ guest.contact?.profile_name || guest.phone_number }}</span><span class="block text-xs text-muted-foreground">{{ guest.phone_number }}</span></span>
-              <span v-if="excludedIds.has(guest.id)" class="text-xs text-muted-foreground">{{ t('common.remove') }}</span>
+              <span v-if="!isRecipientSelected(guest.id)" class="text-xs text-muted-foreground">{{ t('common.remove') }}</span>
             </label>
           </div>
           <div v-if="guestPages > 1" class="flex items-center justify-between text-sm">
@@ -233,7 +243,7 @@ async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.e
           </div>
         </div>
 
-        <div class="grid gap-2 sm:grid-cols-2"><Button :disabled="loading || !selectedSendCount" @click="send(false)"><Send class="mr-2 h-4 w-4" />{{ t('rsvp.remindSelected', { count: selectedSendCount }) }}</Button><Button variant="outline" :disabled="loading || !includedCount" @click="send(true)">{{ t('rsvp.remindAllNotStarted') }} ({{ includedCount }})</Button></div>
+        <div class="grid gap-2 sm:grid-cols-2"><Button :disabled="loading || !selectedSendCount" @click="send(false)"><Send class="mr-2 h-4 w-4" />{{ t('rsvp.remindSelected', { count: selectedSendCount }) }}</Button><Button variant="outline" :disabled="loading || !includedCount" @click="send(true)">{{ allRecipientsSelected && !excludedIds.size ? `${t('rsvp.remindAllNotStarted')} (${includedCount})` : t('rsvp.remindSelected', { count: includedCount }) }}</Button></div>
         <div class="rounded-lg border p-4 space-y-3"><div class="font-medium">{{ t('rsvp.scheduleReminder') }}</div><div class="flex gap-2"><Input v-model="scheduledAt" type="datetime-local" /><Button :disabled="!scheduledAt || !templateId || loading" @click="schedule">{{ t('rsvp.schedule') }}</Button></div></div>
         <div class="space-y-2"><div class="font-medium">{{ t('rsvp.scheduledReminders') }}</div><p v-if="!schedules.length" class="text-sm text-muted-foreground">{{ t('rsvp.noScheduledReminders') }}</p><div v-for="item in schedules" :key="item.id" class="flex items-center justify-between rounded-lg border p-3 text-sm"><div><div>{{ formatScheduleDate(item.scheduled_at) }}</div><div class="text-xs text-muted-foreground">{{ item.status }} · {{ item.sent_count }} sent · {{ item.failed_count }} failed</div></div><Button v-if="item.status === 'pending'" variant="ghost" size="icon" @click="cancel(item)"><Trash2 class="h-4 w-4" /></Button></div></div>
       </div>

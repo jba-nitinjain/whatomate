@@ -1404,6 +1404,8 @@
     "imageTooLarge": "படம் 5MB க்கும் குறைவாக இருக்க வேண்டும்"
   },
   "rsvp": {
+    "recipientSelectionSummary": "மொத்தம் {total} இல் {selected} தேர்வு",
+    "clearAllRecipients": "அனைத்தையும் நீக்கு",
     "title": "RSVP Events",
     "subtitle": "Create RSVP events and track guest responses",
     "yourEvents": "Your RSVP events",

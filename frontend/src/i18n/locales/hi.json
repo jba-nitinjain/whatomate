@@ -1404,6 +1404,8 @@
     "imageTooLarge": "5MB से कम"
   },
   "rsvp": {
+    "recipientSelectionSummary": "कुल {total} में से {selected} चयनित",
+    "clearAllRecipients": "सभी साफ़ करें",
     "title": "RSVP Events",
     "subtitle": "Create RSVP events and track guest responses",
     "yourEvents": "Your RSVP events",

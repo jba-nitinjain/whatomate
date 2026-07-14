@@ -1404,6 +1404,8 @@
     "imageTooLarge": "La imagen debe ser menor a 5MB"
   },
   "rsvp": {
+    "recipientSelectionSummary": "{selected} seleccionados de {total} en total",
+    "clearAllRecipients": "Borrar selección",
     "title": "RSVP Events",
     "subtitle": "Create RSVP events and track guest responses",
     "yourEvents": "Your RSVP events",
