@@ -1602,6 +1602,10 @@
     "reminderVariablesRequired": "Map every reminder template variable",
     "recipientSelectionSummary": "{selected} selected of {total} total",
     "clearAllRecipients": "Clear all",
+    "reminderCampaignCreated": "Reminder campaign queued for {queued} recipients; {skipped} skipped.",
+    "reminderCampaignReady": "Reminder campaign created",
+    "viewCampaigns": "View campaigns",
+    "noEligibleReminderRecipients": "No eligible reminder recipients remained.",
     "reminderResult": "Sent {sent}; skipped {skipped}; failed {failed}.",
     "reminderFailed": "Failed to send reminder",
     "reminderLoadFailed": "Failed to load reminder settings",
@@ -1620,6 +1624,7 @@
     "helpTemplateBody": "WhatsApp templates must be created and approved by Meta under Templates before they appear here. Example:"
   },
   "campaigns": {
+    "rsvpReminder": "RSVP reminder",
     "title": "Campaigns",
     "subtitle": "Manage bulk messaging campaigns",
     "createCampaign": "Create Campaign",

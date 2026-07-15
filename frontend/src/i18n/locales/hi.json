@@ -1404,6 +1404,10 @@
     "imageTooLarge": "5MB से कम"
   },
   "rsvp": {
+    "reminderCampaignCreated": "{queued} प्राप्तकर्ताओं के लिए रिमाइंडर अभियान कतारबद्ध; {skipped} छोड़े गए।",
+    "reminderCampaignReady": "रिमाइंडर अभियान बनाया गया",
+    "viewCampaigns": "अभियान देखें",
+    "noEligibleReminderRecipients": "कोई योग्य रिमाइंडर प्राप्तकर्ता शेष नहीं था।",
     "recipientSelectionSummary": "कुल {total} में से {selected} चयनित",
     "clearAllRecipients": "सभी साफ़ करें",
     "title": "RSVP Events",
@@ -1494,6 +1498,7 @@
     "remindersTitle": "RSVP रिमाइंडर", "remindersHint": "रिमाइंडर केवल उन अतिथियों को भेजे जाते हैं जिन्होंने RSVP शुरू नहीं किया।", "selectReminderTemplate": "स्वीकृत टेम्पलेट चुनें", "reminderResult": "भेजे {sent}; छोड़े {skipped}; विफल {failed}।", "reminderFailed": "रिमाइंडर विफल", "reminderLoadFailed": "रिमाइंडर सेटिंग लोड नहीं हो सकी", "reminderScheduled": "रिमाइंडर निर्धारित", "remindSelected": "चयनित को याद दिलाएँ ({count})", "remindAllNotStarted": "सभी शुरू न करने वालों को याद दिलाएँ", "scheduleReminder": "रिमाइंडर निर्धारित करें", "schedule": "निर्धारित करें", "scheduledReminders": "निर्धारित रिमाइंडर", "noScheduledReminders": "कोई रिमाइंडर निर्धारित नहीं।", "reminderVariableMappings": "टेम्पलेट वेरिएबल", "reminderVariableHint": "डायनामिक मान चुनें या निश्चित टेक्स्ट दर्ज करें। हर सदस्य के लिए मान अलग से भरे जाते हैं।", "reminderVariablePlaceholder": "जैसे {token} या निश्चित टेक्स्ट", "reminderVariablesRequired": "हर रिमाइंडर टेम्पलेट वेरिएबल को मैप करें"
   },
   "campaigns": {
+    "rsvpReminder": "RSVP रिमाइंडर",
     "title": "अभियान",
     "subtitle": "बल्क मैसेजिंग",
     "createCampaign": "बनाएं",

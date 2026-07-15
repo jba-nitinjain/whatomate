@@ -91,6 +91,8 @@ interface Campaign {
   name: string
   template_name: string
   template_id?: string
+  source_type?: string
+  source_id?: string
   whatsapp_account?: string
   header_media_url?: string
   header_media_id?: string
@@ -193,7 +195,7 @@ const pageSize = 20
 
 function canCampaignAcceptRecipients(campaign?: Campaign | null): boolean {
   if (!campaign) return false
-  return campaign.status !== 'cancelled'
+  return campaign.status !== 'cancelled' && campaign.source_type !== 'rsvp_reminder'
 }
 
 function handlePageChange(page: number) {
@@ -1066,7 +1068,7 @@ async function retryFailed(campaign: Campaign) {
 }
 
 function canResendCampaign(campaign: Campaign): boolean {
-  return ['completed', 'failed', 'cancelled', 'paused'].includes(campaign.status)
+  return campaign.source_type !== 'rsvp_reminder' && ['completed', 'failed', 'cancelled', 'paused'].includes(campaign.status)
 }
 
 async function resendCampaign(campaign: Campaign) {
@@ -2147,6 +2149,7 @@ async function addRecipientListToCampaign(
                       <ImageIcon v-if="campaignHasMedia(campaign)" class="h-3.5 w-3.5 text-muted-foreground cursor-pointer hover:text-foreground" :title="campaign.header_media_filename" @click.stop="openMediaPreview(campaign)" />
                     </div>
                     <p class="text-xs text-muted-foreground">{{ campaign.template_name || $t('campaigns.noTemplate') }}</p>
+                    <Badge v-if="campaign.source_type === 'rsvp_reminder'" variant="secondary" class="mt-1 text-[10px]">{{ $t('campaigns.rsvpReminder') }}</Badge>
                   </div>
                 </template>
                 <template #cell-status="{ item: campaign }">
@@ -2205,7 +2208,7 @@ async function addRecipientListToCampaign(
                     >
                       <UserPlus class="h-4 w-4" />
                     </Button>
-                    <Button v-if="campaign.status === 'draft'" variant="ghost" size="icon" class="h-8 w-8" @click="openEditDialog(campaign)" title="Edit">
+                    <Button v-if="campaign.status === 'draft' && campaign.source_type !== 'rsvp_reminder'" variant="ghost" size="icon" class="h-8 w-8" @click="openEditDialog(campaign)" title="Edit">
                       <Pencil class="h-4 w-4" />
                     </Button>
                     <Tooltip v-if="campaign.status === 'draft' && campaignNeedsMedia(campaign) && !campaignHasMedia(campaign)">
@@ -2289,7 +2292,7 @@ async function addRecipientListToCampaign(
                       size="icon"
                       class="h-8 w-8 text-destructive"
                       @click="openDeleteDialog(campaign)"
-                      :disabled="campaign.status === 'running' || campaign.status === 'processing'"
+                      :disabled="campaign.status === 'running' || campaign.status === 'processing' || campaign.source_type === 'rsvp_reminder'"
                       title="Delete"
                     >
                       <Trash2 class="h-4 w-4" />

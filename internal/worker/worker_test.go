@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/nikyjain/whatomate/internal/config"
@@ -155,6 +156,121 @@ func createTestCampaignData(t *testing.T, w *Worker) (*models.Organization, *mod
 	require.NoError(t, w.DB.Preload("Template").First(campaign, campaign.ID).Error)
 
 	return org, account, template, campaign, recipient
+}
+
+func createRSVPReminderDeliveryForRecipient(
+	t *testing.T,
+	w *Worker,
+	org *models.Organization,
+	account *models.WhatsAppAccount,
+	template *models.Template,
+	campaign *models.BulkMessageCampaign,
+	recipient *models.BulkMessageRecipient,
+	startedAt *time.Time,
+) (*models.RSVPReminderSchedule, *models.RSVPReminderDelivery) {
+	t.Helper()
+	contact := testutil.CreateTestContactWith(t, w.DB, org.ID,
+		testutil.WithContactAccount(account.Name),
+		testutil.WithPhoneNumber(recipient.PhoneNumber),
+	)
+	event := &models.RSVPEvent{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  org.ID,
+		Name:            "Worker RSVP",
+		Status:          models.RSVPEventStatusActive,
+		AccessMode:      models.RSVPAccessModeGuestList,
+		WhatsAppAccount: account.Name,
+		CreatedBy:       campaign.CreatedBy,
+	}
+	require.NoError(t, w.DB.Create(event).Error)
+	response := &models.RSVPResponse{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		RSVPEventID:    event.ID,
+		OrganizationID: org.ID,
+		ContactID:      contact.ID,
+		PhoneNumber:    contact.PhoneNumber,
+		Attendance:     models.RSVPAttendancePending,
+		Source:         models.RSVPGuestSourceContactSelection,
+		RSVPStartedAt:  startedAt,
+	}
+	require.NoError(t, w.DB.Create(response).Error)
+	require.NoError(t, w.DB.Model(campaign).Updates(map[string]interface{}{
+		"source_type": models.CampaignSourceRSVPReminder,
+		"source_id":   event.ID,
+	}).Error)
+	schedule := &models.RSVPReminderSchedule{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		RSVPEventID:    event.ID,
+		OrganizationID: org.ID,
+		ScheduledAt:    time.Now().UTC(),
+		TemplateID:     template.ID,
+		Status:         models.RSVPReminderScheduleProcessing,
+		CreatedBy:      campaign.CreatedBy,
+		CampaignID:     &campaign.ID,
+	}
+	require.NoError(t, w.DB.Create(schedule).Error)
+	delivery := &models.RSVPReminderDelivery{
+		BaseModel:           models.BaseModel{ID: uuid.New()},
+		RSVPEventID:         event.ID,
+		OrganizationID:      org.ID,
+		RSVPResponseID:      response.ID,
+		ScheduleID:          &schedule.ID,
+		DeliveryType:        models.RSVPReminderDeliveryScheduled,
+		Status:              models.RSVPReminderDeliveryQueued,
+		AttemptedAt:         time.Now().UTC(),
+		CampaignID:          &campaign.ID,
+		CampaignRecipientID: &recipient.ID,
+	}
+	require.NoError(t, w.DB.Create(delivery).Error)
+	return schedule, delivery
+}
+
+func TestWorker_RSVPReminderOutcomeCompletesLinkedSchedule(t *testing.T) {
+	w := testWorker(t)
+	org, account, template, campaign, recipient := createTestCampaignData(t, w)
+	schedule, delivery := createRSVPReminderDeliveryForRecipient(t, w, org, account, template, campaign, recipient, nil)
+
+	w.updateRecipientStatus(recipient.ID, models.MessageStatusSent, "wamid.reminder", "")
+	w.incrementCampaignCount(campaign.ID, "sent_count")
+	w.checkCampaignCompletion(context.Background(), campaign.ID, org.ID)
+
+	require.NoError(t, w.DB.First(delivery, delivery.ID).Error)
+	assert.Equal(t, models.RSVPReminderDeliverySent, delivery.Status)
+	assert.Equal(t, "wamid.reminder", delivery.MessageID)
+	require.NoError(t, w.DB.First(schedule, schedule.ID).Error)
+	assert.Equal(t, models.RSVPReminderScheduleCompleted, schedule.Status)
+	assert.Equal(t, 1, schedule.SentCount)
+	assert.Zero(t, schedule.FailedCount)
+	require.NotNil(t, schedule.ProcessedAt)
+	require.NoError(t, w.DB.First(campaign, campaign.ID).Error)
+	assert.Equal(t, models.CampaignStatusCompleted, campaign.Status)
+}
+
+func TestWorker_RSVPReminderSkipsGuestWhoStartedAfterQueueing(t *testing.T) {
+	w := testWorker(t)
+	org, account, template, campaign, recipient := createTestCampaignData(t, w)
+	startedAt := time.Now().UTC()
+	schedule, delivery := createRSVPReminderDeliveryForRecipient(t, w, org, account, template, campaign, recipient, &startedAt)
+	job := &queue.RecipientJob{
+		CampaignID:     campaign.ID,
+		RecipientID:    recipient.ID,
+		OrganizationID: org.ID,
+		PhoneNumber:    recipient.PhoneNumber,
+	}
+
+	assert.True(t, w.skipIneligibleRSVPReminder(context.Background(), job))
+
+	require.NoError(t, w.DB.First(recipient, recipient.ID).Error)
+	assert.Equal(t, models.MessageStatusFailed, recipient.Status)
+	require.NoError(t, w.DB.First(delivery, delivery.ID).Error)
+	assert.Equal(t, models.RSVPReminderDeliverySkipped, delivery.Status)
+	require.NoError(t, w.DB.First(schedule, schedule.ID).Error)
+	assert.Equal(t, models.RSVPReminderScheduleCompleted, schedule.Status)
+	assert.Zero(t, schedule.SentCount)
+	assert.Zero(t, schedule.FailedCount)
+	require.NoError(t, w.DB.First(campaign, campaign.ID).Error)
+	assert.Equal(t, 1, campaign.FailedCount)
+	assert.Equal(t, models.CampaignStatusCompleted, campaign.Status)
 }
 
 func TestWorker_HandleRecipientJob_CampaignPaused(t *testing.T) {

@@ -56,6 +56,7 @@ type RSVPReminderDeliveryStatus string
 const (
 	RSVPReminderDeliveryManual    RSVPReminderDeliveryType   = "manual"
 	RSVPReminderDeliveryScheduled RSVPReminderDeliveryType   = "scheduled"
+	RSVPReminderDeliveryQueued    RSVPReminderDeliveryStatus = "queued"
 	RSVPReminderDeliverySent      RSVPReminderDeliveryStatus = "sent"
 	RSVPReminderDeliveryFailed    RSVPReminderDeliveryStatus = "failed"
 	RSVPReminderDeliverySkipped   RSVPReminderDeliveryStatus = "skipped"
@@ -146,22 +147,25 @@ type RSVPReminderSchedule struct {
 	FailedCount    int                        `json:"failed_count"`
 	ProcessedAt    *time.Time                 `json:"processed_at,omitempty"`
 	CreatedBy      uuid.UUID                  `gorm:"type:uuid;not null" json:"created_by"`
+	CampaignID     *uuid.UUID                 `gorm:"type:uuid;index" json:"campaign_id,omitempty"`
 }
 
 func (RSVPReminderSchedule) TableName() string { return "rsvp_reminder_schedules" }
 
 type RSVPReminderDelivery struct {
 	BaseModel
-	RSVPEventID    uuid.UUID                  `gorm:"type:uuid;index;not null" json:"rsvp_event_id"`
-	OrganizationID uuid.UUID                  `gorm:"type:uuid;index;not null" json:"organization_id"`
-	RSVPResponseID uuid.UUID                  `gorm:"type:uuid;index;not null;uniqueIndex:idx_rsvp_schedule_response" json:"rsvp_response_id"`
-	ScheduleID     *uuid.UUID                 `gorm:"type:uuid;index;uniqueIndex:idx_rsvp_schedule_response" json:"schedule_id,omitempty"`
-	DeliveryType   RSVPReminderDeliveryType   `gorm:"size:20;not null" json:"delivery_type"`
-	Status         RSVPReminderDeliveryStatus `gorm:"size:20;not null" json:"status"`
-	MessageID      string                     `gorm:"size:255" json:"message_id"`
-	ErrorMessage   string                     `gorm:"type:text" json:"error_message"`
-	AttemptedAt    time.Time                  `gorm:"not null" json:"attempted_at"`
-	InitiatedBy    *uuid.UUID                 `gorm:"type:uuid" json:"initiated_by,omitempty"`
+	RSVPEventID         uuid.UUID                  `gorm:"type:uuid;index;not null" json:"rsvp_event_id"`
+	OrganizationID      uuid.UUID                  `gorm:"type:uuid;index;not null" json:"organization_id"`
+	RSVPResponseID      uuid.UUID                  `gorm:"type:uuid;index;not null;uniqueIndex:idx_rsvp_schedule_response" json:"rsvp_response_id"`
+	ScheduleID          *uuid.UUID                 `gorm:"type:uuid;index;uniqueIndex:idx_rsvp_schedule_response" json:"schedule_id,omitempty"`
+	DeliveryType        RSVPReminderDeliveryType   `gorm:"size:20;not null" json:"delivery_type"`
+	Status              RSVPReminderDeliveryStatus `gorm:"size:20;not null" json:"status"`
+	MessageID           string                     `gorm:"size:255" json:"message_id"`
+	ErrorMessage        string                     `gorm:"type:text" json:"error_message"`
+	AttemptedAt         time.Time                  `gorm:"not null" json:"attempted_at"`
+	InitiatedBy         *uuid.UUID                 `gorm:"type:uuid" json:"initiated_by,omitempty"`
+	CampaignID          *uuid.UUID                 `gorm:"type:uuid;index" json:"campaign_id,omitempty"`
+	CampaignRecipientID *uuid.UUID                 `gorm:"type:uuid;index;uniqueIndex" json:"campaign_recipient_id,omitempty"`
 }
 
 func (RSVPReminderDelivery) TableName() string { return "rsvp_reminder_deliveries" }

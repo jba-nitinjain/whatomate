@@ -1404,6 +1404,10 @@
     "imageTooLarge": "La imagen debe ser menor a 5MB"
   },
   "rsvp": {
+    "reminderCampaignCreated": "Campaña de recordatorio en cola para {queued} destinatarios; {skipped} omitidos.",
+    "reminderCampaignReady": "Campaña de recordatorio creada",
+    "viewCampaigns": "Ver campañas",
+    "noEligibleReminderRecipients": "No quedaban destinatarios elegibles para el recordatorio.",
     "recipientSelectionSummary": "{selected} seleccionados de {total} en total",
     "clearAllRecipients": "Borrar selección",
     "title": "RSVP Events",
@@ -1494,6 +1498,7 @@
     "remindersTitle": "Recordatorios RSVP", "remindersHint": "Solo se envían a quienes nunca iniciaron la confirmación.", "selectReminderTemplate": "Seleccione una plantilla aprobada", "reminderResult": "Enviados {sent}; omitidos {skipped}; fallidos {failed}.", "reminderFailed": "No se pudo enviar el recordatorio", "reminderLoadFailed": "No se pudo cargar la configuración de recordatorios", "reminderScheduled": "Recordatorio programado", "remindSelected": "Recordar seleccionados ({count})", "remindAllNotStarted": "Recordar a todos sin iniciar", "scheduleReminder": "Programar recordatorio", "schedule": "Programar", "scheduledReminders": "Recordatorios programados", "noScheduledReminders": "No hay recordatorios programados.", "reminderVariableMappings": "Variables de la plantilla", "reminderVariableHint": "Elija un valor dinámico o introduzca texto fijo. Los valores se resuelven por separado para cada miembro.", "reminderVariablePlaceholder": "p. ej., {token} o texto fijo", "reminderVariablesRequired": "Asigne todas las variables de la plantilla de recordatorio"
   },
   "campaigns": {
+    "rsvpReminder": "Recordatorio RSVP",
     "title": "Campañas",
     "subtitle": "Gestionar campañas de mensajería masiva",
     "createCampaign": "Crear campaña",

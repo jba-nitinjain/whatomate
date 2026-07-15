@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { rsvpService, templatesService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
@@ -9,14 +10,15 @@ import { responseCollection, responsePayload, templateParameterNames } from './r
 import { useReminderRecipientSelection } from './reminder-recipient-selection'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Loader2, Search, Send, Trash2, X } from 'lucide-vue-next'
+import { ExternalLink, Loader2, Search, Send, Trash2, X } from 'lucide-vue-next'
 
-interface Schedule { id: string; scheduled_at: string; template_id: string; status: string; sent_count: number; failed_count: number }
+interface Schedule { id: string; scheduled_at: string; template_id: string; status: string; sent_count: number; failed_count: number; campaign_id?: string }
 interface Guest { id: string; phone_number: string; contact?: { profile_name?: string } }
 
 const props = defineProps<{ open: boolean; eventId: string; selectedIds: string[] }>()
 const emit = defineEmits<{ 'update:open': [value: boolean]; changed: [] }>()
 const { t } = useI18n()
+const router = useRouter()
 const schedules = ref<Schedule[]>([])
 const templates = ref<any[]>([])
 const templateId = ref('')
@@ -31,6 +33,8 @@ const guestPage = ref(1)
 const guestLimit = 10
 const filteredGuestTotal = ref(0)
 const recipientTotal = ref(0)
+const createdCampaignId = ref('')
+const createdCampaignName = ref('')
 let searchTimer: number | undefined
 
 const {
@@ -100,6 +104,8 @@ async function load() {
   guestSearch.value = ''
   guestPage.value = 1
   loadError.value = ''
+  createdCampaignId.value = ''
+  createdCampaignName.value = ''
   try {
     const eventResponse = await rsvpService.get(props.eventId)
     const event = responsePayload(eventResponse)
@@ -166,7 +172,13 @@ async function send(all: boolean) {
         : { response_ids: [...includedIds.value], template_id: templateId.value, template_params: templateParams.value }
       : { response_ids: responseIds, template_id: templateId.value, template_params: templateParams.value })
     const data = (response.data as any).data || response.data
-    toast.success(t('rsvp.reminderResult', { sent: data.sent || 0, skipped: data.skipped || 0, failed: data.failed || 0 }))
+    if (data.campaign_id) {
+      createdCampaignId.value = data.campaign_id
+      createdCampaignName.value = data.campaign_name || ''
+      toast.success(t('rsvp.reminderCampaignCreated', { queued: data.queued || 0, skipped: data.skipped || 0 }))
+    } else {
+      toast.success(t('rsvp.noEligibleReminderRecipients'))
+    }
     emit('changed')
   } catch (error: any) { toast.error(error?.response?.data?.message || t('rsvp.reminderFailed')) }
   finally { loading.value = false }
@@ -182,6 +194,10 @@ async function schedule() {
   finally { loading.value = false }
 }
 async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.eventId, item.id); await load() }
+async function viewCampaigns() {
+  close()
+  await router.push('/campaigns')
+}
 </script>
 
 <template>
@@ -244,6 +260,10 @@ async function cancel(item: Schedule) { await rsvpService.cancelReminder(props.e
         </div>
 
         <div class="grid gap-2 sm:grid-cols-2"><Button :disabled="loading || !selectedSendCount" @click="send(false)"><Send class="mr-2 h-4 w-4" />{{ t('rsvp.remindSelected', { count: selectedSendCount }) }}</Button><Button variant="outline" :disabled="loading || !includedCount" @click="send(true)">{{ allRecipientsSelected && !excludedIds.size ? `${t('rsvp.remindAllNotStarted')} (${includedCount})` : t('rsvp.remindSelected', { count: includedCount }) }}</Button></div>
+        <div v-if="createdCampaignId" class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
+          <div><div class="font-medium">{{ t('rsvp.reminderCampaignReady') }}</div><div class="text-muted-foreground">{{ createdCampaignName }}</div></div>
+          <Button variant="outline" size="sm" @click="viewCampaigns"><ExternalLink class="mr-2 h-4 w-4" />{{ t('rsvp.viewCampaigns') }}</Button>
+        </div>
         <div class="rounded-lg border p-4 space-y-3"><div class="font-medium">{{ t('rsvp.scheduleReminder') }}</div><div class="flex gap-2"><Input v-model="scheduledAt" type="datetime-local" /><Button :disabled="!scheduledAt || !templateId || loading" @click="schedule">{{ t('rsvp.schedule') }}</Button></div></div>
         <div class="space-y-2"><div class="font-medium">{{ t('rsvp.scheduledReminders') }}</div><p v-if="!schedules.length" class="text-sm text-muted-foreground">{{ t('rsvp.noScheduledReminders') }}</p><div v-for="item in schedules" :key="item.id" class="flex items-center justify-between rounded-lg border p-3 text-sm"><div><div>{{ formatScheduleDate(item.scheduled_at) }}</div><div class="text-xs text-muted-foreground">{{ item.status }} · {{ item.sent_count }} sent · {{ item.failed_count }} failed</div></div><Button v-if="item.status === 'pending'" variant="ghost" size="icon" @click="cancel(item)"><Trash2 class="h-4 w-4" /></Button></div></div>
       </div>

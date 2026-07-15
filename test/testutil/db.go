@@ -113,6 +113,10 @@ func runMigrations(db *gorm.DB) error {
 		// Bulk message models
 		&models.BulkMessageCampaign{},
 		&models.BulkMessageRecipient{},
+		&models.RSVPEvent{},
+		&models.RSVPResponse{},
+		&models.RSVPReminderSchedule{},
+		&models.RSVPReminderDelivery{},
 		&models.NotificationRule{},
 		// Catalog models
 		&models.Catalog{},
@@ -136,6 +140,10 @@ func cleanupTables(db *gorm.DB) {
 		// Canned responses
 		"canned_responses",
 		// Bulk message tables
+		"rsvp_reminder_deliveries",
+		"rsvp_reminder_schedules",
+		"rsvp_responses",
+		"rsvp_events",
 		"bulk_message_recipients",
 		"bulk_message_campaigns",
 		"notification_rules",

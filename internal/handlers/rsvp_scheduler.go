@@ -49,15 +49,27 @@ func (a *App) ProcessDueRSVPReminders(ctx context.Context) {
 			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": 1, "processed_at": now})
 			continue
 		}
-		result := a.sendRSVPReminders(&event, &schedule.TemplateID, jsonbToStringMap(schedule.TemplateParams), rows, models.RSVPReminderDeliveryScheduled, &schedule.ID, nil)
-		sent := result["sent"].(int)
-		failed := result["failed"].(int)
-		status := models.RSVPReminderScheduleCompleted
-		if failed > 0 {
-			status = models.RSVPReminderScheduleCompletedWithErrors
+		if len(rows) == 0 {
+			processed := time.Now().UTC()
+			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompleted, "processed_at": processed})
+			continue
 		}
-		processed := time.Now().UTC()
-		a.DB.Model(schedule).Updates(map[string]interface{}{"status": status, "sent_count": sent, "failed_count": failed, "processed_at": processed})
+		templateRaw := schedule.TemplateID.String()
+		_, template, err := a.rsvpReminderTemplate(schedule.OrganizationID, &event, &templateRaw)
+		if err != nil {
+			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": len(rows), "processed_at": now})
+			continue
+		}
+		campaignResult, err := a.createRSVPReminderCampaign(ctx, &event, template, jsonbToStringMap(schedule.TemplateParams), rows, models.RSVPReminderDeliveryScheduled, &schedule.ID, schedule.CreatedBy)
+		if err != nil {
+			a.Log.Error("Failed to create scheduled RSVP reminder campaign", "schedule_id", schedule.ID, "error", err)
+			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": len(rows), "processed_at": now})
+			continue
+		}
+		if campaignResult.Campaign == nil {
+			processed := time.Now().UTC()
+			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompleted, "processed_at": processed})
+		}
 	}
 }
 

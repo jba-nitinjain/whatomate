@@ -1404,6 +1404,10 @@
     "imageTooLarge": "படம் 5MB க்கும் குறைவாக இருக்க வேண்டும்"
   },
   "rsvp": {
+    "reminderCampaignCreated": "{queued} பெறுநர்களுக்கான நினைவூட்டல் பிரச்சாரம் வரிசைப்படுத்தப்பட்டது; {skipped} தவிர்க்கப்பட்டது.",
+    "reminderCampaignReady": "நினைவூட்டல் பிரச்சாரம் உருவாக்கப்பட்டது",
+    "viewCampaigns": "பிரச்சாரங்களைக் காண்க",
+    "noEligibleReminderRecipients": "தகுதியான நினைவூட்டல் பெறுநர்கள் எவரும் மீதமில்லை.",
     "recipientSelectionSummary": "மொத்தம் {total} இல் {selected} தேர்வு",
     "clearAllRecipients": "அனைத்தையும் நீக்கு",
     "title": "RSVP Events",
@@ -1494,6 +1498,7 @@
     "remindersTitle": "RSVP நினைவூட்டல்கள்", "remindersHint": "RSVP தொடங்காத விருந்தினர்களுக்கு மட்டுமே அனுப்பப்படும்.", "selectReminderTemplate": "அங்கீகரிக்கப்பட்ட வார்ப்புருவைத் தேர்வு செய்", "reminderResult": "அனுப்பியது {sent}; தவிர்த்தது {skipped}; தோல்வி {failed}.", "reminderFailed": "நினைவூட்டல் தோல்வி", "reminderLoadFailed": "நினைவூட்டல் அமைப்புகளை ஏற்ற முடியவில்லை", "reminderScheduled": "நினைவூட்டல் திட்டமிடப்பட்டது", "remindSelected": "தேர்ந்தெடுத்தவர்களுக்கு நினைவூட்டு ({count})", "remindAllNotStarted": "தொடங்காத அனைவருக்கும் நினைவூட்டு", "scheduleReminder": "நினைவூட்டலை திட்டமிடு", "schedule": "திட்டமிடு", "scheduledReminders": "திட்டமிட்ட நினைவூட்டல்கள்", "noScheduledReminders": "நினைவூட்டல்கள் இல்லை.", "reminderVariableMappings": "டெம்ப்ளேட் மாறிகள்", "reminderVariableHint": "டைனமிக் மதிப்பைத் தேர்ந்தெடுக்கவும் அல்லது நிலையான உரையை உள்ளிடவும். ஒவ்வொரு உறுப்பினருக்கும் மதிப்புகள் தனித்தனியாக நிரப்பப்படும்.", "reminderVariablePlaceholder": "எ.கா. {token} அல்லது நிலையான உரை", "reminderVariablesRequired": "ஒவ்வொரு நினைவூட்டல் டெம்ப்ளேட் மாறியையும் மேப் செய்யவும்"
   },
   "campaigns": {
+    "rsvpReminder": "RSVP நினைவூட்டல்",
     "title": "பிரச்சாரங்கள்",
     "subtitle": "மொத்த செய்தியிடல் பிரச்சாரங்களை நிர்வகிக்கவும்",
     "createCampaign": "பிரச்சாரத்தை உருவாக்கு",

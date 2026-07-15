@@ -1255,6 +1255,51 @@ func TestApp_GetCampaignRecipients_CampaignNotFound(t *testing.T) {
 
 // --- RetryFailed Tests ---
 
+func createLinkedRSVPReminderDelivery(t *testing.T, app *handlers.App, orgID, userID uuid.UUID, accountName string, campaign *models.BulkMessageCampaign, recipient *models.BulkMessageRecipient, status models.RSVPReminderDeliveryStatus) *models.RSVPReminderDelivery {
+	t.Helper()
+	contact := testutil.CreateTestContactWith(t, app.DB, orgID,
+		testutil.WithContactAccount(accountName),
+		testutil.WithPhoneNumber(recipient.PhoneNumber),
+	)
+	event := &models.RSVPEvent{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  orgID,
+		Name:            "Linked Campaign RSVP",
+		Status:          models.RSVPEventStatusActive,
+		AccessMode:      models.RSVPAccessModeGuestList,
+		WhatsAppAccount: accountName,
+		CreatedBy:       userID,
+	}
+	require.NoError(t, app.DB.Create(event).Error)
+	response := &models.RSVPResponse{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		RSVPEventID:    event.ID,
+		OrganizationID: orgID,
+		ContactID:      contact.ID,
+		PhoneNumber:    contact.PhoneNumber,
+		Attendance:     models.RSVPAttendancePending,
+		Source:         models.RSVPGuestSourceContactSelection,
+	}
+	require.NoError(t, app.DB.Create(response).Error)
+	require.NoError(t, app.DB.Model(campaign).Updates(map[string]interface{}{
+		"source_type": models.CampaignSourceRSVPReminder,
+		"source_id":   event.ID,
+	}).Error)
+	delivery := &models.RSVPReminderDelivery{
+		BaseModel:           models.BaseModel{ID: uuid.New()},
+		RSVPEventID:         event.ID,
+		OrganizationID:      orgID,
+		RSVPResponseID:      response.ID,
+		DeliveryType:        models.RSVPReminderDeliveryManual,
+		Status:              status,
+		AttemptedAt:         time.Now().UTC(),
+		CampaignID:          &campaign.ID,
+		CampaignRecipientID: &recipient.ID,
+	}
+	require.NoError(t, app.DB.Create(delivery).Error)
+	return delivery
+}
+
 func TestApp_RetryFailed_Success(t *testing.T) {
 	mockQueue := testutil.NewMockQueue()
 	app := newTestApp(t, withQueue(mockQueue))
@@ -1288,6 +1333,34 @@ func TestApp_RetryFailed_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, resp.Data.RetryCount)
 	assert.Equal(t, string(models.CampaignStatusProcessing), resp.Data.Status)
+}
+
+func TestApp_RetryFailed_RSVPReminderRetriesOnlyFailedDeliveries(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusCompleted)
+	failedRecipient := createTestRecipient(t, app, campaign.ID, "919111111111", models.MessageStatusFailed)
+	skippedRecipient := createTestRecipient(t, app, campaign.ID, "919222222222", models.MessageStatusFailed)
+	failedDelivery := createLinkedRSVPReminderDelivery(t, app, org.ID, user.ID, account.Name, campaign, failedRecipient, models.RSVPReminderDeliveryFailed)
+	createLinkedRSVPReminderDelivery(t, app, org.ID, user.ID, account.Name, campaign, skippedRecipient, models.RSVPReminderDeliverySkipped)
+
+	req := testutil.NewJSONRequest(t, nil)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", campaign.ID.String())
+
+	require.NoError(t, app.RetryFailed(req))
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+	require.Len(t, mockQueue.Jobs, 1)
+	assert.Equal(t, failedRecipient.ID, mockQueue.Jobs[0].RecipientID)
+
+	require.NoError(t, app.DB.First(failedDelivery, failedDelivery.ID).Error)
+	assert.Equal(t, models.RSVPReminderDeliveryQueued, failedDelivery.Status)
+	require.NoError(t, app.DB.First(skippedRecipient, skippedRecipient.ID).Error)
+	assert.Equal(t, models.MessageStatusFailed, skippedRecipient.Status)
 }
 
 func TestApp_RetryFailed_SkipsInactiveContacts(t *testing.T) {
@@ -1430,6 +1503,26 @@ func TestApp_ResendCampaign_RejectsProcessingCampaign(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fasthttp.StatusBadRequest, testutil.GetResponseStatusCode(req))
 	assert.Len(t, mockQueue.Jobs, 0)
+}
+
+func TestApp_ResendCampaign_RejectsRSVPReminderCampaign(t *testing.T) {
+	mockQueue := testutil.NewMockQueue()
+	app := newTestApp(t, withQueue(mockQueue))
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
+	source := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusCompleted)
+	require.NoError(t, app.DB.Model(source).Update("source_type", models.CampaignSourceRSVPReminder).Error)
+	createTestRecipient(t, app, source.ID, "919333333333", models.MessageStatusSent)
+
+	req := testutil.NewJSONRequest(t, nil)
+	testutil.SetAuthContext(req, org.ID, user.ID)
+	testutil.SetPathParam(req, "id", source.ID.String())
+
+	require.NoError(t, app.ResendCampaign(req))
+	assert.Equal(t, fasthttp.StatusBadRequest, testutil.GetResponseStatusCode(req))
+	assert.Empty(t, mockQueue.Jobs)
 }
 
 func TestApp_RetryFailed_InvalidStatus(t *testing.T) {

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -92,4 +93,72 @@ func TestValidateRSVPReminderParams(t *testing.T) {
 	require.NoError(t, validateRSVPReminderParams(template, map[string]string{
 		"1": "{{member_name}}", "event_label": "{{event_name}}",
 	}))
+}
+
+func TestCreateRSVPReminderCampaignQueuesResolvedRecipients(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	mockQueue := testutil.NewMockQueue()
+	app := &App{DB: db, Log: testutil.NopLogger(), Queue: mockQueue}
+	org := testutil.CreateTestOrganization(t, db)
+	user := testutil.CreateTestUser(t, db, org.ID)
+	account := testutil.CreateTestWhatsAppAccount(t, db, org.ID)
+	template := testutil.CreateTestTemplate(t, db, org.ID, account.Name)
+	contact := testutil.CreateTestContactWith(t, db, org.ID,
+		testutil.WithContactAccount(account.Name),
+		testutil.WithPhoneNumber("919876543210"),
+	)
+	event := models.RSVPEvent{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  org.ID,
+		Name:            "Annual Gathering",
+		Status:          models.RSVPEventStatusActive,
+		AccessMode:      models.RSVPAccessModeGuestList,
+		WhatsAppAccount: account.Name,
+		CreatedBy:       user.ID,
+	}
+	require.NoError(t, db.Create(&event).Error)
+	response := models.RSVPResponse{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		RSVPEventID:    event.ID,
+		OrganizationID: org.ID,
+		ContactID:      contact.ID,
+		PhoneNumber:    contact.PhoneNumber,
+		Attendance:     models.RSVPAttendancePending,
+		Source:         models.RSVPGuestSourceContactSelection,
+	}
+	require.NoError(t, db.Create(&response).Error)
+
+	result, err := app.createRSVPReminderCampaign(
+		context.Background(),
+		&event,
+		template,
+		map[string]string{"1": "{{member_name}} for {{event_name}}"},
+		[]models.RSVPResponse{response},
+		models.RSVPReminderDeliveryManual,
+		nil,
+		user.ID,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result.Campaign)
+	assert.Equal(t, 1, result.Queued)
+	assert.Zero(t, result.Skipped)
+	assert.Equal(t, models.CampaignSourceRSVPReminder, result.Campaign.SourceType)
+	require.NotNil(t, result.Campaign.SourceID)
+	assert.Equal(t, event.ID, *result.Campaign.SourceID)
+	assert.Equal(t, models.CampaignStatusProcessing, result.Campaign.Status)
+	assert.Equal(t, 1, mockQueue.JobCount())
+
+	var recipient models.BulkMessageRecipient
+	require.NoError(t, db.Where("campaign_id = ?", result.Campaign.ID).First(&recipient).Error)
+	assert.Equal(t, contact.PhoneNumber, recipient.PhoneNumber)
+	assert.Equal(t, contact.ProfileName+" for Annual Gathering", recipient.TemplateParams["1"])
+
+	var delivery models.RSVPReminderDelivery
+	require.NoError(t, db.Where("campaign_recipient_id = ?", recipient.ID).First(&delivery).Error)
+	assert.Equal(t, models.RSVPReminderDeliveryQueued, delivery.Status)
+	assert.Equal(t, response.ID, delivery.RSVPResponseID)
+	require.NotNil(t, delivery.CampaignID)
+	assert.Equal(t, result.Campaign.ID, *delivery.CampaignID)
+	require.NotNil(t, delivery.InitiatedBy)
+	assert.Equal(t, user.ID, *delivery.InitiatedBy)
 }

@@ -173,38 +173,6 @@ func (a *App) RSVPReminderPreview(r *fastglue.Request) error {
 	return r.SendEnvelope(map[string]interface{}{"eligible": len(rows), "ineligible": maxInt(0, len(parts)-len(rows)), "invalid": invalid, "configured": configured})
 }
 
-func (a *App) sendRSVPReminders(event *models.RSVPEvent, templateID *uuid.UUID, templateParams map[string]string, rows []models.RSVPResponse, deliveryType models.RSVPReminderDeliveryType, scheduleID *uuid.UUID, initiatedBy *uuid.UUID) map[string]interface{} {
-	sent, failed, skipped := 0, 0, 0
-	errors := []map[string]string{}
-	for i := range rows {
-		row := &rows[i]
-		// Reserve a scheduled delivery before sending. The unique index makes the
-		// scheduler idempotent across concurrent processors.
-		delivery := models.RSVPReminderDelivery{BaseModel: models.BaseModel{ID: uuid.New()}, RSVPEventID: event.ID, OrganizationID: event.OrganizationID, RSVPResponseID: row.ID, ScheduleID: scheduleID, DeliveryType: deliveryType, Status: models.RSVPReminderDeliverySkipped, AttemptedAt: time.Now().UTC(), InitiatedBy: initiatedBy}
-		if err := a.DB.Create(&delivery).Error; err != nil {
-			skipped++
-			continue
-		}
-		// Eligibility may have changed since preview/schedule selection.
-		var fresh models.RSVPResponse
-		if err := a.DB.Preload("Contact").Where("id = ? AND organization_id = ? AND rsvp_started_at IS NULL AND responded_at IS NULL", row.ID, event.OrganizationID).First(&fresh).Error; err != nil || fresh.Contact == nil {
-			skipped++
-			continue
-		}
-		resolvedParams := resolveRSVPReminderParams(templateParams, event, &fresh)
-		messageID, err := a.sendRSVPTemplateWithParams(event, templateID, fresh.Contact, resolvedParams)
-		if err != nil {
-			failed++
-			a.DB.Model(&delivery).Updates(map[string]interface{}{"status": models.RSVPReminderDeliveryFailed, "error_message": err.Error()})
-			errors = append(errors, map[string]string{"response_id": row.ID.String(), "error": err.Error()})
-			continue
-		}
-		sent++
-		a.DB.Model(&delivery).Updates(map[string]interface{}{"status": models.RSVPReminderDeliverySent, "message_id": messageID})
-	}
-	return map[string]interface{}{"requested": len(rows), "sent": sent, "failed": failed, "skipped": skipped, "errors": errors}
-}
-
 func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
@@ -230,7 +198,7 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 	if !req.AllNotStarted && len(ids) == 0 {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Select guests or request all not-started guests", nil, "")
 	}
-	templateID, template, err := a.rsvpReminderTemplate(orgID, event, req.TemplateID)
+	_, template, err := a.rsvpReminderTemplate(orgID, event, req.TemplateID)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
@@ -244,12 +212,25 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load reminder recipients", nil, "")
 	}
-	result := a.sendRSVPReminders(event, templateID, req.TemplateParams, rows, models.RSVPReminderDeliveryManual, nil, &userID)
-	result["skipped"] = result["skipped"].(int) + invalid + maxInt(0, len(ids)-len(rows))
+	campaignResult, err := a.createRSVPReminderCampaign(r.RequestCtx, event, template, req.TemplateParams, rows, models.RSVPReminderDeliveryManual, nil, userID)
+	if err != nil {
+		a.Log.Error("Failed to create RSVP reminder campaign", "event_id", event.ID, "error", err)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create reminder campaign", nil, "")
+	}
+	requested := len(req.ResponseIDs)
 	if req.AllNotStarted {
-		result["requested"] = len(rows)
-	} else {
-		result["requested"] = len(req.ResponseIDs)
+		requested = len(rows)
+	}
+	result := map[string]interface{}{
+		"requested": requested,
+		"queued":    campaignResult.Queued,
+		"sent":      0,
+		"failed":    0,
+		"skipped":   campaignResult.Skipped + invalid + maxInt(0, len(ids)-len(rows)),
+	}
+	if campaignResult.Campaign != nil {
+		result["campaign_id"] = campaignResult.Campaign.ID
+		result["campaign_name"] = campaignResult.Campaign.Name
 	}
 	return r.SendEnvelope(result)
 }

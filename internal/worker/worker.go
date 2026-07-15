@@ -79,6 +79,9 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 		w.Log.Info("Campaign not active, skipping recipient", "campaign_id", job.CampaignID, "status", campaign.Status, "recipient_id", job.RecipientID)
 		return nil // Not an error, just skip
 	}
+	if w.skipIneligibleRSVPReminder(ctx, job) {
+		return nil
+	}
 
 	// Get WhatsApp account
 	var account models.WhatsAppAccount
@@ -86,6 +89,7 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 		w.Log.Error("Failed to load WhatsApp account", "error", err, "account_name", campaign.WhatsAppAccount)
 		w.updateRecipientStatus(job.RecipientID, models.MessageStatusFailed, "", "WhatsApp account not found")
 		w.incrementCampaignCount(job.CampaignID, "failed_count")
+		w.checkCampaignCompletion(ctx, job.CampaignID, job.OrganizationID)
 		return nil // Don't retry, mark as failed
 	}
 	w.decryptAccountSecrets(&account)
@@ -96,6 +100,7 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 		w.Log.Error("Failed to get or create contact", "error", err, "phone", job.PhoneNumber)
 		w.updateRecipientStatus(job.RecipientID, models.MessageStatusFailed, "", "Failed to create contact")
 		w.incrementCampaignCount(job.CampaignID, "failed_count")
+		w.checkCampaignCompletion(ctx, job.CampaignID, job.OrganizationID)
 		return nil // Don't retry
 	}
 	if !contact.IsActive {
@@ -169,17 +174,71 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 
 // updateRecipientStatus updates the recipient's status in the database
 func (w *Worker) updateRecipientStatus(recipientID uuid.UUID, status models.MessageStatus, waMessageID, errorMsg string) {
+	now := time.Now()
 	updates := map[string]interface{}{
 		"status":               status,
 		"whats_app_message_id": waMessageID,
 	}
 	if status == models.MessageStatusSent {
-		updates["sent_at"] = time.Now()
+		updates["sent_at"] = now
+		updates["error_message"] = ""
 	}
 	if errorMsg != "" {
 		updates["error_message"] = errorMsg
 	}
 	w.DB.Model(&models.BulkMessageRecipient{}).Where("id = ?", recipientID).Updates(updates)
+
+	deliveryUpdates := map[string]interface{}{"attempted_at": now.UTC()}
+	switch status {
+	case models.MessageStatusSent:
+		deliveryUpdates["status"] = models.RSVPReminderDeliverySent
+		deliveryUpdates["message_id"] = waMessageID
+		deliveryUpdates["error_message"] = ""
+	case models.MessageStatusFailed:
+		deliveryUpdates["status"] = models.RSVPReminderDeliveryFailed
+		deliveryUpdates["error_message"] = errorMsg
+	}
+	if len(deliveryUpdates) > 1 {
+		w.DB.Model(&models.RSVPReminderDelivery{}).
+			Where("campaign_recipient_id = ?", recipientID).
+			Updates(deliveryUpdates)
+	}
+}
+
+func (w *Worker) skipIneligibleRSVPReminder(ctx context.Context, job *queue.RecipientJob) bool {
+	var delivery models.RSVPReminderDelivery
+	if err := w.DB.Where("campaign_recipient_id = ?", job.RecipientID).First(&delivery).Error; err != nil {
+		return false
+	}
+	if delivery.Status == models.RSVPReminderDeliverySent || delivery.Status == models.RSVPReminderDeliverySkipped {
+		return true
+	}
+
+	var eligible int64
+	w.DB.Model(&models.RSVPResponse{}).
+		Where("id = ? AND organization_id = ? AND rsvp_started_at IS NULL AND responded_at IS NULL", delivery.RSVPResponseID, job.OrganizationID).
+		Count(&eligible)
+	if eligible > 0 {
+		return false
+	}
+
+	now := time.Now().UTC()
+	reason := "RSVP already started or completed; reminder skipped"
+	updated := w.DB.Model(&models.BulkMessageRecipient{}).Where("id = ? AND status = ?", job.RecipientID, models.MessageStatusPending).Updates(map[string]interface{}{
+		"status":        models.MessageStatusFailed,
+		"error_message": reason,
+	})
+	if updated.Error != nil || updated.RowsAffected == 0 {
+		return true
+	}
+	w.DB.Model(&delivery).Updates(map[string]interface{}{
+		"status":        models.RSVPReminderDeliverySkipped,
+		"error_message": reason,
+		"attempted_at":  now,
+	})
+	w.incrementCampaignCount(job.CampaignID, "failed_count")
+	w.checkCampaignCompletion(ctx, job.CampaignID, job.OrganizationID)
+	return true
 }
 
 func (w *Worker) markContactInactiveIfUndeliverable(contact *models.Contact, err error) {
@@ -209,6 +268,9 @@ func (w *Worker) incrementCampaignCount(campaignID uuid.UUID, column string) {
 
 // publishCampaignStats publishes campaign stats for real-time updates
 func (w *Worker) publishCampaignStats(ctx context.Context, campaignID, organizationID uuid.UUID) {
+	if w.Publisher == nil {
+		return
+	}
 	var campaign models.BulkMessageCampaign
 	if err := w.DB.Where("id = ?", campaignID).First(&campaign).Error; err != nil {
 		return
@@ -256,21 +318,46 @@ func (w *Worker) checkCampaignCompletion(ctx context.Context, campaignID, organi
 		campaign.Status = models.CampaignStatusCompleted
 		campaign.CompletedAt = &now
 
+		var reminderCounts struct {
+			Sent   int64
+			Failed int64
+		}
+		w.DB.Model(&models.RSVPReminderDelivery{}).
+			Where("campaign_id = ?", campaignID).
+			Select(`
+				COUNT(CASE WHEN status = 'sent' THEN 1 END) AS sent,
+				COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed
+			`).Scan(&reminderCounts)
+		scheduleStatus := models.RSVPReminderScheduleCompleted
+		if reminderCounts.Failed > 0 {
+			scheduleStatus = models.RSVPReminderScheduleCompletedWithErrors
+		}
+		w.DB.Model(&models.RSVPReminderSchedule{}).
+			Where("campaign_id = ? AND status = ?", campaignID, models.RSVPReminderScheduleProcessing).
+			Updates(map[string]interface{}{
+				"status":       scheduleStatus,
+				"sent_count":   reminderCounts.Sent,
+				"failed_count": reminderCounts.Failed,
+				"processed_at": now.UTC(),
+			})
+
 		w.Log.Info("Campaign completed", "campaign_id", campaignID, "sent", campaign.SentCount, "failed", campaign.FailedCount)
 
 		// Publish completion status
-		_ = w.Publisher.PublishCampaignStats(ctx, &queue.CampaignStatsUpdate{
-			CampaignID:      campaignID.String(),
-			OrganizationID:  organizationID,
-			Status:          campaign.Status,
-			TotalRecipients: campaign.TotalRecipients,
-			SentCount:       campaign.SentCount,
-			DeliveredCount:  campaign.DeliveredCount,
-			ReadCount:       campaign.ReadCount,
-			FailedCount:     campaign.FailedCount,
-			StartedAt:       campaign.StartedAt,
-			CompletedAt:     campaign.CompletedAt,
-		})
+		if w.Publisher != nil {
+			_ = w.Publisher.PublishCampaignStats(ctx, &queue.CampaignStatsUpdate{
+				CampaignID:      campaignID.String(),
+				OrganizationID:  organizationID,
+				Status:          campaign.Status,
+				TotalRecipients: campaign.TotalRecipients,
+				SentCount:       campaign.SentCount,
+				DeliveredCount:  campaign.DeliveredCount,
+				ReadCount:       campaign.ReadCount,
+				FailedCount:     campaign.FailedCount,
+				StartedAt:       campaign.StartedAt,
+				CompletedAt:     campaign.CompletedAt,
+			})
+		}
 	} else {
 		// Publish current stats
 		w.publishCampaignStats(ctx, campaignID, organizationID)

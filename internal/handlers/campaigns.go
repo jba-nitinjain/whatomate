@@ -45,6 +45,8 @@ type CampaignResponse struct {
 	WhatsAppAccount     string                `json:"whatsapp_account"`
 	TemplateID          uuid.UUID             `json:"template_id"`
 	TemplateName        string                `json:"template_name,omitempty"`
+	SourceType          string                `json:"source_type,omitempty"`
+	SourceID            *uuid.UUID            `json:"source_id,omitempty"`
 	HeaderMediaURL      string                `json:"header_media_url,omitempty"`
 	HeaderMediaID       string                `json:"header_media_id,omitempty"`
 	HeaderMediaFilename string                `json:"header_media_filename,omitempty"`
@@ -131,6 +133,8 @@ func (a *App) ListCampaigns(r *fastglue.Request) error {
 			Name:                c.Name,
 			WhatsAppAccount:     c.WhatsAppAccount,
 			TemplateID:          c.TemplateID,
+			SourceType:          c.SourceType,
+			SourceID:            c.SourceID,
 			HeaderMediaURL:      c.HeaderMediaURL,
 			HeaderMediaID:       c.HeaderMediaID,
 			HeaderMediaFilename: c.HeaderMediaFilename,
@@ -221,6 +225,8 @@ func (a *App) CreateCampaign(r *fastglue.Request) error {
 		Name:                campaign.Name,
 		WhatsAppAccount:     campaign.WhatsAppAccount,
 		TemplateID:          campaign.TemplateID,
+		SourceType:          campaign.SourceType,
+		SourceID:            campaign.SourceID,
 		TemplateName:        template.Name,
 		HeaderMediaURL:      campaign.HeaderMediaURL,
 		HeaderMediaID:       campaign.HeaderMediaID,
@@ -261,6 +267,8 @@ func (a *App) GetCampaign(r *fastglue.Request) error {
 		Name:                campaign.Name,
 		WhatsAppAccount:     campaign.WhatsAppAccount,
 		TemplateID:          campaign.TemplateID,
+		SourceType:          campaign.SourceType,
+		SourceID:            campaign.SourceID,
 		HeaderMediaURL:      campaign.HeaderMediaURL,
 		HeaderMediaID:       campaign.HeaderMediaID,
 		HeaderMediaFilename: campaign.HeaderMediaFilename,
@@ -298,6 +306,9 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
 	if err != nil {
 		return nil
+	}
+	if campaign.SourceType == models.CampaignSourceRSVPReminder {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "RSVP reminder campaigns cannot be edited", nil, "")
 	}
 
 	// Only allow updates to draft campaigns
@@ -379,6 +390,8 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 		Name:                campaign.Name,
 		WhatsAppAccount:     campaign.WhatsAppAccount,
 		TemplateID:          campaign.TemplateID,
+		SourceType:          campaign.SourceType,
+		SourceID:            campaign.SourceID,
 		HeaderMediaURL:      campaign.HeaderMediaURL,
 		HeaderMediaID:       campaign.HeaderMediaID,
 		HeaderMediaFilename: campaign.HeaderMediaFilename,
@@ -508,6 +521,9 @@ func (a *App) DeleteCampaign(r *fastglue.Request) error {
 	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
 	if err != nil {
 		return nil
+	}
+	if campaign.SourceType == models.CampaignSourceRSVPReminder {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "RSVP reminder campaigns are retained for audit", nil, "")
 	}
 
 	// Don't allow deletion of running campaigns
@@ -738,6 +754,13 @@ func (a *App) CancelCampaign(r *fastglue.Request) error {
 		a.Log.Error("Failed to cancel campaign", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to cancel campaign", nil, "")
 	}
+	now := time.Now().UTC()
+	a.DB.Model(&models.RSVPReminderDelivery{}).
+		Where("campaign_id = ? AND status = ?", id, models.RSVPReminderDeliveryQueued).
+		Updates(map[string]interface{}{"status": models.RSVPReminderDeliverySkipped, "error_message": "Campaign cancelled", "attempted_at": now})
+	a.DB.Model(&models.RSVPReminderSchedule{}).
+		Where("campaign_id = ? AND status = ?", id, models.RSVPReminderScheduleProcessing).
+		Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCancelled, "processed_at": now})
 
 	a.Log.Info("Campaign cancelled", "campaign_id", id)
 
@@ -774,6 +797,26 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 	if err := a.DB.Where("campaign_id = ? AND status = ?", id, models.MessageStatusFailed).Find(&failedRecipients).Error; err != nil {
 		a.Log.Error("Failed to load failed recipients", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load failed recipients", nil, "")
+	}
+	if campaign.SourceType == models.CampaignSourceRSVPReminder && len(failedRecipients) > 0 {
+		var failedDeliveryRecipientIDs []uuid.UUID
+		if err := a.DB.Model(&models.RSVPReminderDelivery{}).
+			Where("campaign_id = ? AND status = ?", id, models.RSVPReminderDeliveryFailed).
+			Pluck("campaign_recipient_id", &failedDeliveryRecipientIDs).Error; err != nil {
+			a.Log.Error("Failed to load retryable RSVP reminder deliveries", "error", err, "campaign_id", id)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load retryable reminder deliveries", nil, "")
+		}
+		allowed := make(map[uuid.UUID]struct{}, len(failedDeliveryRecipientIDs))
+		for _, recipientID := range failedDeliveryRecipientIDs {
+			allowed[recipientID] = struct{}{}
+		}
+		filtered := failedRecipients[:0]
+		for _, recipient := range failedRecipients {
+			if _, ok := allowed[recipient.ID]; ok {
+				filtered = append(filtered, recipient)
+			}
+		}
+		failedRecipients = filtered
 	}
 
 	if len(failedRecipients) == 0 {
@@ -813,6 +856,14 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 		a.Log.Error("Failed to reset failed recipients", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to reset failed recipients", nil, "")
 	}
+	if campaign.SourceType == models.CampaignSourceRSVPReminder {
+		if err := a.DB.Model(&models.RSVPReminderDelivery{}).
+			Where("campaign_id = ? AND status = ? AND campaign_recipient_id IN ?", id, models.RSVPReminderDeliveryFailed, retryableRecipientIDs).
+			Updates(map[string]interface{}{"status": models.RSVPReminderDeliveryQueued, "error_message": "", "message_id": ""}).Error; err != nil {
+			a.Log.Error("Failed to reset RSVP reminder deliveries", "error", err, "campaign_id", id)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to reset reminder deliveries", nil, "")
+		}
+	}
 
 	// Reset failed messages in messages table to pending
 	retryableContactIDs, err := a.loadContactIDsByPhones(orgID, campaignRecipientPhones(retryableRecipients))
@@ -848,6 +899,11 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 		a.Log.Error("Failed to update campaign status", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update campaign", nil, "")
 	}
+	if campaign.SourceType == models.CampaignSourceRSVPReminder {
+		a.DB.Model(&models.RSVPReminderSchedule{}).
+			Where("campaign_id = ? AND status = ?", id, models.RSVPReminderScheduleCompletedWithErrors).
+			Updates(map[string]interface{}{"status": models.RSVPReminderScheduleProcessing, "processed_at": nil})
+	}
 
 	a.Log.Info("Retrying failed messages", "campaign_id", id, "failed_count", len(retryableRecipients), "skipped_inactive", skippedInactiveCount)
 
@@ -865,6 +921,14 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 	}
 
 	if err := a.Queue.EnqueueRecipients(r.RequestCtx, jobs); err != nil {
+		if campaign.SourceType == models.CampaignSourceRSVPReminder {
+			a.DB.Model(&models.RSVPReminderDelivery{}).
+				Where("campaign_id = ? AND campaign_recipient_id IN ?", id, retryableRecipientIDs).
+				Updates(map[string]interface{}{"status": models.RSVPReminderDeliveryFailed, "error_message": "Failed to queue reminder retry"})
+			a.DB.Model(&models.RSVPReminderSchedule{}).
+				Where("campaign_id = ? AND status = ?", id, models.RSVPReminderScheduleProcessing).
+				Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "processed_at": time.Now().UTC()})
+		}
 		a.Log.Error("Failed to enqueue recipients for retry", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to queue recipients", nil, "")
 	}
@@ -896,6 +960,9 @@ func (a *App) ResendCampaign(r *fastglue.Request) error {
 		Preload("Template").
 		First(&source).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Campaign not found", nil, "")
+	}
+	if source.SourceType == models.CampaignSourceRSVPReminder {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "RSVP reminder campaigns cannot be resent; create a new reminder from RSVP Results", nil, "")
 	}
 
 	if !canResendCampaign(source.Status) {
@@ -1007,6 +1074,9 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 	campaign, err := findByIDAndOrg[models.BulkMessageCampaign](a.DB, r, id, orgID, "Campaign")
 	if err != nil {
 		return nil
+	}
+	if campaign.SourceType == models.CampaignSourceRSVPReminder {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Recipients are managed from the RSVP reminder", nil, "")
 	}
 
 	if !canImportRecipientsToCampaign(campaign.Status) {
@@ -1187,6 +1257,8 @@ func campaignToResponse(campaign models.BulkMessageCampaign, template *models.Te
 		Name:                campaign.Name,
 		WhatsAppAccount:     campaign.WhatsAppAccount,
 		TemplateID:          campaign.TemplateID,
+		SourceType:          campaign.SourceType,
+		SourceID:            campaign.SourceID,
 		HeaderMediaURL:      campaign.HeaderMediaURL,
 		HeaderMediaID:       campaign.HeaderMediaID,
 		HeaderMediaFilename: campaign.HeaderMediaFilename,
