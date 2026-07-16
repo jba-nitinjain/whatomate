@@ -137,6 +137,7 @@ func TestCreateRSVPReminderCampaignQueuesResolvedRecipients(t *testing.T) {
 		models.RSVPReminderDeliveryManual,
 		nil,
 		user.ID,
+		"", "", "",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, result.Campaign)

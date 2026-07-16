@@ -19,6 +19,9 @@ type rsvpReminderSendRequest struct {
 	AllNotStarted      bool              `json:"all_not_started"`
 	TemplateID         *string           `json:"template_id"`
 	TemplateParams     map[string]string `json:"template_params"`
+	StagingID          string            `json:"staging_id"`
+	StagingFilename    string            `json:"staging_filename"`
+	StagingMimeType    string            `json:"staging_mime_type"`
 }
 
 type rsvpReminderScheduleRequest struct {
@@ -222,7 +225,7 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load reminder recipients", nil, "")
 	}
-	campaignResult, err := a.createRSVPReminderCampaign(r.RequestCtx, event, template, req.TemplateParams, rows, models.RSVPReminderDeliveryManual, nil, userID)
+	campaignResult, err := a.createRSVPReminderCampaign(r.RequestCtx, event, template, req.TemplateParams, rows, models.RSVPReminderDeliveryManual, nil, userID, req.StagingID, req.StagingFilename, req.StagingMimeType)
 	if err != nil {
 		a.Log.Error("Failed to create RSVP reminder campaign", "event_id", event.ID, "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create reminder campaign", nil, "")

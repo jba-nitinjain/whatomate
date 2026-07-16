@@ -60,7 +60,7 @@ func (a *App) ProcessDueRSVPReminders(ctx context.Context) {
 			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": len(rows), "processed_at": now})
 			continue
 		}
-		campaignResult, err := a.createRSVPReminderCampaign(ctx, &event, template, jsonbToStringMap(schedule.TemplateParams), rows, models.RSVPReminderDeliveryScheduled, &schedule.ID, schedule.CreatedBy)
+		campaignResult, err := a.createRSVPReminderCampaign(ctx, &event, template, jsonbToStringMap(schedule.TemplateParams), rows, models.RSVPReminderDeliveryScheduled, &schedule.ID, schedule.CreatedBy, "", "", "")
 		if err != nil {
 			a.Log.Error("Failed to create scheduled RSVP reminder campaign", "schedule_id", schedule.ID, "error", err)
 			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": len(rows), "processed_at": now})

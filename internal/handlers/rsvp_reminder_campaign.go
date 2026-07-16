@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -128,6 +129,7 @@ func (a *App) createRSVPReminderCampaign(
 	deliveryType models.RSVPReminderDeliveryType,
 	scheduleID *uuid.UUID,
 	createdBy uuid.UUID,
+	stagingID, stagingFilename, stagingMimeType string,
 ) (rsvpReminderCampaignResult, error) {
 	result := rsvpReminderCampaignResult{}
 	if len(rows) == 0 {
@@ -183,6 +185,23 @@ func (a *App) createRSVPReminderCampaign(
 		CreatedBy:       createdBy,
 		SourceType:      models.CampaignSourceRSVPReminder,
 		SourceID:        &event.ID,
+	}
+
+	if stagingID != "" {
+		key := rsvpReminderStagingKey(stagingID)
+		if key == "" {
+			return result, fmt.Errorf("invalid media reference")
+		}
+		// The staged file already exists on disk under this pseudo campaign id.
+		// Re-derive its stored path the same way saveCampaignMedia built it, rather
+		// than reconstructing a path by hand: saveCampaignMedia returns
+		// "campaigns/<id><ext>", so a hand-built "campaigns/"+key would both
+		// double-prefix and drop the extension.
+		campaign.HeaderMediaLocalPath = filepath.Join("campaigns", key+getExtensionFromMimeType(stagingMimeType))
+		campaign.HeaderMediaFilename = stagingFilename
+		campaign.HeaderMediaMimeType = stagingMimeType
+		campaign.HeaderMediaID = ""
+		campaign.HeaderMediaURL = ""
 	}
 
 	recipients := make([]models.BulkMessageRecipient, 0, len(freshRows))
