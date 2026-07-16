@@ -617,6 +617,15 @@ func (a *App) StartCampaign(r *fastglue.Request) error {
 	})
 }
 
+// campaignMediaRequiredError builds the "template requires <type> header
+// media" message shared by validateCampaignReadyForStart (below) and
+// rsvpReminderMediaValidationError (rsvp_reminder_campaign.go) so the two
+// call sites - one gating StartCampaign, the other gating an RSVP reminder
+// send - cannot drift apart, since they were previously copy-pasted verbatim.
+func campaignMediaRequiredError(headerType string) error {
+	return fmt.Errorf("template requires %s header media. Configure campaign media before starting", strings.ToLower(headerType))
+}
+
 func (a *App) validateCampaignReadyForStart(campaign *models.BulkMessageCampaign) error {
 	if campaign.Template == nil && campaign.TemplateID != uuid.Nil {
 		var template models.Template
@@ -633,7 +642,7 @@ func (a *App) validateCampaignReadyForStart(campaign *models.BulkMessageCampaign
 	case "IMAGE", "VIDEO", "DOCUMENT":
 		if strings.TrimSpace(campaign.HeaderMediaID) == "" &&
 			strings.TrimSpace(campaign.HeaderMediaURL) == "" {
-			return fmt.Errorf("template requires %s header media. Configure campaign media before starting", strings.ToLower(campaign.Template.HeaderType))
+			return campaignMediaRequiredError(campaign.Template.HeaderType)
 		}
 	}
 

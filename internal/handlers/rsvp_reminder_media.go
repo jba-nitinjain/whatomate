@@ -116,14 +116,23 @@ func (a *App) UploadRSVPReminderMedia(r *fastglue.Request) error {
 func (a *App) stagedRSVPReminderMediaPath(stagingID string) (string, error) {
 	key := rsvpReminderStagingKey(stagingID)
 	if key == "" {
-		return "", fmt.Errorf("invalid media reference")
+		// A malformed staging id is not reachable from a normal client (see
+		// rsvpReminderStagingKey), but if it happens the fix is the same as an
+		// expired file: re-upload and send again. User-facing for the same
+		// reason as the "not found" case below.
+		return "", rsvpUserFacingError{fmt.Errorf("invalid media reference")}
 	}
 	matches, err := filepath.Glob(filepath.Join(a.getMediaStoragePath(), "campaigns", key+".*"))
 	if err != nil {
+		// A glob error here is a filesystem/infrastructure problem, not
+		// something the user can fix by re-uploading - stays unwrapped.
 		return "", fmt.Errorf("failed to locate staged media: %w", err)
 	}
 	if len(matches) == 0 {
-		return "", fmt.Errorf("staged media not found - it may have expired or already been used")
+		// The common case this wrapper exists for: the staged file expired or
+		// was already cleaned up. The user can fix this by re-uploading, so it
+		// must reach them as a 400 with this exact message, not a generic 500.
+		return "", rsvpUserFacingError{fmt.Errorf("staged media not found - it may have expired or already been used")}
 	}
 	return matches[0], nil
 }
@@ -142,7 +151,11 @@ func (a *App) loadStagedRSVPReminderMedia(stagingID string) (data []byte, mimeTy
 	}
 	data, err = os.ReadFile(path)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to read staged media: %w", err)
+		// stagedRSVPReminderMediaPath found a glob match a moment ago, but the
+		// file can still vanish before the read (e.g. cleaned up concurrently) -
+		// same user-fixable "re-upload" outcome as the not-found case above, so
+		// this is wrapped the same way rather than falling through as a raw 500.
+		return nil, "", rsvpUserFacingError{fmt.Errorf("failed to read staged media: %w", err)}
 	}
 	mimeType = detectCampaignMediaMimeType(filepath.Base(path), "", data)
 	return data, mimeType, nil

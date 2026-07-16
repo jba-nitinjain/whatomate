@@ -121,15 +121,15 @@ func rsvpReminderCampaignName(eventName string, now time.Time) string {
 // file. It exists so SendRSVPReminders can return a clean, user-fixable 400
 // without echoing createRSVPReminderCampaign's own errors verbatim - those
 // also cover infrastructure failures (DB writes, queue unavailability) that
-// must not leak to the client. The wording matches
-// validateCampaignReadyForStart's media check (campaigns.go:632-637)
-// exactly, since that function still runs inside createRSVPReminderCampaign
-// as the authoritative backstop and the two messages must not drift.
+// must not leak to the client. The message comes from campaignMediaRequiredError
+// (campaigns.go), the same helper validateCampaignReadyForStart's media check
+// uses, since that function still runs inside createRSVPReminderCampaign as
+// the authoritative backstop and the two messages must not drift.
 func rsvpReminderMediaValidationError(template *models.Template, stagingID string) error {
 	switch template.HeaderType {
 	case "IMAGE", "VIDEO", "DOCUMENT":
 		if strings.TrimSpace(stagingID) == "" {
-			return fmt.Errorf("template requires %s header media. Configure campaign media before starting", strings.ToLower(template.HeaderType))
+			return campaignMediaRequiredError(template.HeaderType)
 		}
 	}
 	return nil
@@ -285,7 +285,13 @@ func (a *App) createRSVPReminderCampaign(
 	// template fails once per recipient with Meta error 132012 — 1008 times on
 	// 15/07/2026, while the campaign reported "completed".
 	if err := a.validateCampaignReadyForStart(&campaign); err != nil {
-		return result, err
+		// This is a backstop, not the primary gate (rsvpReminderMediaValidationError
+		// in rsvp_reminders.go rejects the common case earlier), but when it does
+		// fire - e.g. a scheduled reminder, which always passes stagingID "" per
+		// rsvp_scheduler.go - its message is exactly as user-fixable as the
+		// primary check's, so it is wrapped the same way rather than reaching the
+		// client as a generic 500.
+		return result, rsvpUserFacingError{err}
 	}
 
 	err = a.DB.Transaction(func(tx *gorm.DB) error {

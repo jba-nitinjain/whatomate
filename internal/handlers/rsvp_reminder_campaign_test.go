@@ -1,9 +1,14 @@
 package handlers
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/nikyjain/whatomate/internal/config"
 	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/valyala/fasthttp"
 )
 
 func TestRSVPReminderCampaignOutcomeAllFailed(t *testing.T) {
@@ -68,5 +73,86 @@ func TestRSVPReminderMediaValidationError_RejectsMissingStagingID(t *testing.T) 
 				t.Fatalf("rsvpReminderMediaValidationError(%q, %q) = %q, want %q", c.headerType, c.stagingID, err.Error(), c.wantErr)
 			}
 		})
+	}
+}
+
+// TestRSVPReminderCampaignErrorEnvelope pins the fix for the gap left by the
+// generic-500 fix above: createRSVPReminderCampaign can also fail with a
+// rsvpUserFacingError (missing/expired staged media, or the
+// validateCampaignReadyForStart backstop) that must reach the client as a 400
+// with its own message - not the same opaque 500 as a real infrastructure
+// failure (a DB write or the campaign queue being unavailable). This asserts
+// rsvpReminderCampaignErrorEnvelope tells the two apart via errors.As, and
+// that the distinction survives an extra layer of %w wrapping.
+func TestRSVPReminderCampaignErrorEnvelope(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantMsg    string
+	}{
+		{
+			name:       "user-facing error surfaces its own message as a 400",
+			err:        rsvpUserFacingError{fmt.Errorf("staged media not found - it may have expired or already been used")},
+			wantStatus: fasthttp.StatusBadRequest,
+			wantMsg:    "staged media not found - it may have expired or already been used",
+		},
+		{
+			name:       "user-facing error wrapped further by %w is still detected",
+			err:        fmt.Errorf("promote staged media: %w", rsvpUserFacingError{fmt.Errorf("failed to read staged media: file removed")}),
+			wantStatus: fasthttp.StatusBadRequest,
+			wantMsg:    "failed to read staged media: file removed",
+		},
+		{
+			name:       "plain infrastructure error stays a generic 500, not leaked",
+			err:        fmt.Errorf("campaign queue is unavailable"),
+			wantStatus: fasthttp.StatusInternalServerError,
+			wantMsg:    "Failed to create reminder campaign",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			status, msg := rsvpReminderCampaignErrorEnvelope(c.err)
+			if status != c.wantStatus || msg != c.wantMsg {
+				t.Fatalf("rsvpReminderCampaignErrorEnvelope(%v) = (%d, %q), want (%d, %q)", c.err, status, msg, c.wantStatus, c.wantMsg)
+			}
+		})
+	}
+}
+
+// TestLoadStagedRSVPReminderMedia_ExpiredFileIsUserFacing is the test the task
+// asked for: an expired/missing staged file must yield the user-facing
+// message, not the generic "Failed to create reminder campaign" 500. It needs
+// no database - loadStagedRSVPReminderMedia only touches Config.Storage.LocalPath
+// and the filesystem - so it exercises the real production call chain
+// (loadStagedRSVPReminderMedia -> rsvpReminderCampaignErrorEnvelope) end to
+// end, not a synthetic error. Without the Finding 1 fix (either the wrapping
+// in rsvp_reminder_media.go or the errors.As check in
+// rsvp_reminders.go/rsvp_reminder_campaign_test.go) this fails: the
+// errors.As assertion fails if the wrapping is missing, and the status
+// assertion fails (500 instead of 400) if the classification is missing.
+func TestLoadStagedRSVPReminderMedia_ExpiredFileIsUserFacing(t *testing.T) {
+	app := &App{Config: &config.Config{Storage: config.StorageConfig{LocalPath: t.TempDir()}}}
+	// A syntactically valid staging id for which UploadRSVPReminderMedia never
+	// wrote a file - the same shape as a real expired/cleaned-up upload.
+	stagingID := uuid.New().String()
+
+	_, _, err := app.loadStagedRSVPReminderMedia(stagingID)
+	if err == nil {
+		t.Fatal("loadStagedRSVPReminderMedia() = nil error, want an error for a staging id with no staged file")
+	}
+
+	var userErr rsvpUserFacingError
+	if !errors.As(err, &userErr) {
+		t.Fatalf("loadStagedRSVPReminderMedia(%q) = %v, want a rsvpUserFacingError so SendRSVPReminders can surface it as a 400 instead of a generic 500", stagingID, err)
+	}
+
+	status, msg := rsvpReminderCampaignErrorEnvelope(err)
+	if status != fasthttp.StatusBadRequest {
+		t.Fatalf("rsvpReminderCampaignErrorEnvelope(%v) status = %d, want %d (an expired/missing staged file must not fall back to the generic 500)", err, status, fasthttp.StatusBadRequest)
+	}
+	wantMsg := "staged media not found - it may have expired or already been used"
+	if msg != wantMsg {
+		t.Fatalf("rsvpReminderCampaignErrorEnvelope(%v) message = %q, want %q", err, msg, wantMsg)
 	}
 }

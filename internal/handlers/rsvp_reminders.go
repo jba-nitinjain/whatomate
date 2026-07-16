@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,37 @@ import (
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 )
+
+// rsvpUserFacingError marks an error whose message is safe and useful to show
+// the user, as opposed to infrastructure failures they cannot act on. It is a
+// local wrapper, not a sentinel - callers that produce a user-actionable error
+// (missing/expired staged media, the validateCampaignReadyForStart backstop)
+// wrap it at the return site, and SendRSVPReminders uses errors.As to decide
+// how to present it, rather than string-matching the message.
+type rsvpUserFacingError struct{ err error }
+
+func (e rsvpUserFacingError) Error() string { return e.err.Error() }
+func (e rsvpUserFacingError) Unwrap() error { return e.err }
+
+// rsvpReminderCampaignErrorEnvelope classifies an error returned from
+// createRSVPReminderCampaign into the (status, message) pair SendRSVPReminders
+// should send. A rsvpUserFacingError - the staged media was missing/expired,
+// or the validateCampaignReadyForStart backstop rejected the campaign - carries
+// a message that is safe and useful to show the user, so it surfaces as a 400
+// with that exact text (e.g. "failed to read staged media: ..." tells the user
+// to re-upload, rather than every error becoming an opaque "Failed to create
+// reminder campaign"). Everything else - tx.Create/CreateInBatches failures,
+// "campaign queue is unavailable", a load or enqueue error - is an
+// infrastructure failure the user cannot act on, so it stays a generic 500
+// rather than leaking internals. Mirrors StartCampaign's other error paths
+// (campaigns.go:584, 609), which stay generic for the same reason.
+func rsvpReminderCampaignErrorEnvelope(err error) (status int, message string) {
+	var userErr rsvpUserFacingError
+	if errors.As(err, &userErr) {
+		return fasthttp.StatusBadRequest, userErr.Error()
+	}
+	return fasthttp.StatusInternalServerError, "Failed to create reminder campaign"
+}
 
 type rsvpReminderSendRequest struct {
 	ResponseIDs        []string          `json:"response_ids"`
@@ -232,16 +264,17 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 	campaignResult, err := a.createRSVPReminderCampaign(r.RequestCtx, event, template, req.TemplateParams, rows, models.RSVPReminderDeliveryManual, nil, userID, req.StagingID, req.StagingFilename, baseURL)
 	if err != nil {
 		a.Log.Error("Failed to create RSVP reminder campaign", "event_id", event.ID, "error", err)
-		// createRSVPReminderCampaign's own validateCampaignReadyForStart call
-		// (rsvp_reminder_campaign.go:268) is a backstop, not the primary gate -
-		// the media check above already rejects the one user-fixable case before
-		// we get here. Anything createRSVPReminderCampaign itself returns past
-		// that point is an infrastructure failure (tx.Create/CreateInBatches,
-		// "campaign queue is unavailable", a load or enqueue error), so echoing
-		// err.Error() here would leak internals to the client. Mirrors
-		// StartCampaign's other error paths (campaigns.go:584, 609), which stay
-		// generic for the same reason.
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create reminder campaign", nil, "")
+		// The media check above (rsvpReminderMediaValidationError) already
+		// rejects the common user-fixable case before we get here, but it is
+		// not the only one - a staged file can expire or be cleaned up between
+		// upload and send, which surfaces as a rsvpUserFacingError out of
+		// loadStagedRSVPReminderMedia. rsvpReminderCampaignErrorEnvelope tells
+		// that apart from infrastructure failures (tx.Create/CreateInBatches,
+		// "campaign queue is unavailable", a load or enqueue error) via
+		// errors.As, not string-matching, so only errors safe to show the user
+		// ever reach them verbatim.
+		status, message := rsvpReminderCampaignErrorEnvelope(err)
+		return r.SendErrorEnvelope(status, message, nil, "")
 	}
 	requested := len(req.ResponseIDs)
 	if req.AllNotStarted {
