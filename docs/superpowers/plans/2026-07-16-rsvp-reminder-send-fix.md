@@ -74,7 +74,22 @@ The only template in the org, `rsvp_message_1`, has `HeaderType: "VIDEO"`.
 
 ---
 
-## Task 1: Make the validator check the field the worker actually sends
+## Task 1: ~~Make the validator check the field the worker actually sends~~ — WRONG, REVERTED
+
+> **RETRACTED 2026-07-17. This task was based on a misreading and must be reverted (see Task 8).**
+>
+> The premise — that the validator checks `HeaderMediaID`/`HeaderMediaURL` while the worker sends
+> `HeaderMediaLocalPath` — is false. Verified against source:
+> - `worker.go:122` sends `sendTemplateMessage(..., campaign.HeaderMediaID, campaign.HeaderMediaURL)`.
+> - `worker.go:144-147` assigns `HeaderMediaLocalPath` to `message.MediaURL` only so the media
+>   *"renders in the chat bubble"* — a local UI record, not the send.
+> - `pkg/whatsapp/message.go:384` attaches a header only `if headerMediaID != "" || headerMediaLink != ""`.
+>
+> So the original validator was **correct**. Widening it to accept `HeaderMediaLocalPath` created a
+> false accept: a campaign passes validation, then sends no header, and Meta rejects it with 132012 —
+> the exact failure this plan exists to prevent. **Task 8 reverts this.**
+>
+> Historical text follows for the record; do not implement it.
 
 The validator accepts a campaign when `HeaderMediaID` or `HeaderMediaURL` is set, but `worker.go:144-145` sends `HeaderMediaLocalPath`. A campaign with only a local path is rejected despite being sendable. `UploadCampaignMedia` writes in two phases (`campaigns.go:1665-1683`) — it clears `header_media_url`/`header_media_id` first, then sets the public URL — so a failure between those writes leaves a permanently unstartable campaign with the file on disk.
 
@@ -992,6 +1007,111 @@ Create an ordinary campaign through the Campaigns UI with the same media-header 
 - [ ] **Step 5: Commit any fixes**
 
 If steps 3-4 surface problems, fix and commit before this plan is considered done. Do not mark it complete on a green unit suite alone — the unit tests passed for the code that failed 1,008 times.
+
+---
+
+## Task 8: Revert the false validator widening, and actually attach media Meta can fetch
+
+**Added 2026-07-17 after review found Tasks 1 and 5 were built on a misreading.** This task is what
+makes the send genuinely work. Until it lands, the branch is *worse* than `main`: validation has a
+hole in it and the RSVP path clears the only two fields that matter.
+
+**The verified truth:**
+
+| Field | What it is actually for |
+| --- | --- |
+| `HeaderMediaID` | Sent to Meta (`worker.go:122` → `sendTemplateMessage`) |
+| `HeaderMediaURL` | Sent to Meta (same call). A publicly fetchable URL. |
+| `HeaderMediaLocalPath` | **Local UI only** — `worker.go:144-147` assigns it to `message.MediaURL` so the media *"renders in the chat bubble"*. Never sent. |
+
+`pkg/whatsapp/message.go:384` attaches a header component only `if headerMediaID != "" || headerMediaLink != ""`.
+
+**Why the manual 13/07 campaign worked and the RSVP 15/07 one didn't:** `UploadCampaignMedia` ends
+with a second write setting `header_media_url` to a public URL (`campaigns.go:1681-1687`, via
+`buildPublicCampaignMediaURL`). The RSVP path set no media field at all.
+
+**Files:**
+- Modify: `internal/handlers/campaigns.go` (revert Task 1's widening)
+- Modify: `internal/handlers/campaigns_media_validate_test.go` (revert Task 1's test)
+- Modify: `internal/handlers/rsvp_reminder_campaign.go` (set a fetchable URL)
+- Modify: `internal/handlers/rsvp_reminders.go` (thread the request through, if needed)
+
+- [ ] **Step 1: Revert the validator widening**
+
+Restore the original three-line check in `validateCampaignReadyForStart` — `HeaderMediaID` or
+`HeaderMediaURL` only. Delete `TestValidateCampaignReadyForStart_AcceptsLocalPathOnly` and add its
+inverse, which pins the corrected understanding:
+
+```go
+func TestValidateCampaignReadyForStart_RejectsLocalPathOnly(t *testing.T) {
+	// HeaderMediaLocalPath is for local chat rendering (worker.go:144-147); the send
+	// uses HeaderMediaID/HeaderMediaURL (worker.go:122). A campaign carrying only a
+	// local path sends no header component and Meta rejects it with 132012, so it
+	// must NOT pass validation.
+	app := &App{}
+	campaign := &models.BulkMessageCampaign{
+		Template:             &models.Template{HeaderType: "VIDEO"},
+		HeaderMediaLocalPath: "campaigns/abc.mp4",
+	}
+	if err := app.validateCampaignReadyForStart(campaign); err == nil {
+		t.Fatal("a local path alone must not satisfy a media header - nothing would be sent")
+	}
+}
+```
+
+Keep the other four Task 1 tests — they were always correct.
+
+- [ ] **Step 2: Set a URL Meta can actually fetch**
+
+In `createRSVPReminderCampaign`, the staged file must end up reachable. Mirror `UploadCampaignMedia`
+(`campaigns.go:1591-1698`) — read it and follow it exactly:
+
+1. After the campaign row exists (it is created in the tx, so `campaign.ID` is known), save the
+   staged bytes under the campaign's own id via `saveCampaignMedia(campaign.ID.String(), data, mimeType)`,
+   exactly as the normal path does. This also removes the reliance on a client-echoed MIME type for
+   path building — derive `mimeType` from the staged upload server-side.
+2. Build the public URL with `buildPublicCampaignMediaURL` and assign it to `campaign.HeaderMediaURL`,
+   persisting it — this is the field that reaches Meta.
+3. Keep `HeaderMediaLocalPath` set as well, so the chat bubble renders. It is additive, not a substitute.
+4. **Then** validate, **then** enqueue. Ordering is unchanged from Task 3.
+
+`buildPublicCampaignMediaURL(r *fastglue.Request, campaign *models.BulkMessageCampaign) string`
+needs the request (for `requestPublicBaseURL`). `createRSVPReminderCampaign` is also called by
+`rsvp_scheduler.go`, which has no request. Decide and state your choice in the report:
+- thread an optional base URL / request through, and for the scheduler derive the base URL from
+  config; **or**
+- have the handler set the URL after creation and before enqueue.
+Do not leave the scheduler path silently URL-less — that is a 1,008-failure repeat with a different
+trigger.
+
+- [ ] **Step 3: Prove it end-to-end, not just in unit tests**
+
+The unit tests passed for the code that failed 1,008 times. Before claiming done, verify on a dev
+instance that a reminder using a VIDEO-header template arrives **with its video** at one test number.
+If you cannot run a real send, say so plainly in the report rather than implying it was verified.
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+go build ./... && go vet ./internal/handlers/... && go test ./internal/handlers/ -v
+```
+
+```bash
+git add -A internal/handlers/
+git commit -m "Send header media Meta can fetch; revert false validator widening
+
+worker.go:122 sends HeaderMediaID/HeaderMediaURL. HeaderMediaLocalPath is
+assigned to message.MediaURL at worker.go:144-147 purely so media renders
+in the local chat bubble - it is never sent. An earlier change misread
+that line and widened validateCampaignReadyForStart to accept a local
+path, which let a campaign pass validation and then send no header at
+all: Meta error 132012, the exact failure this branch exists to fix.
+
+Revert the widening and populate HeaderMediaURL via
+buildPublicCampaignMediaURL, mirroring UploadCampaignMedia - which is why
+the manual 13/07 campaign sent 1,273 while the 15/07 RSVP reminder failed
+1,008/1,008."
+```
 
 ---
 
