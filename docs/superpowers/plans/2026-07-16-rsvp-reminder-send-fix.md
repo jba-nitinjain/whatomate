@@ -702,6 +702,30 @@ The RSVP reminder creates and enqueues its campaign in one call, but `UploadCamp
   - `func rsvpReminderStagingKey(stagingID string) string` — the staging path.
   - Send request accepts `staging_id`.
 
+**Correction (2026-07-17), verified against the source — read before implementing.**
+`saveCampaignMedia` (`campaigns.go:1703-1730`) does **not** accept an arbitrary path:
+
+```go
+subdir := "campaigns"
+if err := a.ensureMediaDir(subdir); err != nil { ... }   // creates ONLY "campaigns"
+filename := campaignID + ext
+filePath := filepath.Join(a.getMediaStoragePath(), subdir, filename)
+...
+relativePath := filepath.Join(subdir, filename)          // already "campaigns/<id><ext>"
+return relativePath, nil
+```
+
+Consequences the original draft of this task got wrong:
+- Passing `"staging/<id>"` as `campaignID` would try to write `campaigns/staging/<id><ext>`, but
+  `ensureMediaDir` (`internal/handlers/media.go:27`) only ever creates `campaigns` — the write
+  would fail with "no such file or directory".
+- `saveCampaignMedia` **already returns** the `campaigns/`-prefixed path **with** the extension. So
+  reconstructing `"campaigns/" + key` would both double-prefix and drop the extension.
+
+**Therefore: no staging subdirectory.** Use a `staging-<uuid>` filename inside the existing
+`campaigns` directory, and store the value `saveCampaignMedia` **returns** — never a reconstructed
+path.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `internal/handlers/rsvp_reminder_media_test.go`:
@@ -715,18 +739,24 @@ import (
 )
 
 func TestRSVPReminderStagingKeyIsScoped(t *testing.T) {
+	// The value is passed to saveCampaignMedia as its campaignID, which writes to
+	// <media>/campaigns/<value><ext>. It must stay a flat filename: ensureMediaDir
+	// only creates "campaigns", so any subdirectory would fail to write.
 	key := rsvpReminderStagingKey("abc123")
-	if !strings.HasPrefix(key, "campaigns/staging/") {
-		t.Fatalf("staging media must live under campaigns/staging/, got %q", key)
+	if !strings.HasPrefix(key, "staging-") {
+		t.Fatalf("staging key must be a flat staging- filename, got %q", key)
 	}
 	if !strings.Contains(key, "abc123") {
 		t.Fatalf("staging key must contain the staging id, got %q", key)
+	}
+	if strings.ContainsAny(key, `/\`) {
+		t.Fatalf("staging key must contain no path separator, got %q", key)
 	}
 }
 
 func TestRSVPReminderStagingKeyRejectsTraversal(t *testing.T) {
 	// staging_id arrives from the client and is used to build a filesystem path.
-	for _, bad := range []string{"../secrets", "a/b", "..", "a\\b", ""} {
+	for _, bad := range []string{"../secrets", "a/b", "..", "a\\b", "", "a.b"} {
 		if got := rsvpReminderStagingKey(bad); got != "" {
 			t.Errorf("rsvpReminderStagingKey(%q) = %q, want \"\" (rejected)", bad, got)
 		}
@@ -754,21 +784,23 @@ import (
 )
 
 // stagingIDPattern constrains a staging id to characters that cannot escape the
-// staging directory. The id reaches us from the client and is used to build a
+// media directory. The id reaches us from the client and is used to build a
 // filesystem path, so anything outside this set is refused rather than sanitized.
 var stagingIDPattern = regexp.MustCompile(`^[a-zA-Z0-9-]{1,64}$`)
 
-// rsvpReminderStagingKey returns the relative storage path for a staged reminder
-// media file, or "" if the id is not safe to use in a path.
+// rsvpReminderStagingKey returns the pseudo campaign id under which a staged
+// reminder media file is saved, or "" if the id is not safe to use in a path.
+//
+// It is deliberately a flat "staging-<id>" filename, not a subdirectory:
+// saveCampaignMedia hardcodes subdir "campaigns" and ensureMediaDir creates only
+// that, so "staging/<id>" would fail to write.
 func rsvpReminderStagingKey(stagingID string) string {
 	if !stagingIDPattern.MatchString(stagingID) {
 		return ""
 	}
-	return "staging/" + stagingID
+	return "staging-" + stagingID
 }
 ```
-
-Note `saveCampaignMedia` already prefixes `campaigns/`, so this returns the portion below it. Verify that against `campaigns.go:1701` before wiring — if `saveCampaignMedia` does not prefix, return `"campaigns/staging/" + stagingID` instead and adjust the test's expectation.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -786,8 +818,11 @@ Add to `internal/handlers/rsvp_reminder_media.go`. Copy the multipart handling, 
 2. Resolve the event via `parsePathUUID(r, "id", "RSVP event")` and confirm it belongs to the org; 404 otherwise.
 3. Read the file with `io.LimitReader(file, maxMediaSize+1)`; reject over 16MB with `"File too large. Maximum size is 16MB"`.
 4. `mimeType := detectCampaignMediaMimeType(fileHeader.Filename, fileHeader.Header.Get("Content-Type"), data)`; reject unsupported with `"Unsupported file type: "+mimeType`.
-5. `stagingID := uuid.New().String()`; `saveCampaignMedia(rsvpReminderStagingKey(stagingID), data, mimeType)`.
+5. `stagingID := uuid.New().String()` — note `uuid.New().String()` contains only hex and `-`, so it satisfies `stagingIDPattern`. Then `saveCampaignMedia(rsvpReminderStagingKey(stagingID), data, mimeType)`.
 6. Return `r.SendEnvelope(map[string]interface{}{"staging_id": stagingID, "filename": fileHeader.Filename, "mime_type": mimeType})`.
+
+Do **not** return or trust a client-supplied path. The send re-derives the storage location from
+`staging_id` via `rsvpReminderStagingKey`.
 
 - [ ] **Step 6: Register the route**
 
@@ -807,14 +842,28 @@ In `createRSVPReminderCampaign`, after the campaign struct is built (`:64-75`) a
 	if stagingID != "" {
 		key := rsvpReminderStagingKey(stagingID)
 		if key == "" {
-			return nil, fmt.Errorf("invalid media reference")
+			return result, fmt.Errorf("invalid media reference")
 		}
-		campaign.HeaderMediaLocalPath = "campaigns/" + key
+		// The staged file already exists on disk under this pseudo campaign id.
+		// Re-derive its stored path the same way saveCampaignMedia built it, rather
+		// than reconstructing a path by hand: saveCampaignMedia returns
+		// "campaigns/<id><ext>", so a hand-built "campaigns/"+key would both
+		// double-prefix and drop the extension.
+		campaign.HeaderMediaLocalPath = filepath.Join("campaigns", key+getExtensionFromMimeType(stagingMimeType))
 		campaign.HeaderMediaFilename = stagingFilename
 		campaign.HeaderMediaMimeType = stagingMimeType
 		campaign.HeaderMediaID = ""
+		campaign.HeaderMediaURL = ""
 	}
 ```
+
+`getExtensionFromMimeType` is the same helper `saveCampaignMedia` uses (`campaigns.go:1705`) — read it
+and confirm the extension it yields matches. **Verify the path you store actually resolves to the file
+on disk**; the worker reads `HeaderMediaLocalPath` (`worker.go:144-145`) and a wrong path here
+reproduces the very failure this plan fixes, just with a different error.
+
+Note the return is `result, err` — `createRSVPReminderCampaign` returns `rsvpReminderCampaignResult`
+by **value**, not a pointer (Task 3 confirmed this against the source).
 
 Thread `stagingID`, `stagingFilename` and `stagingMimeType` from the send request through `SendRSVPReminders` (`rsvp_reminders.go:176`) into `createRSVPReminderCampaign`. Add them to the request struct the dialog POSTs to at `RSVPReminderDialog.vue:171`.
 
