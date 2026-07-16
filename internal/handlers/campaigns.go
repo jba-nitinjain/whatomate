@@ -631,7 +631,9 @@ func (a *App) validateCampaignReadyForStart(campaign *models.BulkMessageCampaign
 
 	switch campaign.Template.HeaderType {
 	case "IMAGE", "VIDEO", "DOCUMENT":
-		if strings.TrimSpace(campaign.HeaderMediaID) == "" && strings.TrimSpace(campaign.HeaderMediaURL) == "" {
+		if strings.TrimSpace(campaign.HeaderMediaID) == "" &&
+			strings.TrimSpace(campaign.HeaderMediaURL) == "" &&
+			strings.TrimSpace(campaign.HeaderMediaLocalPath) == "" {
 			return fmt.Errorf("template requires %s header media. Configure campaign media before starting", strings.ToLower(campaign.Template.HeaderType))
 		}
 	}
