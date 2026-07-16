@@ -82,20 +82,50 @@ header component entirely, and Meta rejects with 132012.
 ### Required changes
 
 1. **Attach header media per send.** The Reminders dialog gains a media upload control that appears
-   only when the selected template declares a media header. The uploaded media populates the
-   campaign's header media fields, mirroring the normal campaign path
-   (`populateCampaignHeaderMediaFromURL`, `campaigns.go:207-214`).
-2. **Pre-flight validation.** Call `validateCampaignReadyForStart` before enqueueing. Refuse the
-   send and surface the reason in the UI rather than failing N times downstream.
+   only when the selected template declares a media header, reusing the existing multipart endpoint
+   `POST /api/campaigns/{id}/media` → `UploadCampaignMedia` (`campaigns.go:1591-1698`; 16MB cap,
+   MIME sniffed via `detectCampaignMediaMimeType`, stored by `saveCampaignMedia` at
+   `campaigns/<campaign-id><ext>`). Because the RSVP campaign is created and enqueued in one call,
+   the media must be accepted **before** the campaign is created and attached during creation —
+   the existing endpoint requires an existing campaign ID. See Task ordering in the plan.
+
+2. **Pre-flight validation — and fix what it validates.**
+   `validateCampaignReadyForStart` (`campaigns.go:620-640`) must be called before enqueueing.
+
+   **Correction (2026-07-16) — the validator and the sender disagree.** The validator accepts a
+   campaign when `HeaderMediaID` **or** `HeaderMediaURL` is non-empty, but the worker sends
+   `HeaderMediaLocalPath` (`worker.go:144-145`), which the validator never checks. Consequences:
+   - a campaign with only `HeaderMediaLocalPath` set **fails validation** though it would send fine;
+   - `UploadCampaignMedia` writes in two phases (`campaigns.go:1665-1683`), first clearing
+     `header_media_url`/`header_media_id`, then setting the public URL. If the second write fails,
+     the campaign is permanently unstartable despite the file being on disk.
+
+   Therefore validation must treat **any** of `HeaderMediaLocalPath` / `HeaderMediaID` /
+   `HeaderMediaURL` as satisfying a media header — mirroring the existing tri-field check at
+   `campaigns.go:1841`. This is a **shared-path change**: it affects StartCampaign (`:577`), resend
+   (`:972`), import (`:1088`) and the campaign scheduler (`campaign_scheduler.go:61`). It only ever
+   turns a false rejection into an accept, so it cannot newly break a working campaign — but it must
+   ship with tests covering all four call sites.
+
+   Refuse the send and surface the reason in the UI rather than failing N times downstream.
 3. **Honest reporting.** A campaign where `sent_count == 0 && failed_count == total_recipients` must
    not present as a clean `completed`. Surface `0 sent, N failed` in the RSVP UI and the campaigns
    list.
-4. **Normalize and dedupe phone numbers.** Route `row.PhoneNumber` through
-   `normalizeCampaignRecipientPhone` and dedupe, matching `ImportRecipients`
-   (`campaigns.go:1109-1152`). Currently `rsvp_reminder_campaign.go:94` uses the raw value, so
-   `9840445616` and `919840445616` are two recipients. This is the likely cause of the 1,008 vs ~976
-   discrepancy. It also breaks `RetryFailed`'s inactive-contact filter, which keys on the normalized
-   phone (`campaigns.go:834`).
+4. **Normalize and dedupe phone numbers.** `rsvp_reminder_campaign.go:94` uses `row.PhoneNumber`
+   raw, so `9840445616` and `919840445616` are two recipients.
+
+   **Correction (2026-07-16):** `normalizeCampaignRecipientPhone` (`campaigns.go:1238-1242`) only
+   trims whitespace and a leading `+` — it applies no country-code logic and would **not** merge
+   those two variants. Reuse the RSVP capture normalization instead (`rsvp_capture.go`: strip to
+   digits, prefix bare 10-digit numbers with `91`), then dedupe on the normalized value.
+
+   **Correction (2026-07-16):** an earlier draft attributed the 1,008-recipient vs ~976-not-started
+   gap to duplicates. That is unsupported — the campaign ran 15/07 and the 976 figure is from 16/07;
+   roughly 32 intervening responses explain it. Dedupe remains worthwhile defensively, but it is
+   **not** a diagnosed defect. Do not claim a duplicate-send bug without evidence.
+
+   Note `RetryFailed`'s inactive-contact filter keys on the normalized phone (`campaigns.go:834`)
+   while stored values are unnormalized.
 5. **Stop silently dropping contactless guests.** `rsvp_reminder_campaign.go:81-84` skips
    `row.Contact == nil` with no delivery row, no log, no reason — while
    `RSVPReminderPreview` (`rsvp_reminders.go:168-173`) counts those same rows as eligible. Preview
