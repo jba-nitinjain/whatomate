@@ -50,7 +50,7 @@ successfully sent a single message.**
 ## Decisions (confirmed with the user)
 
 | Decision | Choice |
-|---|---|
+| --- | --- |
 | Children data granularity | **Headcount only** — no names, no age bands |
 | Question shape | **Yes/No, then count**; count widget (buttons vs typed) is the flow author's choice per event |
 | Reporting | **Total + per-guest column** in the results grid, filterable and exportable |
@@ -144,7 +144,7 @@ Replace the hard-coded spouse tally with a per-event, ordered list of **headcoun
 stored on the RSVP event:
 
 | Field | Meaning |
-|---|---|
+| --- | --- |
 | `label` | Card title on the dashboard, e.g. "Children" |
 | `answer_key` | Which answer holds the value |
 | `mode` | `boolean` (counts 1 when the answer matches) or `numeric` (counts the value given) |
@@ -153,7 +153,7 @@ stored on the RSVP event:
 Seed configuration reproduces today's behaviour exactly:
 
 | Label | Key | Mode | Counts |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Member attendance | *(attendance field)* | boolean | 1 per Yes |
 | Spouse attendance | `spouse_attendance` | boolean | 1 per Yes |
 | Children | *(author's key)* | numeric | the value given |
@@ -180,7 +180,7 @@ above a sane ceiling (say 20) are flagged for review rather than rejected.
 Every existing send targets non-responders:
 
 | Action | Audience |
-|---|---|
+| --- | --- |
 | Send invitations | First contact |
 | Reminders | `loadNotStartedRSVPGuests` — never started only |
 | Re-prompt pending | Pending / mid-flow |
@@ -223,16 +223,25 @@ unsuitable. Meta approval is the long pole and must start immediately.
 
 ## Sequencing
 
-Driven by the 19/07/2026 event date.
+All four sections are built together as one body of work (user decision, 2026-07-16).
 
-1. **Section 1 — reminder fix.** Ships alone, first. Unblocks 976 pending members. Highest value,
-   smallest change, no external dependency.
-2. **Section 2 — children questions + duplicate-column fix.** Configuration; can proceed in
-   parallel. New Meta template submitted for approval now.
-3. **Section 3 — headcount contributors.** Delivers the total and removes the magic string.
-4. **Section 4 — follow-up campaigns.** Gated on the Meta template approval.
+**Constraint:** Section 4 is gated on Meta approving a new template — an external dependency with an
+uncontrollable timeline, against an event on **19/07/2026**. Bundling delivery of all four sections
+behind that approval would block the reminder fix, leaving 976 pending members unreminded.
 
-Sections 3 and 4 may land after the event if necessary; Section 1 must not.
+**Therefore: build together, but keep Section 1 independently deployable.** Section 1 must not
+acquire a code dependency on Sections 2–4 and must be releasable on its own the moment it is tested,
+regardless of the state of the rest. Sections 2–4 follow when ready.
+
+Practical ordering within the work:
+
+1. **Section 1 — reminder fix.** No external dependency. Deployable standalone.
+2. **Section 2 — children questions + duplicate-column fix.** Configuration + a small grid fix.
+   The new Meta template is submitted for approval at the start of the work, not the end.
+3. **Section 3 — headcount contributors.** Delivers the total; removes the `spouse_attendance`
+   magic string.
+4. **Section 4 — follow-up campaigns.** Code can be complete and tested ahead of Meta approval;
+   only the live send waits on it.
 
 ---
 
