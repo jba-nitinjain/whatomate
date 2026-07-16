@@ -17,6 +17,20 @@ type rsvpReminderCampaignResult struct {
 	Skipped  int
 }
 
+// rsvpReminderCampaignOutcome classifies a finished reminder campaign. A run where
+// every recipient failed must not present as a clean success — that is how 1008
+// consecutive failures went unnoticed on 15/07/2026.
+func rsvpReminderCampaignOutcome(sent, failed, total int) string {
+	switch {
+	case total > 0 && sent == 0 && failed >= total:
+		return "failed"
+	case failed > 0:
+		return "completed_with_errors"
+	default:
+		return "completed"
+	}
+}
+
 func rsvpReminderCampaignName(eventName string, now time.Time) string {
 	name := fmt.Sprintf("RSVP Reminder - %s - %s", strings.TrimSpace(eventName), now.UTC().Format("2006-01-02 15:04 UTC"))
 	runes := []rune(name)
@@ -141,6 +155,14 @@ func (a *App) createRSVPReminderCampaign(
 
 	result.Campaign = &campaign
 	result.Queued = len(recipients)
+
+	// The RSVP path calls enqueueCampaignRecipients directly and so never passed
+	// through StartCampaign's gate (campaigns.go:577). Without this, a media-header
+	// template fails once per recipient with Meta error 132012 — 1008 times on
+	// 15/07/2026, while the campaign reported "completed".
+	if err := a.validateCampaignReadyForStart(&campaign); err != nil {
+		return result, err
+	}
 	if err := a.enqueueCampaignRecipients(ctx, &campaign, recipients, now, models.CampaignStatusDraft); err != nil {
 		return result, err
 	}
