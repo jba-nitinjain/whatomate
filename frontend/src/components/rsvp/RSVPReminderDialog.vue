@@ -253,7 +253,7 @@ async function send(all: boolean) {
   loading.value = true
   try {
     const media = stagedMedia.value
-      ? { staging_id: stagedMedia.value.staging_id, staging_filename: stagedMedia.value.filename, staging_mime_type: stagedMedia.value.mime_type }
+      ? { staging_id: stagedMedia.value.staging_id, staging_filename: stagedMedia.value.filename }
       : {}
     const response = await rsvpService.sendReminders(props.eventId, all
       ? allRecipientsSelected.value

@@ -53,7 +53,6 @@ type rsvpReminderSendRequest struct {
 	TemplateParams     map[string]string `json:"template_params"`
 	StagingID          string            `json:"staging_id"`
 	StagingFilename    string            `json:"staging_filename"`
-	StagingMimeType    string            `json:"staging_mime_type"`
 }
 
 type rsvpReminderScheduleRequest struct {

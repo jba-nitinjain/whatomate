@@ -93,9 +93,9 @@ func TestRSVPReminderCampaignErrorEnvelope(t *testing.T) {
 	}{
 		{
 			name:       "user-facing error surfaces its own message as a 400",
-			err:        rsvpUserFacingError{fmt.Errorf("staged media not found - it may have expired or already been used")},
+			err:        rsvpUserFacingError{fmt.Errorf("staged media not found - please attach the file again")},
 			wantStatus: fasthttp.StatusBadRequest,
-			wantMsg:    "staged media not found - it may have expired or already been used",
+			wantMsg:    "staged media not found - please attach the file again",
 		},
 		{
 			name:       "user-facing error wrapped further by %w is still detected",
@@ -151,7 +151,7 @@ func TestLoadStagedRSVPReminderMedia_ExpiredFileIsUserFacing(t *testing.T) {
 	if status != fasthttp.StatusBadRequest {
 		t.Fatalf("rsvpReminderCampaignErrorEnvelope(%v) status = %d, want %d (an expired/missing staged file must not fall back to the generic 500)", err, status, fasthttp.StatusBadRequest)
 	}
-	wantMsg := "staged media not found - it may have expired or already been used"
+	wantMsg := "staged media not found - please attach the file again"
 	if msg != wantMsg {
 		t.Fatalf("rsvpReminderCampaignErrorEnvelope(%v) message = %q, want %q", err, msg, wantMsg)
 	}

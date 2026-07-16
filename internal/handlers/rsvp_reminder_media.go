@@ -40,9 +40,15 @@ func rsvpReminderStagingKey(stagingID string) string {
 // Mirrors UploadCampaignMedia's multipart handling, 16MB cap and MIME sniffing
 // rather than inventing a second convention.
 func (a *App) UploadRSVPReminderMedia(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+	// Uploading media is part of sending a reminder (the file is only ever
+	// used as a reminder's header attachment), so it is gated behind the same
+	// permission SendRSVPReminders requires rather than a separate one.
+	if err := a.requirePermission(r, userID, models.ResourceRSVP, models.ActionExecute); err != nil {
+		return nil
 	}
 
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
@@ -129,10 +135,13 @@ func (a *App) stagedRSVPReminderMediaPath(stagingID string) (string, error) {
 		return "", fmt.Errorf("failed to locate staged media: %w", err)
 	}
 	if len(matches) == 0 {
-		// The common case this wrapper exists for: the staged file expired or
-		// was already cleaned up. The user can fix this by re-uploading, so it
-		// must reach them as a 400 with this exact message, not a generic 500.
-		return "", rsvpUserFacingError{fmt.Errorf("staged media not found - it may have expired or already been used")}
+		// The common case this wrapper exists for: no file was ever staged
+		// under this id, or it was already consumed by a prior send. There is
+		// no expiry/cleanup mechanism - staged files persist until promoted -
+		// so the message must not imply one. The user can fix this by
+		// re-attaching the file, so it must reach them as a 400 with this
+		// exact message, not a generic 500.
+		return "", rsvpUserFacingError{fmt.Errorf("staged media not found - please attach the file again")}
 	}
 	return matches[0], nil
 }
