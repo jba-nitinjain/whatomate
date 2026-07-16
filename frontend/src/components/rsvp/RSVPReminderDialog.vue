@@ -200,10 +200,18 @@ async function onMediaFileChange(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
+  // Capture which template this upload is for. If the user switches templates
+  // while the upload is in flight, the templateId watcher (above) clears
+  // stagedMedia immediately, but that does not cancel this in-flight request -
+  // without this guard, a slow upload resolving after the switch would
+  // silently repopulate stagedMedia with a file staged for the *previous*
+  // template, which send() would then attach to the new one.
+  const requestTemplateId = templateId.value
   mediaUploading.value = true
   mediaUploadError.value = ''
   try {
     const response = await rsvpService.uploadReminderMedia(props.eventId, file)
+    if (templateId.value !== requestTemplateId) return
     const data = responsePayload(response)
     if (typeof data.staging_id === 'string' && data.staging_id) {
       stagedMedia.value = {
@@ -213,6 +221,7 @@ async function onMediaFileChange(event: Event) {
       }
     }
   } catch (error) {
+    if (templateId.value !== requestTemplateId) return
     stagedMedia.value = null
     mediaUploadError.value = getErrorMessage(error, t('rsvp.reminderMediaUploadFailed'))
     toast.error(mediaUploadError.value)

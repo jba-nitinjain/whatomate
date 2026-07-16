@@ -116,6 +116,25 @@ func rsvpReminderCampaignName(eventName string, now time.Time) string {
 	return name
 }
 
+// rsvpReminderMediaValidationError rejects a send request up front when the
+// resolved template needs header media but the request carries no staged
+// file. It exists so SendRSVPReminders can return a clean, user-fixable 400
+// without echoing createRSVPReminderCampaign's own errors verbatim - those
+// also cover infrastructure failures (DB writes, queue unavailability) that
+// must not leak to the client. The wording matches
+// validateCampaignReadyForStart's media check (campaigns.go:632-637)
+// exactly, since that function still runs inside createRSVPReminderCampaign
+// as the authoritative backstop and the two messages must not drift.
+func rsvpReminderMediaValidationError(template *models.Template, stagingID string) error {
+	switch template.HeaderType {
+	case "IMAGE", "VIDEO", "DOCUMENT":
+		if strings.TrimSpace(stagingID) == "" {
+			return fmt.Errorf("template requires %s header media. Configure campaign media before starting", strings.ToLower(template.HeaderType))
+		}
+	}
+	return nil
+}
+
 // createRSVPReminderCampaign snapshots the currently eligible guests into a
 // linked campaign. The worker rechecks RSVP eligibility immediately before
 // each send and synchronizes its result to RSVPReminderDelivery.

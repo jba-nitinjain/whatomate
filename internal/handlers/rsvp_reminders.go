@@ -218,6 +218,9 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 	if err := validateRSVPReminderParams(template, req.TemplateParams); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
+	if err := rsvpReminderMediaValidationError(template, req.StagingID); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
 	if req.AllNotStarted {
 		ids = nil
 	}
@@ -229,13 +232,16 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 	campaignResult, err := a.createRSVPReminderCampaign(r.RequestCtx, event, template, req.TemplateParams, rows, models.RSVPReminderDeliveryManual, nil, userID, req.StagingID, req.StagingFilename, baseURL)
 	if err != nil {
 		a.Log.Error("Failed to create RSVP reminder campaign", "event_id", event.ID, "error", err)
-		// Surface the validation error's own text (e.g. "template requires video
-		// header media. Configure campaign media before starting") rather than a
-		// generic 500 - this is what identified the 1008-recipient failure on
-		// 15/07/2026 in the first place. Mirrors StartCampaign's convention
-		// (campaigns.go:577-579) of returning 400 + err.Error() for a pre-flight
-		// validation failure.
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+		// createRSVPReminderCampaign's own validateCampaignReadyForStart call
+		// (rsvp_reminder_campaign.go:268) is a backstop, not the primary gate -
+		// the media check above already rejects the one user-fixable case before
+		// we get here. Anything createRSVPReminderCampaign itself returns past
+		// that point is an infrastructure failure (tx.Create/CreateInBatches,
+		// "campaign queue is unavailable", a load or enqueue error), so echoing
+		// err.Error() here would leak internals to the client. Mirrors
+		// StartCampaign's other error paths (campaigns.go:584, 609), which stay
+		// generic for the same reason.
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create reminder campaign", nil, "")
 	}
 	requested := len(req.ResponseIDs)
 	if req.AllNotStarted {
