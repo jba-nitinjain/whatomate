@@ -51,6 +51,48 @@ func rsvpReminderRowName(row *models.RSVPResponse) string {
 	return strings.TrimSpace(row.Contact.ProfileName)
 }
 
+// dedupeRSVPReminderRowsWithSkips wraps dedupeRSVPReminderRows and turns the
+// dropped duplicates into skip records, so preview (RSVPReminderPreview) and
+// send (createRSVPReminderCampaign) record duplicate phones identically.
+func dedupeRSVPReminderRowsWithSkips(rows []models.RSVPResponse) (kept []models.RSVPResponse, skipped []rsvpReminderSkip) {
+	var duplicates []models.RSVPResponse
+	kept, duplicates = dedupeRSVPReminderRows(rows, func(r models.RSVPResponse) string { return r.PhoneNumber })
+	skipped = make([]rsvpReminderSkip, 0, len(duplicates))
+	for _, dup := range duplicates {
+		skipped = append(skipped, rsvpReminderSkip{
+			ResponseID: dup.ID,
+			Name:       rsvpReminderRowName(&dup),
+			Phone:      dup.PhoneNumber,
+			Reason:     "duplicate phone number",
+		})
+	}
+	return kept, skipped
+}
+
+// rsvpReminderEligibility applies the same dedupe and skip predicate the send
+// path uses (dedupeRSVPReminderRowsWithSkips, rsvpReminderSkipReason) to a set
+// of loaded rows, without the staleness recheck send does immediately before
+// queuing (createRSVPReminderCampaign's freshRows reload). Preview has no
+// equivalent of that recheck, so this matches predicate and reporting only —
+// the two paths must report duplicates identically.
+func rsvpReminderEligibility(rows []models.RSVPResponse) (eligible int, skipped []rsvpReminderSkip) {
+	kept, dupSkips := dedupeRSVPReminderRowsWithSkips(rows)
+	skipped = append(skipped, dupSkips...)
+	for _, row := range kept {
+		if reason := rsvpReminderSkipReason(row.Contact != nil, row.PhoneNumber); reason != "" {
+			skipped = append(skipped, rsvpReminderSkip{
+				ResponseID: row.ID,
+				Name:       rsvpReminderRowName(&row),
+				Phone:      row.PhoneNumber,
+				Reason:     reason,
+			})
+			continue
+		}
+		eligible++
+	}
+	return eligible, skipped
+}
+
 // rsvpReminderCampaignOutcome classifies a finished reminder campaign. A run where
 // every recipient failed must not present as a clean success — that is how 1008
 // consecutive failures went unnoticed on 15/07/2026.
@@ -125,16 +167,9 @@ func (a *App) createRSVPReminderCampaign(
 		return result, nil
 	}
 
-	var duplicates []models.RSVPResponse
-	freshRows, duplicates = dedupeRSVPReminderRows(freshRows, func(r models.RSVPResponse) string { return r.PhoneNumber })
-	for _, dup := range duplicates {
-		result.Skipped = append(result.Skipped, rsvpReminderSkip{
-			ResponseID: dup.ID,
-			Name:       rsvpReminderRowName(&dup),
-			Phone:      dup.PhoneNumber,
-			Reason:     "duplicate phone number",
-		})
-	}
+	var dupSkips []rsvpReminderSkip
+	freshRows, dupSkips = dedupeRSVPReminderRowsWithSkips(freshRows)
+	result.Skipped = append(result.Skipped, dupSkips...)
 
 	now := time.Now().UTC()
 	campaign := models.BulkMessageCampaign{
@@ -167,7 +202,7 @@ func (a *App) createRSVPReminderCampaign(
 		}
 		recipientID := uuid.New()
 		resolved := resolveRSVPReminderParams(templateParams, event, row)
-		recipientName := strings.TrimSpace(row.Contact.ProfileName)
+		recipientName := rsvpReminderRowName(row)
 		if recipientName == "" {
 			recipientName = row.PhoneNumber
 		}
