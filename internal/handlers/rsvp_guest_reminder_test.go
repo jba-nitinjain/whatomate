@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nikyjain/whatomate/internal/config"
 	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/nikyjain/whatomate/test/testutil"
 	"github.com/stretchr/testify/assert"
@@ -162,4 +163,91 @@ func TestCreateRSVPReminderCampaignQueuesResolvedRecipients(t *testing.T) {
 	assert.Equal(t, result.Campaign.ID, *delivery.CampaignID)
 	require.NotNil(t, delivery.InitiatedBy)
 	assert.Equal(t, user.ID, *delivery.InitiatedBy)
+}
+
+// TestCreateRSVPReminderCampaignPromotesStagedMediaToPublicURL proves the fix
+// for the 15/07/2026 failure end-to-end at the unit level: a VIDEO-header
+// template with a staged attachment must come out with HeaderMediaURL set to
+// a fetchable link, because worker.go:122 only ever sends HeaderMediaID or
+// HeaderMediaURL - HeaderMediaLocalPath alone (the old behavior) sends no
+// header component at all and Meta rejects the message with error 132012.
+func TestCreateRSVPReminderCampaignPromotesStagedMediaToPublicURL(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	mockQueue := testutil.NewMockQueue()
+	app := &App{
+		DB:    db,
+		Log:   testutil.NopLogger(),
+		Queue: mockQueue,
+		Config: &config.Config{
+			Storage: config.StorageConfig{LocalPath: t.TempDir()},
+			JWT:     config.JWTConfig{Secret: "test-secret"},
+		},
+	}
+	org := testutil.CreateTestOrganization(t, db)
+	user := testutil.CreateTestUser(t, db, org.ID)
+	account := testutil.CreateTestWhatsAppAccount(t, db, org.ID)
+	template := testutil.CreateTestTemplate(t, db, org.ID, account.Name)
+	template.HeaderType = "VIDEO"
+	require.NoError(t, db.Save(template).Error)
+	contact := testutil.CreateTestContactWith(t, db, org.ID,
+		testutil.WithContactAccount(account.Name),
+		testutil.WithPhoneNumber("919876543211"),
+	)
+	event := models.RSVPEvent{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  org.ID,
+		Name:            "Video Invite",
+		Status:          models.RSVPEventStatusActive,
+		AccessMode:      models.RSVPAccessModeGuestList,
+		WhatsAppAccount: account.Name,
+		CreatedBy:       user.ID,
+	}
+	require.NoError(t, db.Create(&event).Error)
+	response := models.RSVPResponse{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		RSVPEventID:    event.ID,
+		OrganizationID: org.ID,
+		ContactID:      contact.ID,
+		PhoneNumber:    contact.PhoneNumber,
+		Attendance:     models.RSVPAttendancePending,
+		Source:         models.RSVPGuestSourceContactSelection,
+	}
+	require.NoError(t, db.Create(&response).Error)
+
+	// Mirrors what UploadRSVPReminderMedia does when the guest picks a file
+	// before sending: stage it under a pseudo campaign id.
+	stagingID := uuid.New().String()
+	key := rsvpReminderStagingKey(stagingID)
+	require.NotEmpty(t, key)
+	_, err := app.saveCampaignMedia(key, []byte("fake mp4 bytes"), "video/mp4")
+	require.NoError(t, err)
+
+	result, err := app.createRSVPReminderCampaign(
+		context.Background(),
+		&event,
+		template,
+		nil,
+		[]models.RSVPResponse{response},
+		models.RSVPReminderDeliveryManual,
+		nil,
+		user.ID,
+		stagingID, "invite-clip.mp4", "https://reminders.example.test",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result.Campaign)
+
+	// Reaching CampaignStatusProcessing means validateCampaignReadyForStart
+	// accepted the campaign - which after this fix only happens via a real
+	// HeaderMediaID/HeaderMediaURL, never HeaderMediaLocalPath alone.
+	assert.Equal(t, models.CampaignStatusProcessing, result.Campaign.Status)
+	assert.Contains(t, result.Campaign.HeaderMediaURL, "https://reminders.example.test/public/campaigns/"+result.Campaign.ID.String()+"/media/invite-clip.mp4?token=")
+	assert.Equal(t, "video/mp4", result.Campaign.HeaderMediaMimeType)
+	assert.NotEmpty(t, result.Campaign.HeaderMediaLocalPath)
+	assert.Empty(t, result.Campaign.HeaderMediaID)
+
+	var stored models.BulkMessageCampaign
+	require.NoError(t, db.First(&stored, "id = ?", result.Campaign.ID).Error)
+	assert.Equal(t, result.Campaign.HeaderMediaURL, stored.HeaderMediaURL)
+	assert.Equal(t, result.Campaign.HeaderMediaLocalPath, stored.HeaderMediaLocalPath)
+	assert.Equal(t, 1, mockQueue.JobCount())
 }

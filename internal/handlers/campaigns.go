@@ -632,8 +632,7 @@ func (a *App) validateCampaignReadyForStart(campaign *models.BulkMessageCampaign
 	switch campaign.Template.HeaderType {
 	case "IMAGE", "VIDEO", "DOCUMENT":
 		if strings.TrimSpace(campaign.HeaderMediaID) == "" &&
-			strings.TrimSpace(campaign.HeaderMediaURL) == "" &&
-			strings.TrimSpace(campaign.HeaderMediaLocalPath) == "" {
+			strings.TrimSpace(campaign.HeaderMediaURL) == "" {
 			return fmt.Errorf("template requires %s header media. Configure campaign media before starting", strings.ToLower(campaign.Template.HeaderType))
 		}
 	}
@@ -1730,7 +1729,14 @@ func (a *App) saveCampaignMedia(campaignID string, data []byte, mimeType string)
 }
 
 func (a *App) buildPublicCampaignMediaURL(r *fastglue.Request, campaign *models.BulkMessageCampaign) string {
-	baseURL := a.requestPublicBaseURL(r.RequestCtx)
+	return a.buildCampaignMediaURLForBase(a.requestPublicBaseURL(r.RequestCtx), campaign)
+}
+
+// buildCampaignMediaURLForBase is the request-independent core of
+// buildPublicCampaignMediaURL, for callers that have already resolved a base
+// URL some other way (e.g. from config, when there is no HTTP request to
+// derive one from - see publicBaseURLFromConfig).
+func (a *App) buildCampaignMediaURLForBase(baseURL string, campaign *models.BulkMessageCampaign) string {
 	filename := campaign.HeaderMediaFilename
 	if filename == "" {
 		filename = campaign.ID.String() + getExtensionFromMimeType(campaign.HeaderMediaMimeType)
@@ -1743,6 +1749,28 @@ func (a *App) buildPublicCampaignMediaURL(r *fastglue.Request, campaign *models.
 		url.PathEscape(filename),
 		token,
 	)
+}
+
+// publicBaseURLFromConfig builds a public base URL for contexts with no
+// incoming HTTP request to derive one from - namely the RSVP reminder
+// scheduler (rsvp_scheduler.go), which runs on a ticker rather than in
+// response to a request. Falls back to Host:Port when server.public_url is
+// not configured; that fallback is very unlikely to be reachable from the
+// public internet (Meta must be able to fetch header media from the result),
+// so a warning is logged to keep the gap visible instead of silently
+// producing an undeliverable link - the same class of failure this branch
+// exists to fix, just triggered by the scheduler instead of a manual send.
+func (a *App) publicBaseURLFromConfig() string {
+	if configured := strings.TrimRight(strings.TrimSpace(a.Config.Server.PublicURL), "/"); configured != "" {
+		return configured + sanitizeRedirectPath(a.Config.Server.BasePath)
+	}
+	host := a.Config.Server.Host
+	if host == "" || host == "0.0.0.0" {
+		host = "localhost"
+	}
+	a.Log.Warn("server.public_url is not configured; scheduled RSVP reminder media links will use a best-effort host Meta likely cannot reach",
+		"host", host, "port", a.Config.Server.Port)
+	return fmt.Sprintf("http://%s:%d%s", host, a.Config.Server.Port, sanitizeRedirectPath(a.Config.Server.BasePath))
 }
 
 func (a *App) requestPublicBaseURL(ctx *fasthttp.RequestCtx) string {

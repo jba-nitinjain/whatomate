@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/google/uuid"
@@ -102,4 +105,72 @@ func (a *App) UploadRSVPReminderMedia(r *fastglue.Request) error {
 		"filename":   fileHeader.Filename,
 		"mime_type":  mimeType,
 	})
+}
+
+// loadStagedRSVPReminderMedia reads back the bytes UploadRSVPReminderMedia
+// staged under stagingID and derives their MIME type from the staged file
+// itself, not from a client-supplied value. The send request previously
+// carried a "staging_mime_type" field that was used to rebuild the staged
+// file's extension for reading it; a mismatched echo of that field pointed
+// HeaderMediaLocalPath at a file that does not exist. Locating the file by
+// glob and re-detecting its type removes that trust boundary entirely.
+func (a *App) loadStagedRSVPReminderMedia(stagingID string) (data []byte, mimeType string, err error) {
+	key := rsvpReminderStagingKey(stagingID)
+	if key == "" {
+		return nil, "", fmt.Errorf("invalid media reference")
+	}
+	matches, err := filepath.Glob(filepath.Join(a.getMediaStoragePath(), "campaigns", key+".*"))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to locate staged media: %w", err)
+	}
+	if len(matches) == 0 {
+		return nil, "", fmt.Errorf("staged media not found - it may have expired or already been used")
+	}
+	path := matches[0]
+	data, err = os.ReadFile(path)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read staged media: %w", err)
+	}
+	mimeType = detectCampaignMediaMimeType(filepath.Base(path), "", data)
+	return data, mimeType, nil
+}
+
+// promoteRSVPReminderStagedMedia moves a staged reminder attachment onto its
+// own campaign's media path and sets the fields the send actually depends on.
+// Mirrors UploadCampaignMedia's two-phase update (campaigns.go:1657-1687):
+// save the file, update the media info fields, then compute and persist the
+// public URL from those fields (the token embedded in the URL is derived
+// from them, so the URL must be built after they are final).
+func (a *App) promoteRSVPReminderStagedMedia(campaign *models.BulkMessageCampaign, stagingID, stagingFilename, baseURL string) error {
+	data, mimeType, err := a.loadStagedRSVPReminderMedia(stagingID)
+	if err != nil {
+		return err
+	}
+	localPath, err := a.saveCampaignMedia(campaign.ID.String(), data, mimeType)
+	if err != nil {
+		return fmt.Errorf("failed to save reminder media: %w", err)
+	}
+	filename := sanitizeFilename(stagingFilename)
+	updates := map[string]interface{}{
+		"header_media_id":         "",
+		"header_media_filename":   filename,
+		"header_media_mime_type":  mimeType,
+		"header_media_local_path": localPath,
+	}
+	if err := a.DB.Model(campaign).Updates(updates).Error; err != nil {
+		return fmt.Errorf("failed to save reminder media info: %w", err)
+	}
+	campaign.HeaderMediaID = ""
+	campaign.HeaderMediaFilename = filename
+	campaign.HeaderMediaMimeType = mimeType
+	campaign.HeaderMediaLocalPath = localPath
+
+	// HeaderMediaURL is what actually reaches Meta (worker.go:122); local path
+	// alone renders only in the local chat bubble (worker.go:144-147).
+	publicURL := a.buildCampaignMediaURLForBase(baseURL, campaign)
+	if err := a.DB.Model(campaign).Update("header_media_url", publicURL).Error; err != nil {
+		return fmt.Errorf("failed to save reminder media URL: %w", err)
+	}
+	campaign.HeaderMediaURL = publicURL
+	return nil
 }
