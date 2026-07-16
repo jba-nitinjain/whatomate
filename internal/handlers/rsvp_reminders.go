@@ -229,7 +229,13 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 	campaignResult, err := a.createRSVPReminderCampaign(r.RequestCtx, event, template, req.TemplateParams, rows, models.RSVPReminderDeliveryManual, nil, userID, req.StagingID, req.StagingFilename, baseURL)
 	if err != nil {
 		a.Log.Error("Failed to create RSVP reminder campaign", "event_id", event.ID, "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create reminder campaign", nil, "")
+		// Surface the validation error's own text (e.g. "template requires video
+		// header media. Configure campaign media before starting") rather than a
+		// generic 500 - this is what identified the 1008-recipient failure on
+		// 15/07/2026 in the first place. Mirrors StartCampaign's convention
+		// (campaigns.go:577-579) of returning 400 + err.Error() for a pre-flight
+		// validation failure.
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 	requested := len(req.ResponseIDs)
 	if req.AllNotStarted {

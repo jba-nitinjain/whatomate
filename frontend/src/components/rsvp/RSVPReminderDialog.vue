@@ -14,6 +14,12 @@ import { ExternalLink, Loader2, Search, Send, Trash2, X } from 'lucide-vue-next'
 
 interface Schedule { id: string; scheduled_at: string; template_id: string; status: string; sent_count: number; failed_count: number; campaign_id?: string }
 interface Guest { id: string; phone_number: string; contact?: { profile_name?: string } }
+interface SkippedGuest { response_id: string; name: string; phone: string; reason: string }
+interface StagedReminderMedia { staging_id: string; filename: string; mime_type: string }
+
+// Header types that require an attached file before the template can send at
+// all (Meta rejects with error 132012 otherwise - see the 15/07/2026 incident).
+const MEDIA_HEADER_TYPES = ['IMAGE', 'VIDEO', 'DOCUMENT']
 
 const props = defineProps<{ open: boolean; eventId: string; selectedIds: string[] }>()
 const emit = defineEmits<{ 'update:open': [value: boolean]; changed: [] }>()
@@ -35,6 +41,10 @@ const filteredGuestTotal = ref(0)
 const recipientTotal = ref(0)
 const createdCampaignId = ref('')
 const createdCampaignName = ref('')
+const skippedGuests = ref<SkippedGuest[]>([])
+const stagedMedia = ref<StagedReminderMedia | null>(null)
+const mediaUploading = ref(false)
+const mediaUploadError = ref('')
 let searchTimer: number | undefined
 
 const {
@@ -53,6 +63,20 @@ const selectedSendCount = computed(() => props.selectedIds.filter(isRecipientSel
 const selectedTemplate = computed(() => templates.value.find(template => template.id === templateId.value))
 const templateParamNames = computed(() => templateParameterNames(selectedTemplate.value))
 const missingTemplateParams = computed(() => templateParamNames.value.filter(name => !String(templateParams.value[name] || '').trim()))
+const selectedTemplateHeaderType = computed(() => String(selectedTemplate.value?.header_type || '').toUpperCase())
+const templateNeedsMedia = computed(() => MEDIA_HEADER_TYPES.includes(selectedTemplateHeaderType.value))
+const mediaMissing = computed(() => templateNeedsMedia.value && !stagedMedia.value)
+const mediaAccept = computed(() => {
+  switch (selectedTemplateHeaderType.value) {
+    case 'IMAGE': return 'image/jpeg,image/png,image/webp'
+    case 'VIDEO': return 'video/mp4,video/3gpp'
+    case 'DOCUMENT': return '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx'
+    default: return '*/*'
+  }
+})
+const mediaMissingReason = computed(() => mediaMissing.value
+  ? t('rsvp.reminderMediaRequired', { template: selectedTemplate.value?.name || '', type: selectedTemplateHeaderType.value.toLowerCase() })
+  : '')
 
 function syncTemplateParams() {
   const next: Record<string, string> = {}
@@ -68,6 +92,8 @@ function validSchedules(response: any) {
 }
 function validTemplates(response: any) { return responseCollection<any>(response, 'templates').filter(isRecord) }
 function formatScheduleDate(value: unknown) { return typeof value === 'string' ? formatDateTimeIST(value) : '' }
+function isSkippedGuest(value: unknown): value is SkippedGuest { return isRecord(value) && typeof value.response_id === 'string' && typeof value.reason === 'string' }
+function validSkippedGuests(response: any) { return responseCollection<SkippedGuest>(response, 'skipped').filter(isSkippedGuest) }
 
 function applyRecipientResponse(response: any) {
   const data = responsePayload(response)
@@ -106,13 +132,16 @@ async function load() {
   loadError.value = ''
   createdCampaignId.value = ''
   createdCampaignName.value = ''
+  stagedMedia.value = null
+  mediaUploadError.value = ''
   try {
     const eventResponse = await rsvpService.get(props.eventId)
     const event = responsePayload(eventResponse)
-    const [scheduleResult, templateResult, recipientResult] = await Promise.allSettled([
+    const [scheduleResult, templateResult, recipientResult, previewResult] = await Promise.allSettled([
       rsvpService.listReminders(props.eventId),
       templatesService.list({ status: 'APPROVED', account: event.whatsapp_account, limit: 200 }),
       rsvpService.guests(props.eventId, { journey_status: 'not_started', page: 1, limit: guestLimit }),
+      rsvpService.reminderPreview(props.eventId),
     ])
     const errors: unknown[] = []
 
@@ -124,6 +153,10 @@ async function load() {
 
     if (recipientResult.status === 'fulfilled') applyRecipientResponse(recipientResult.value)
     else { guests.value = []; filteredGuestTotal.value = 0; recipientTotal.value = 0; errors.push(recipientResult.reason) }
+
+    // Who will be skipped and why is a courtesy, not a gate: a failure to load
+    // it should not block the rest of the dialog or surface its own toast.
+    skippedGuests.value = previewResult.status === 'fulfilled' ? validSkippedGuests(previewResult.value) : []
 
     templateId.value = event.reminder_template_id || ''
     syncTemplateParams()
@@ -137,6 +170,7 @@ async function load() {
     guests.value = []
     filteredGuestTotal.value = 0
     recipientTotal.value = 0
+    skippedGuests.value = []
     loadError.value = loadErrorMessage(error)
     toast.error(loadError.value)
   } finally { loading.value = false }
@@ -146,6 +180,9 @@ watch(() => props.open, value => {
   if (value) load()
 }, { flush: 'sync' })
 watch(templateParamNames, syncTemplateParams)
+// A file staged for one template's header type is not necessarily valid for
+// another, so switching templates clears whatever was attached.
+watch(templateId, () => { stagedMedia.value = null; mediaUploadError.value = '' })
 
 function close() { emit('update:open', false) }
 function closeOnEscape(event: KeyboardEvent) {
@@ -159,20 +196,72 @@ function onRecipientSearch() {
   searchTimer = window.setTimeout(() => { guestPage.value = 1; loadRecipients() }, 300)
 }
 function setGuestPage(page: number) { guestPage.value = page; loadRecipients() }
+async function onMediaFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  mediaUploading.value = true
+  mediaUploadError.value = ''
+  try {
+    const response = await rsvpService.uploadReminderMedia(props.eventId, file)
+    const data = responsePayload(response)
+    if (typeof data.staging_id === 'string' && data.staging_id) {
+      stagedMedia.value = {
+        staging_id: data.staging_id,
+        filename: typeof data.filename === 'string' && data.filename ? data.filename : file.name,
+        mime_type: typeof data.mime_type === 'string' && data.mime_type ? data.mime_type : file.type,
+      }
+    }
+  } catch (error) {
+    stagedMedia.value = null
+    mediaUploadError.value = getErrorMessage(error, t('rsvp.reminderMediaUploadFailed'))
+    toast.error(mediaUploadError.value)
+  } finally {
+    mediaUploading.value = false
+    input.value = ''
+  }
+}
+function clearStagedMedia() { stagedMedia.value = null }
+// Best-effort extraction of the first recipient failure reason from a send
+// response - the exact string that identified Meta error 132012 on
+// 15/07/2026. The endpoint does not currently return per-recipient detail
+// synchronously (sends are queued, not inline), so this is defensive: it
+// surfaces the detail if a future response includes it, and degrades to the
+// summary alone when it does not.
+function firstReminderErrorMessage(data: Record<string, any>): string {
+  const candidates = [data.recipients, data.errors].find(Array.isArray) || []
+  for (const item of candidates) {
+    if (isRecord(item) && typeof item.error_message === 'string' && item.error_message.trim()) return item.error_message.trim()
+  }
+  return typeof data.error_message === 'string' ? data.error_message.trim() : ''
+}
 async function send(all: boolean) {
   if (!templateId.value) { toast.error(t('rsvp.selectReminderTemplate')); return }
   if (missingTemplateParams.value.length) { toast.error(t('rsvp.reminderVariablesRequired')); return }
+  if (mediaMissing.value) { toast.error(mediaMissingReason.value); return }
   const responseIds = props.selectedIds.filter(isRecipientSelected)
   if ((!all && !responseIds.length) || (all && !includedCount.value)) return
   loading.value = true
   try {
+    const media = stagedMedia.value
+      ? { staging_id: stagedMedia.value.staging_id, staging_filename: stagedMedia.value.filename, staging_mime_type: stagedMedia.value.mime_type }
+      : {}
     const response = await rsvpService.sendReminders(props.eventId, all
       ? allRecipientsSelected.value
-        ? { all_not_started: true, exclude_response_ids: [...excludedIds.value], template_id: templateId.value, template_params: templateParams.value }
-        : { response_ids: [...includedIds.value], template_id: templateId.value, template_params: templateParams.value }
-      : { response_ids: responseIds, template_id: templateId.value, template_params: templateParams.value })
+        ? { all_not_started: true, exclude_response_ids: [...excludedIds.value], template_id: templateId.value, template_params: templateParams.value, ...media }
+        : { response_ids: [...includedIds.value], template_id: templateId.value, template_params: templateParams.value, ...media }
+      : { response_ids: responseIds, template_id: templateId.value, template_params: templateParams.value, ...media })
     const data = (response.data as any).data || response.data
-    if (data.campaign_id) {
+    const sentCount = Number(data.sent) || 0
+    const failedCount = Number(data.failed) || 0
+    if (sentCount === 0 && failedCount > 0) {
+      // A run where every recipient failed must not read as success - this is
+      // the exact shape of the 15/07/2026 incident (1008 sent, 1008 failed,
+      // reported as a clean success toast).
+      const summary = t('rsvp.reminderResult', { sent: sentCount, skipped: Number(data.skipped) || 0, failed: failedCount })
+      const detail = firstReminderErrorMessage(data)
+      toast.error(detail ? `${summary} ${detail}` : summary)
+    } else if (data.campaign_id) {
       createdCampaignId.value = data.campaign_id
       createdCampaignName.value = data.campaign_name || ''
       toast.success(t('rsvp.reminderCampaignCreated', { queued: data.queued || 0, skipped: data.skipped || 0 }))
@@ -230,6 +319,17 @@ async function viewCampaigns() {
           </datalist>
         </div>
 
+        <div v-if="templateNeedsMedia" class="space-y-2 rounded-lg border p-4">
+          <div class="font-medium">{{ t('rsvp.reminderMediaLabel', { type: selectedTemplateHeaderType.toLowerCase() }) }}</div>
+          <input type="file" :accept="mediaAccept" class="block w-full text-sm" :disabled="mediaUploading" @change="onMediaFileChange" />
+          <p v-if="mediaUploading" class="text-xs text-muted-foreground">{{ t('rsvp.reminderMediaUploading') }}</p>
+          <div v-else-if="stagedMedia" class="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span class="truncate">{{ stagedMedia.filename }}</span>
+            <Button type="button" variant="ghost" size="sm" @click="clearStagedMedia">{{ t('common.remove') }}</Button>
+          </div>
+          <p v-if="mediaUploadError" class="text-sm text-destructive">{{ mediaUploadError }}</p>
+        </div>
+
         <div class="space-y-3 rounded-lg border p-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="font-medium">{{ t('rsvp.repromptRecipients') }}</div>
@@ -259,7 +359,18 @@ async function viewCampaigns() {
           </div>
         </div>
 
-        <div class="grid gap-2 sm:grid-cols-2"><Button :disabled="loading || !selectedSendCount" @click="send(false)"><Send class="mr-2 h-4 w-4" />{{ t('rsvp.remindSelected', { count: selectedSendCount }) }}</Button><Button variant="outline" :disabled="loading || !includedCount" @click="send(true)">{{ allRecipientsSelected && !excludedIds.size ? `${t('rsvp.remindAllNotStarted')} (${includedCount})` : t('rsvp.remindSelected', { count: includedCount }) }}</Button></div>
+        <div v-if="skippedGuests.length" class="rounded-lg border p-3 text-sm">
+          <details>
+            <summary class="cursor-pointer font-medium">{{ t('rsvp.reminderSkippedSummary', { count: skippedGuests.length }) }}</summary>
+            <ul class="mt-2 space-y-1 text-xs text-muted-foreground">
+              <li v-for="guest in skippedGuests" :key="guest.response_id">
+                <span class="font-medium text-foreground">{{ guest.name || guest.phone }}</span><span v-if="guest.name && guest.phone"> · {{ guest.phone }}</span> — {{ guest.reason }}
+              </li>
+            </ul>
+          </details>
+        </div>
+        <div v-if="mediaMissingReason" class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{{ mediaMissingReason }}</div>
+        <div class="grid gap-2 sm:grid-cols-2"><Button :disabled="loading || !selectedSendCount || mediaMissing" @click="send(false)"><Send class="mr-2 h-4 w-4" />{{ t('rsvp.remindSelected', { count: selectedSendCount }) }}</Button><Button variant="outline" :disabled="loading || !includedCount || mediaMissing" @click="send(true)">{{ allRecipientsSelected && !excludedIds.size ? `${t('rsvp.remindAllNotStarted')} (${includedCount})` : t('rsvp.remindSelected', { count: includedCount }) }}</Button></div>
         <div v-if="createdCampaignId" class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
           <div><div class="font-medium">{{ t('rsvp.reminderCampaignReady') }}</div><div class="text-muted-foreground">{{ createdCampaignName }}</div></div>
           <Button variant="outline" size="sm" @click="viewCampaigns"><ExternalLink class="mr-2 h-4 w-4" />{{ t('rsvp.viewCampaigns') }}</Button>
