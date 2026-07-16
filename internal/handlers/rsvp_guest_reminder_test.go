@@ -251,3 +251,97 @@ func TestCreateRSVPReminderCampaignPromotesStagedMediaToPublicURL(t *testing.T) 
 	assert.Equal(t, result.Campaign.HeaderMediaLocalPath, stored.HeaderMediaLocalPath)
 	assert.Equal(t, 1, mockQueue.JobCount())
 }
+
+// TestCreateRSVPReminderCampaignFailsCleanlyWhenMediaMissing pins the fix for
+// the post-commit-orphan bug found in review: a VIDEO-header template with no
+// staged attachment - exactly what the scheduler hits on every tick, since
+// rsvp_scheduler.go always passes stagingID "" - used to commit the campaign,
+// recipient and delivery rows in a DB transaction and only THEN run
+// validateCampaignReadyForStart, so a failure here left those rows behind
+// forever: recipients stuck "pending", deliveries stuck "queued", nothing to
+// retry them. That is how 1008 reminders failed on 15/07/2026 while still
+// writing full campaign state.
+//
+// This test would fail under the old post-commit-validation ordering: it
+// would find a persisted campaign row (and recipient/delivery rows) even
+// though err is non-nil. Requires TEST_DATABASE_URL; skips otherwise per
+// testutil.SetupTestDB.
+func TestCreateRSVPReminderCampaignFailsCleanlyWhenMediaMissing(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	mockQueue := testutil.NewMockQueue()
+	app := &App{
+		DB:    db,
+		Log:   testutil.NopLogger(),
+		Queue: mockQueue,
+		Config: &config.Config{
+			Storage: config.StorageConfig{LocalPath: t.TempDir()},
+			JWT:     config.JWTConfig{Secret: "test-secret"},
+		},
+	}
+	org := testutil.CreateTestOrganization(t, db)
+	user := testutil.CreateTestUser(t, db, org.ID)
+	account := testutil.CreateTestWhatsAppAccount(t, db, org.ID)
+	template := testutil.CreateTestTemplate(t, db, org.ID, account.Name)
+	template.HeaderType = "VIDEO"
+	require.NoError(t, db.Save(template).Error)
+	contact := testutil.CreateTestContactWith(t, db, org.ID,
+		testutil.WithContactAccount(account.Name),
+		testutil.WithPhoneNumber("919876543212"),
+	)
+	event := models.RSVPEvent{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  org.ID,
+		Name:            "Video Invite No Media",
+		Status:          models.RSVPEventStatusActive,
+		AccessMode:      models.RSVPAccessModeGuestList,
+		WhatsAppAccount: account.Name,
+		CreatedBy:       user.ID,
+	}
+	require.NoError(t, db.Create(&event).Error)
+	response := models.RSVPResponse{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		RSVPEventID:    event.ID,
+		OrganizationID: org.ID,
+		ContactID:      contact.ID,
+		PhoneNumber:    contact.PhoneNumber,
+		Attendance:     models.RSVPAttendancePending,
+		Source:         models.RSVPGuestSourceContactSelection,
+	}
+	require.NoError(t, db.Create(&response).Error)
+
+	// stagingID "" mirrors both a manual send where the admin never attached
+	// media and every scheduled run (rsvp_scheduler.go always passes "").
+	result, err := app.createRSVPReminderCampaign(
+		context.Background(),
+		&event,
+		template,
+		nil,
+		[]models.RSVPResponse{response},
+		models.RSVPReminderDeliveryScheduled,
+		nil,
+		user.ID,
+		"", "", "",
+	)
+	require.Error(t, err)
+	assert.Nil(t, result.Campaign)
+	assert.Zero(t, result.Queued)
+	assert.Equal(t, 0, mockQueue.JobCount())
+
+	var campaignCount int64
+	require.NoError(t, db.Model(&models.BulkMessageCampaign{}).
+		Where("source_type = ? AND source_id = ?", models.CampaignSourceRSVPReminder, event.ID).
+		Count(&campaignCount).Error)
+	assert.Zero(t, campaignCount, "no campaign row should exist for a send that cannot attach required media")
+
+	var recipientCount int64
+	require.NoError(t, db.Model(&models.BulkMessageRecipient{}).
+		Where("phone_number = ?", contact.PhoneNumber).
+		Count(&recipientCount).Error)
+	assert.Zero(t, recipientCount, "no recipient row should exist for a send that cannot attach required media")
+
+	var deliveryCount int64
+	require.NoError(t, db.Model(&models.RSVPReminderDelivery{}).
+		Where("rsvp_response_id = ?", response.ID).
+		Count(&deliveryCount).Error)
+	assert.Zero(t, deliveryCount, "no delivery row should exist for a send that cannot attach required media")
+}

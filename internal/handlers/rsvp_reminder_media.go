@@ -107,6 +107,27 @@ func (a *App) UploadRSVPReminderMedia(r *fastglue.Request) error {
 	})
 }
 
+// stagedRSVPReminderMediaPath locates the on-disk file UploadRSVPReminderMedia
+// staged under stagingID. Staging ids are server-generated UUIDs
+// (UploadRSVPReminderMedia never accepts a client-supplied id), so two staged
+// uploads colliding on the same id - and thus this glob matching more than
+// one file - is not reachable in practice; taking the first match needs no
+// further tiebreak.
+func (a *App) stagedRSVPReminderMediaPath(stagingID string) (string, error) {
+	key := rsvpReminderStagingKey(stagingID)
+	if key == "" {
+		return "", fmt.Errorf("invalid media reference")
+	}
+	matches, err := filepath.Glob(filepath.Join(a.getMediaStoragePath(), "campaigns", key+".*"))
+	if err != nil {
+		return "", fmt.Errorf("failed to locate staged media: %w", err)
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("staged media not found - it may have expired or already been used")
+	}
+	return matches[0], nil
+}
+
 // loadStagedRSVPReminderMedia reads back the bytes UploadRSVPReminderMedia
 // staged under stagingID and derives their MIME type from the staged file
 // itself, not from a client-supplied value. The send request previously
@@ -115,18 +136,10 @@ func (a *App) UploadRSVPReminderMedia(r *fastglue.Request) error {
 // HeaderMediaLocalPath at a file that does not exist. Locating the file by
 // glob and re-detecting its type removes that trust boundary entirely.
 func (a *App) loadStagedRSVPReminderMedia(stagingID string) (data []byte, mimeType string, err error) {
-	key := rsvpReminderStagingKey(stagingID)
-	if key == "" {
-		return nil, "", fmt.Errorf("invalid media reference")
-	}
-	matches, err := filepath.Glob(filepath.Join(a.getMediaStoragePath(), "campaigns", key+".*"))
+	path, err := a.stagedRSVPReminderMediaPath(stagingID)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to locate staged media: %w", err)
+		return nil, "", err
 	}
-	if len(matches) == 0 {
-		return nil, "", fmt.Errorf("staged media not found - it may have expired or already been used")
-	}
-	path := matches[0]
 	data, err = os.ReadFile(path)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to read staged media: %w", err)
@@ -135,12 +148,33 @@ func (a *App) loadStagedRSVPReminderMedia(stagingID string) (data []byte, mimeTy
 	return data, mimeType, nil
 }
 
-// promoteRSVPReminderStagedMedia moves a staged reminder attachment onto its
+// deleteStagedRSVPReminderMedia removes the on-disk staging file after its
+// bytes have been copied to the campaign's own media path. Best-effort only:
+// callers log a failure here rather than failing the send over a stray temp
+// file - the campaign already has its own copy of the media by the time this
+// runs.
+func (a *App) deleteStagedRSVPReminderMedia(stagingID string) error {
+	path, err := a.stagedRSVPReminderMediaPath(stagingID)
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
+// promoteRSVPReminderStagedMedia copies a staged reminder attachment onto its
 // own campaign's media path and sets the fields the send actually depends on.
-// Mirrors UploadCampaignMedia's two-phase update (campaigns.go:1657-1687):
-// save the file, update the media info fields, then compute and persist the
-// public URL from those fields (the token embedded in the URL is derived
-// from them, so the URL must be built after they are final).
+// Mirrors UploadCampaignMedia's field handling (campaigns.go:1657-1687): save
+// the file, set the media info fields, then compute the public URL from those
+// fields (the token embedded in the URL is derived from them, so it must be
+// built after they are final).
+//
+// This now runs BEFORE the campaign row exists (createRSVPReminderCampaign
+// calls it ahead of the DB transaction, so that a template requiring media it
+// can't attach fails before anything is persisted). campaign.ID is already
+// assigned by the caller, which is all saveCampaignMedia and
+// buildCampaignMediaURLForBase need - so all the fields set here are set only
+// on the in-memory struct and ride along with the eventual tx.Create. There is
+// no row yet to UPDATE.
 func (a *App) promoteRSVPReminderStagedMedia(campaign *models.BulkMessageCampaign, stagingID, stagingFilename, baseURL string) error {
 	data, mimeType, err := a.loadStagedRSVPReminderMedia(stagingID)
 	if err != nil {
@@ -150,27 +184,21 @@ func (a *App) promoteRSVPReminderStagedMedia(campaign *models.BulkMessageCampaig
 	if err != nil {
 		return fmt.Errorf("failed to save reminder media: %w", err)
 	}
-	filename := sanitizeFilename(stagingFilename)
-	updates := map[string]interface{}{
-		"header_media_id":         "",
-		"header_media_filename":   filename,
-		"header_media_mime_type":  mimeType,
-		"header_media_local_path": localPath,
-	}
-	if err := a.DB.Model(campaign).Updates(updates).Error; err != nil {
-		return fmt.Errorf("failed to save reminder media info: %w", err)
-	}
 	campaign.HeaderMediaID = ""
-	campaign.HeaderMediaFilename = filename
+	campaign.HeaderMediaFilename = sanitizeFilename(stagingFilename)
 	campaign.HeaderMediaMimeType = mimeType
 	campaign.HeaderMediaLocalPath = localPath
 
 	// HeaderMediaURL is what actually reaches Meta (worker.go:122); local path
 	// alone renders only in the local chat bubble (worker.go:144-147).
-	publicURL := a.buildCampaignMediaURLForBase(baseURL, campaign)
-	if err := a.DB.Model(campaign).Update("header_media_url", publicURL).Error; err != nil {
-		return fmt.Errorf("failed to save reminder media URL: %w", err)
+	campaign.HeaderMediaURL = a.buildCampaignMediaURLForBase(baseURL, campaign)
+
+	// The staged file has been copied to the campaign's own path above; the
+	// staging copy is no longer needed. Do not fail the send over this -
+	// campaigns.go:98's staged file is a temp upload, not the source of truth.
+	if err := a.deleteStagedRSVPReminderMedia(stagingID); err != nil {
+		a.Log.Warn("Failed to delete staged reminder media after promotion",
+			"staging_id", stagingID, "error", err)
 	}
-	campaign.HeaderMediaURL = publicURL
 	return nil
 }

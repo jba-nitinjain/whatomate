@@ -173,6 +173,14 @@ func (a *App) createRSVPReminderCampaign(
 	result.Skipped = append(result.Skipped, dupSkips...)
 
 	now := time.Now().UTC()
+	// The campaign's ID is minted here, before any row exists, so that media
+	// attach (below) and validateCampaignReadyForStart can run - and can fail -
+	// before anything is written to the DB. saveCampaignMedia and
+	// buildCampaignMediaURLForBase only need campaign.ID as a string; they do
+	// not require a committed row. campaign.Template is intentionally left
+	// unset here (rather than assigned from the template param) so tx.Create
+	// below does not try to auto-save/upsert the associated Template row;
+	// validateCampaignReadyForStart loads it itself from TemplateID+OrganizationID.
 	campaign := models.BulkMessageCampaign{
 		BaseModel:       models.BaseModel{ID: uuid.New()},
 		OrganizationID:  event.OrganizationID,
@@ -235,6 +243,32 @@ func (a *App) createRSVPReminderCampaign(
 	}
 	campaign.TotalRecipients = len(recipients)
 
+	// Attach media and validate BEFORE writing anything to the DB. A campaign
+	// that cannot send (missing/expired staged file, or a media-header template
+	// with no attachment at all - the scheduler always passes stagingID "",
+	// rsvp_scheduler.go) must fail here, with nothing persisted, rather than
+	// leaving a committed campaign whose recipients stay "pending" and
+	// deliveries stay "queued" forever. That post-commit-orphan shape is how
+	// 1008 reminders failed silently on 15/07/2026.
+	//
+	// Mirrors UploadCampaignMedia (campaigns.go:1591): HeaderMediaLocalPath is
+	// set so the chat bubble renders locally, and HeaderMediaURL is set to a
+	// public link Meta can fetch - HeaderMediaLocalPath alone is never sent
+	// (worker.go:122,144-147).
+	if stagingID != "" {
+		if err := a.promoteRSVPReminderStagedMedia(&campaign, stagingID, stagingFilename, baseURL); err != nil {
+			return result, err
+		}
+	}
+
+	// The RSVP path calls enqueueCampaignRecipients directly and so never passed
+	// through StartCampaign's gate (campaigns.go:577). Without this, a media-header
+	// template fails once per recipient with Meta error 132012 — 1008 times on
+	// 15/07/2026, while the campaign reported "completed".
+	if err := a.validateCampaignReadyForStart(&campaign); err != nil {
+		return result, err
+	}
+
 	err = a.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&campaign).Error; err != nil {
 			return err
@@ -261,26 +295,6 @@ func (a *App) createRSVPReminderCampaign(
 	result.Campaign = &campaign
 	result.Queued = len(recipients)
 
-	// Promote the staged attachment onto the campaign's own media path now that
-	// campaign.ID is a real, committed row. Mirrors UploadCampaignMedia
-	// (campaigns.go:1591): HeaderMediaLocalPath is set so the chat bubble
-	// renders locally, and HeaderMediaURL is set to a public link Meta can
-	// fetch - HeaderMediaLocalPath alone is never sent (worker.go:122,144-147).
-	// Doing this after the transaction, rather than before, avoids writing a
-	// media file to disk for campaigns that turn out to have zero recipients.
-	if stagingID != "" {
-		if err := a.promoteRSVPReminderStagedMedia(&campaign, stagingID, stagingFilename, baseURL); err != nil {
-			return result, err
-		}
-	}
-
-	// The RSVP path calls enqueueCampaignRecipients directly and so never passed
-	// through StartCampaign's gate (campaigns.go:577). Without this, a media-header
-	// template fails once per recipient with Meta error 132012 — 1008 times on
-	// 15/07/2026, while the campaign reported "completed".
-	if err := a.validateCampaignReadyForStart(&campaign); err != nil {
-		return result, err
-	}
 	if err := a.enqueueCampaignRecipients(ctx, &campaign, recipients, now, models.CampaignStatusDraft); err != nil {
 		return result, err
 	}

@@ -77,3 +77,30 @@ func TestLoadStagedRSVPReminderMedia_RejectsUnsafeStagingID(t *testing.T) {
 		t.Fatal("expected an error for a staging id that fails stagingIDPattern")
 	}
 }
+
+// TestDeleteStagedRSVPReminderMedia_RemovesFile pins the fix for the staged-file
+// leak found in review: promoteRSVPReminderStagedMedia copied the staged bytes
+// to the campaign's own path but never removed the original
+// campaigns/staging-<id>.<ext> file, so every reminder send with an attachment
+// left a stray file behind permanently.
+func TestDeleteStagedRSVPReminderMedia_RemovesFile(t *testing.T) {
+	app := &App{Log: testutil.NopLogger(), Config: &config.Config{Storage: config.StorageConfig{LocalPath: t.TempDir()}}}
+
+	stagingID := "abc123"
+	key := rsvpReminderStagingKey(stagingID)
+	if _, err := app.saveCampaignMedia(key, []byte("fake bytes"), "application/pdf"); err != nil {
+		t.Fatalf("saveCampaignMedia: %v", err)
+	}
+
+	if _, _, err := app.loadStagedRSVPReminderMedia(stagingID); err != nil {
+		t.Fatalf("staged file should exist before delete: %v", err)
+	}
+
+	if err := app.deleteStagedRSVPReminderMedia(stagingID); err != nil {
+		t.Fatalf("deleteStagedRSVPReminderMedia: %v", err)
+	}
+
+	if _, _, err := app.loadStagedRSVPReminderMedia(stagingID); err == nil {
+		t.Fatal("staged file should no longer exist after deleteStagedRSVPReminderMedia")
+	}
+}
