@@ -169,8 +169,30 @@ func (a *App) RSVPReminderPreview(r *fastglue.Request) error {
 	if loadErr != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to preview reminders", nil, "")
 	}
+	// Apply the same predicate the send path uses (rsvpReminderSkipReason) so
+	// this preview cannot promise more recipients than send will actually queue.
+	eligible := 0
+	skipped := make([]rsvpReminderSkip, 0)
+	for _, row := range rows {
+		if reason := rsvpReminderSkipReason(row.Contact != nil, row.PhoneNumber); reason != "" {
+			skipped = append(skipped, rsvpReminderSkip{
+				ResponseID: row.ID,
+				Name:       rsvpReminderRowName(&row),
+				Phone:      row.PhoneNumber,
+				Reason:     reason,
+			})
+			continue
+		}
+		eligible++
+	}
 	configured := event.WhatsAppAccount != "" && event.ReminderTemplateID != nil
-	return r.SendEnvelope(map[string]interface{}{"eligible": len(rows), "ineligible": maxInt(0, len(parts)-len(rows)), "invalid": invalid, "configured": configured})
+	return r.SendEnvelope(map[string]interface{}{
+		"eligible":   eligible,
+		"ineligible": maxInt(0, len(parts)-len(rows)) + len(skipped),
+		"skipped":    skipped,
+		"invalid":    invalid,
+		"configured": configured,
+	})
 }
 
 func (a *App) SendRSVPReminders(r *fastglue.Request) error {
@@ -226,7 +248,7 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 		"queued":    campaignResult.Queued,
 		"sent":      0,
 		"failed":    0,
-		"skipped":   campaignResult.Skipped + invalid + maxInt(0, len(ids)-len(rows)),
+		"skipped":   len(campaignResult.Skipped) + invalid + maxInt(0, len(ids)-len(rows)),
 	}
 	if campaignResult.Campaign != nil {
 		result["campaign_id"] = campaignResult.Campaign.ID

@@ -141,7 +141,7 @@ func TestCreateRSVPReminderCampaignQueuesResolvedRecipients(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result.Campaign)
 	assert.Equal(t, 1, result.Queued)
-	assert.Zero(t, result.Skipped)
+	assert.Zero(t, len(result.Skipped))
 	assert.Equal(t, models.CampaignSourceRSVPReminder, result.Campaign.SourceType)
 	require.NotNil(t, result.Campaign.SourceID)
 	assert.Equal(t, event.ID, *result.Campaign.SourceID)

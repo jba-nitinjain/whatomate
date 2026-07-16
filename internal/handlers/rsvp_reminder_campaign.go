@@ -14,7 +14,41 @@ import (
 type rsvpReminderCampaignResult struct {
 	Campaign *models.BulkMessageCampaign
 	Queued   int
-	Skipped  int
+	Skipped  []rsvpReminderSkip
+}
+
+// rsvpReminderSkip records a guest that was not queued for a reminder, and why.
+// Previously nil-contact rows were dropped with result.Skipped++ and no other
+// trace (rsvp_reminder_campaign.go:81 before this change) — no delivery row, no
+// log, no reason the admin could see.
+type rsvpReminderSkip struct {
+	ResponseID uuid.UUID `json:"response_id"`
+	Name       string    `json:"name"`
+	Phone      string    `json:"phone"`
+	Reason     string    `json:"reason"`
+}
+
+// rsvpReminderSkipReason returns "" when a guest can be sent to, otherwise a
+// human-readable reason. Preview and send both call this so their counts cannot
+// drift: previously send dropped nil-contact rows (rsvp_reminder_campaign.go:81)
+// while preview counted them as eligible (rsvp_reminders.go:168).
+func rsvpReminderSkipReason(hasContact bool, phone string) string {
+	if !hasContact {
+		return "no contact record"
+	}
+	if normalizeRSVPReminderPhone(phone) == "" {
+		return "no usable phone number"
+	}
+	return ""
+}
+
+// rsvpReminderRowName returns the guest's contact name, or "" if there is no
+// contact to name (RSVPResponse has no RecipientName() helper).
+func rsvpReminderRowName(row *models.RSVPResponse) string {
+	if row.Contact == nil {
+		return ""
+	}
+	return strings.TrimSpace(row.Contact.ProfileName)
 }
 
 // rsvpReminderCampaignOutcome classifies a finished reminder campaign. A run where
@@ -69,9 +103,37 @@ func (a *App) createRSVPReminderCampaign(
 	if err != nil {
 		return result, err
 	}
-	result.Skipped = len(rows) - len(freshRows)
+	// Rows present at preview time but missing from the recheck became ineligible
+	// in the interim (e.g. the guest responded or started RSVP) — report why
+	// rather than folding them into a bare count.
+	freshIDs := make(map[uuid.UUID]struct{}, len(freshRows))
+	for i := range freshRows {
+		freshIDs[freshRows[i].ID] = struct{}{}
+	}
+	for i := range rows {
+		if _, ok := freshIDs[rows[i].ID]; ok {
+			continue
+		}
+		result.Skipped = append(result.Skipped, rsvpReminderSkip{
+			ResponseID: rows[i].ID,
+			Name:       rsvpReminderRowName(&rows[i]),
+			Phone:      rows[i].PhoneNumber,
+			Reason:     "no longer eligible for a reminder",
+		})
+	}
 	if len(freshRows) == 0 {
 		return result, nil
+	}
+
+	var duplicates []models.RSVPResponse
+	freshRows, duplicates = dedupeRSVPReminderRows(freshRows, func(r models.RSVPResponse) string { return r.PhoneNumber })
+	for _, dup := range duplicates {
+		result.Skipped = append(result.Skipped, rsvpReminderSkip{
+			ResponseID: dup.ID,
+			Name:       rsvpReminderRowName(&dup),
+			Phone:      dup.PhoneNumber,
+			Reason:     "duplicate phone number",
+		})
 	}
 
 	now := time.Now().UTC()
@@ -92,8 +154,15 @@ func (a *App) createRSVPReminderCampaign(
 	deliveries := make([]models.RSVPReminderDelivery, 0, len(freshRows))
 	for i := range freshRows {
 		row := &freshRows[i]
-		if row.Contact == nil {
-			result.Skipped++
+		if reason := rsvpReminderSkipReason(row.Contact != nil, row.PhoneNumber); reason != "" {
+			result.Skipped = append(result.Skipped, rsvpReminderSkip{
+				ResponseID: row.ID,
+				Name:       rsvpReminderRowName(row),
+				Phone:      row.PhoneNumber,
+				Reason:     reason,
+			})
+			a.Log.Warn("RSVP reminder skipped guest",
+				"rsvp_response_id", row.ID, "reason", reason, "event_id", event.ID)
 			continue
 		}
 		recipientID := uuid.New()
