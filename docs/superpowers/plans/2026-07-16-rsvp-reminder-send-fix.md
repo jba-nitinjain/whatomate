@@ -402,8 +402,8 @@ Two independent silences, fixed together because they share the dispatch path an
 - Test: `internal/handlers/rsvp_reminder_campaign_test.go` (create)
 
 **Interfaces:**
-- Consumes: `validateCampaignReadyForStart` (Task 1).
-- Produces: `rsvpReminderCampaignResult` gains `Skipped []rsvpReminderSkip`. Task 4 populates it; Task 6 renders it.
+- Consumes: `validateCampaignReadyForStart` (Task 1) — called directly. Do **not** add an RSVP-specific wrapper around it; it would be pure delegation and its test would duplicate Task 1's.
+- Produces: `func rsvpReminderCampaignOutcome(sent, failed, total int) string`, and `rsvpReminderCampaignResult` gains `Skipped []rsvpReminderSkip`. Task 4 populates it; Task 6 renders it.
   ```go
   type rsvpReminderSkip struct {
       ResponseID uuid.UUID `json:"response_id"`
@@ -421,40 +421,8 @@ Create `internal/handlers/rsvp_reminder_campaign_test.go`. This asserts the orde
 package handlers
 
 import (
-	"strings"
 	"testing"
-
-	"github.com/nikyjain/whatomate/internal/models"
 )
-
-func TestRSVPReminderRejectsMediaTemplateWithoutMedia(t *testing.T) {
-	// Reproduces the 15/07/2026 production failure: rsvp_message_1 has a VIDEO
-	// header, no media was attached, and all 1008 recipients were rejected by
-	// Meta with error 132012. The send must now be refused up front.
-	app := &App{}
-	campaign := &models.BulkMessageCampaign{
-		Template: &models.Template{HeaderType: "VIDEO"},
-	}
-
-	err := app.validateRSVPReminderCampaignSendable(campaign)
-	if err == nil {
-		t.Fatal("expected a media-header template with no media to be refused before enqueue")
-	}
-	if !strings.Contains(err.Error(), "header media") {
-		t.Fatalf("error must name the cause, got: %v", err)
-	}
-}
-
-func TestRSVPReminderAllowsMediaTemplateWithLocalPath(t *testing.T) {
-	app := &App{}
-	campaign := &models.BulkMessageCampaign{
-		Template:             &models.Template{HeaderType: "VIDEO"},
-		HeaderMediaLocalPath: "campaigns/x.mp4",
-	}
-	if err := app.validateRSVPReminderCampaignSendable(campaign); err != nil {
-		t.Fatalf("attached media must be accepted: %v", err)
-	}
-}
 
 func TestRSVPReminderCampaignOutcomeAllFailed(t *testing.T) {
 	cases := []struct {
@@ -483,21 +451,13 @@ func TestRSVPReminderCampaignOutcomeAllFailed(t *testing.T) {
 go test ./internal/handlers/ -run TestRSVPReminder -v
 ```
 
-Expected: FAIL to build — `undefined: validateRSVPReminderCampaignSendable`, `undefined: rsvpReminderCampaignOutcome`.
+Expected: FAIL to build — `undefined: rsvpReminderCampaignOutcome`.
 
-- [ ] **Step 3: Implement both helpers**
+- [ ] **Step 3: Implement**
 
 Add to `internal/handlers/rsvp_reminder_campaign.go` (top level, after the imports):
 
 ```go
-// validateRSVPReminderCampaignSendable refuses a reminder that Meta would reject,
-// before anything is queued. The RSVP path calls enqueueCampaignRecipients directly
-// and so never passed through StartCampaign's gate (campaigns.go:577); without this
-// a media-header template fails once per recipient with API error 132012.
-func (a *App) validateRSVPReminderCampaignSendable(campaign *models.BulkMessageCampaign) error {
-	return a.validateCampaignReadyForStart(campaign)
-}
-
 // rsvpReminderCampaignOutcome classifies a finished reminder campaign. A run where
 // every recipient failed must not present as a clean success — that is how 1008
 // consecutive failures went unnoticed on 15/07/2026.
@@ -526,7 +486,11 @@ Expected: all PASS.
 In `internal/handlers/rsvp_reminder_campaign.go`, immediately **before** the `enqueueCampaignRecipients` call at `:144` — and **after** the campaign has its media fields set (Task 4 sets them) — insert:
 
 ```go
-	if err := a.validateRSVPReminderCampaignSendable(campaign); err != nil {
+	// The RSVP path calls enqueueCampaignRecipients directly and so never passed
+	// through StartCampaign's gate (campaigns.go:577). Without this, a media-header
+	// template fails once per recipient with Meta error 132012 — 1008 times on
+	// 15/07/2026, while the campaign reported "completed".
+	if err := a.validateCampaignReadyForStart(campaign); err != nil {
 		return nil, err
 	}
 ```
@@ -732,7 +696,7 @@ The RSVP reminder creates and enqueues its campaign in one call, but `UploadCamp
 - Test: `internal/handlers/rsvp_reminder_media_test.go`
 
 **Interfaces:**
-- Consumes: `saveCampaignMedia` (`campaigns.go:1701`), `detectCampaignMediaMimeType` (`campaigns.go:1651`), `validateRSVPReminderCampaignSendable` (Task 3).
+- Consumes: `saveCampaignMedia` (`campaigns.go:1701`), `detectCampaignMediaMimeType` (`campaigns.go:1651`), and the validation call wired in by Task 3.
 - Produces:
   - Route `POST /api/rsvp/{id}/reminders/media` → `(a *App) UploadRSVPReminderMedia(r *fastglue.Request) error`, returning `{"staging_id","filename","mime_type"}`.
   - `func rsvpReminderStagingKey(stagingID string) string` — the staging path.
