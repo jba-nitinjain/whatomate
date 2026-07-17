@@ -28,11 +28,38 @@ func TestParseHeadcountValue(t *testing.T) {
 		{"abc", 0, false},
 		{"many", 0, false},
 		{"a few", 0, false},
+		// Ambiguous digit answers: more than one distinct number means a human
+		// decides, not a silent pick of the first digit run.
+		{"1 or 2", 0, false},
+		{"2-3", 0, false},
+		{"1 2", 0, false},
+		// A repeated mention of the same number is not ambiguous.
+		{"2 kids, 2 of them", 2, true},
+		// Digits take precedence over words when both are present.
+		{"2 kids", 2, true},
+		// "none at all" must not become 1 via a substring match on "one" inside
+		// "none" - word matching must be word-boundary aware.
+		{"none at all", 0, false},
 	}
 	for _, c := range cases {
 		value, ok := parseHeadcountValue(c.in)
 		if value != c.value || ok != c.ok {
 			t.Errorf("parseHeadcountValue(%q) = (%d, %v), want (%d, %v)", c.in, value, ok, c.value, c.ok)
+		}
+	}
+}
+
+// TestParseHeadcountValue_WordAmbiguityIsDeterministic guards against the
+// regression this fix addresses: headcountWords used to be a Go map, and Go
+// map iteration order is randomized, so an answer containing two number words
+// ("one or two") could parse to a different number on different runs. Running
+// the assertion many times makes sure a map-order regression can't pass by
+// luck.
+func TestParseHeadcountValue_WordAmbiguityIsDeterministic(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		value, ok := parseHeadcountValue("one or two")
+		if value != 0 || ok != false {
+			t.Fatalf("iteration %d: parseHeadcountValue(%q) = (%d, %v), want (0, false)", i, "one or two", value, ok)
 		}
 	}
 }
