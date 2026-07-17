@@ -1689,8 +1689,13 @@ export const rsvpService = {
     api.post(`/rsvp-events/${id}/send-invites`, { contact_ids: contactIds }),
   reminderPreview: (id: string, responseIds?: string[]) =>
     api.get(`/rsvp-events/${id}/reminders/preview`, { params: responseIds?.length ? { response_ids: responseIds.join(',') } : undefined }),
-  sendReminders: (id: string, data: { response_ids?: string[]; exclude_response_ids?: string[]; all_not_started?: boolean; template_id?: string; template_params?: Record<string, string> }) =>
+  sendReminders: (id: string, data: { response_ids?: string[]; exclude_response_ids?: string[]; all_not_started?: boolean; template_id?: string; template_params?: Record<string, string>; staging_id?: string; staging_filename?: string }) =>
     api.post(`/rsvp-events/${id}/reminders/send`, data),
+  uploadReminderMedia: (id: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post(`/rsvp-events/${id}/reminders/media`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
+  },
   listReminders: (id: string) => api.get(`/rsvp-events/${id}/reminders`),
   createReminder: (id: string, data: { scheduled_at: string; template_id: string; template_params?: Record<string, string> }) =>
     api.post(`/rsvp-events/${id}/reminders`, data),

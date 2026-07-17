@@ -69,6 +69,13 @@ type ServerConfig struct {
 	WriteTimeout   int    `koanf:"write_timeout"`
 	BasePath       string `koanf:"base_path"`       // Base path for frontend (e.g., "/whatomate" for proxy pass)
 	AllowedOrigins string `koanf:"allowed_origins"` // Comma-separated list of allowed CORS origins
+	// PublicURL is the externally reachable base URL (scheme+host, no trailing
+	// slash) used to build links when no HTTP request is available to derive
+	// one from - e.g. the RSVP reminder scheduler building a campaign header
+	// media URL that Meta must be able to fetch. Required for scheduled RSVP
+	// reminders with media headers to work; requests that go through the API
+	// derive the base URL from the incoming request instead.
+	PublicURL string `koanf:"public_url"`
 }
 
 type DatabaseConfig struct {

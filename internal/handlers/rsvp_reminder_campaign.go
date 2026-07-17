@@ -14,7 +14,97 @@ import (
 type rsvpReminderCampaignResult struct {
 	Campaign *models.BulkMessageCampaign
 	Queued   int
-	Skipped  int
+	Skipped  []rsvpReminderSkip
+}
+
+// rsvpReminderSkip records a guest that was not queued for a reminder, and why.
+// Previously nil-contact rows were dropped with result.Skipped++ and no other
+// trace (rsvp_reminder_campaign.go:81 before this change) — no delivery row, no
+// log, no reason the admin could see.
+type rsvpReminderSkip struct {
+	ResponseID uuid.UUID `json:"response_id"`
+	Name       string    `json:"name"`
+	Phone      string    `json:"phone"`
+	Reason     string    `json:"reason"`
+}
+
+// rsvpReminderSkipReason returns "" when a guest can be sent to, otherwise a
+// human-readable reason. Preview and send both call this so their counts cannot
+// drift: previously send dropped nil-contact rows (rsvp_reminder_campaign.go:81)
+// while preview counted them as eligible (rsvp_reminders.go:168).
+func rsvpReminderSkipReason(hasContact bool, phone string) string {
+	if !hasContact {
+		return "no contact record"
+	}
+	if normalizeRSVPReminderPhone(phone) == "" {
+		return "no usable phone number"
+	}
+	return ""
+}
+
+// rsvpReminderRowName returns the guest's contact name, or "" if there is no
+// contact to name (RSVPResponse has no RecipientName() helper).
+func rsvpReminderRowName(row *models.RSVPResponse) string {
+	if row.Contact == nil {
+		return ""
+	}
+	return strings.TrimSpace(row.Contact.ProfileName)
+}
+
+// dedupeRSVPReminderRowsWithSkips wraps dedupeRSVPReminderRows and turns the
+// dropped duplicates into skip records, so preview (RSVPReminderPreview) and
+// send (createRSVPReminderCampaign) record duplicate phones identically.
+func dedupeRSVPReminderRowsWithSkips(rows []models.RSVPResponse) (kept []models.RSVPResponse, skipped []rsvpReminderSkip) {
+	var duplicates []models.RSVPResponse
+	kept, duplicates = dedupeRSVPReminderRows(rows, func(r models.RSVPResponse) string { return r.PhoneNumber })
+	skipped = make([]rsvpReminderSkip, 0, len(duplicates))
+	for _, dup := range duplicates {
+		skipped = append(skipped, rsvpReminderSkip{
+			ResponseID: dup.ID,
+			Name:       rsvpReminderRowName(&dup),
+			Phone:      dup.PhoneNumber,
+			Reason:     "duplicate phone number",
+		})
+	}
+	return kept, skipped
+}
+
+// rsvpReminderEligibility applies the same dedupe and skip predicate the send
+// path uses (dedupeRSVPReminderRowsWithSkips, rsvpReminderSkipReason) to a set
+// of loaded rows, without the staleness recheck send does immediately before
+// queuing (createRSVPReminderCampaign's freshRows reload). Preview has no
+// equivalent of that recheck, so this matches predicate and reporting only —
+// the two paths must report duplicates identically.
+func rsvpReminderEligibility(rows []models.RSVPResponse) (eligible int, skipped []rsvpReminderSkip) {
+	kept, dupSkips := dedupeRSVPReminderRowsWithSkips(rows)
+	skipped = append(skipped, dupSkips...)
+	for _, row := range kept {
+		if reason := rsvpReminderSkipReason(row.Contact != nil, row.PhoneNumber); reason != "" {
+			skipped = append(skipped, rsvpReminderSkip{
+				ResponseID: row.ID,
+				Name:       rsvpReminderRowName(&row),
+				Phone:      row.PhoneNumber,
+				Reason:     reason,
+			})
+			continue
+		}
+		eligible++
+	}
+	return eligible, skipped
+}
+
+// rsvpReminderCampaignOutcome classifies a finished reminder campaign. A run where
+// every recipient failed must not present as a clean success — that is how 1008
+// consecutive failures went unnoticed on 15/07/2026.
+func rsvpReminderCampaignOutcome(sent, failed, total int) string {
+	switch {
+	case total > 0 && sent == 0 && failed >= total:
+		return "failed"
+	case failed > 0:
+		return "completed_with_errors"
+	default:
+		return "completed"
+	}
 }
 
 func rsvpReminderCampaignName(eventName string, now time.Time) string {
@@ -24,6 +114,25 @@ func rsvpReminderCampaignName(eventName string, now time.Time) string {
 		name = string(runes[:255])
 	}
 	return name
+}
+
+// rsvpReminderMediaValidationError rejects a send request up front when the
+// resolved template needs header media but the request carries no staged
+// file. It exists so SendRSVPReminders can return a clean, user-fixable 400
+// without echoing createRSVPReminderCampaign's own errors verbatim - those
+// also cover infrastructure failures (DB writes, queue unavailability) that
+// must not leak to the client. The message comes from campaignMediaRequiredError
+// (campaigns.go), the same helper validateCampaignReadyForStart's media check
+// uses, since that function still runs inside createRSVPReminderCampaign as
+// the authoritative backstop and the two messages must not drift.
+func rsvpReminderMediaValidationError(template *models.Template, stagingID string) error {
+	switch template.HeaderType {
+	case "IMAGE", "VIDEO", "DOCUMENT":
+		if strings.TrimSpace(stagingID) == "" {
+			return campaignMediaRequiredError(template.HeaderType)
+		}
+	}
+	return nil
 }
 
 // createRSVPReminderCampaign snapshots the currently eligible guests into a
@@ -38,6 +147,7 @@ func (a *App) createRSVPReminderCampaign(
 	deliveryType models.RSVPReminderDeliveryType,
 	scheduleID *uuid.UUID,
 	createdBy uuid.UUID,
+	stagingID, stagingFilename, baseURL string,
 ) (rsvpReminderCampaignResult, error) {
 	result := rsvpReminderCampaignResult{}
 	if len(rows) == 0 {
@@ -55,12 +165,41 @@ func (a *App) createRSVPReminderCampaign(
 	if err != nil {
 		return result, err
 	}
-	result.Skipped = len(rows) - len(freshRows)
+	// Rows present at preview time but missing from the recheck became ineligible
+	// in the interim (e.g. the guest responded or started RSVP) — report why
+	// rather than folding them into a bare count.
+	freshIDs := make(map[uuid.UUID]struct{}, len(freshRows))
+	for i := range freshRows {
+		freshIDs[freshRows[i].ID] = struct{}{}
+	}
+	for i := range rows {
+		if _, ok := freshIDs[rows[i].ID]; ok {
+			continue
+		}
+		result.Skipped = append(result.Skipped, rsvpReminderSkip{
+			ResponseID: rows[i].ID,
+			Name:       rsvpReminderRowName(&rows[i]),
+			Phone:      rows[i].PhoneNumber,
+			Reason:     "no longer eligible for a reminder",
+		})
+	}
 	if len(freshRows) == 0 {
 		return result, nil
 	}
 
+	var dupSkips []rsvpReminderSkip
+	freshRows, dupSkips = dedupeRSVPReminderRowsWithSkips(freshRows)
+	result.Skipped = append(result.Skipped, dupSkips...)
+
 	now := time.Now().UTC()
+	// The campaign's ID is minted here, before any row exists, so that media
+	// attach (below) and validateCampaignReadyForStart can run - and can fail -
+	// before anything is written to the DB. saveCampaignMedia and
+	// buildCampaignMediaURLForBase only need campaign.ID as a string; they do
+	// not require a committed row. campaign.Template is intentionally left
+	// unset here (rather than assigned from the template param) so tx.Create
+	// below does not try to auto-save/upsert the associated Template row;
+	// validateCampaignReadyForStart loads it itself from TemplateID+OrganizationID.
 	campaign := models.BulkMessageCampaign{
 		BaseModel:       models.BaseModel{ID: uuid.New()},
 		OrganizationID:  event.OrganizationID,
@@ -78,13 +217,20 @@ func (a *App) createRSVPReminderCampaign(
 	deliveries := make([]models.RSVPReminderDelivery, 0, len(freshRows))
 	for i := range freshRows {
 		row := &freshRows[i]
-		if row.Contact == nil {
-			result.Skipped++
+		if reason := rsvpReminderSkipReason(row.Contact != nil, row.PhoneNumber); reason != "" {
+			result.Skipped = append(result.Skipped, rsvpReminderSkip{
+				ResponseID: row.ID,
+				Name:       rsvpReminderRowName(row),
+				Phone:      row.PhoneNumber,
+				Reason:     reason,
+			})
+			a.Log.Warn("RSVP reminder skipped guest",
+				"rsvp_response_id", row.ID, "reason", reason, "event_id", event.ID)
 			continue
 		}
 		recipientID := uuid.New()
 		resolved := resolveRSVPReminderParams(templateParams, event, row)
-		recipientName := strings.TrimSpace(row.Contact.ProfileName)
+		recipientName := rsvpReminderRowName(row)
 		if recipientName == "" {
 			recipientName = row.PhoneNumber
 		}
@@ -116,6 +262,38 @@ func (a *App) createRSVPReminderCampaign(
 	}
 	campaign.TotalRecipients = len(recipients)
 
+	// Attach media and validate BEFORE writing anything to the DB. A campaign
+	// that cannot send (missing/expired staged file, or a media-header template
+	// with no attachment at all - the scheduler always passes stagingID "",
+	// rsvp_scheduler.go) must fail here, with nothing persisted, rather than
+	// leaving a committed campaign whose recipients stay "pending" and
+	// deliveries stay "queued" forever. That post-commit-orphan shape is how
+	// 1008 reminders failed silently on 15/07/2026.
+	//
+	// Mirrors UploadCampaignMedia (campaigns.go:1591): HeaderMediaLocalPath is
+	// set so the chat bubble renders locally, and HeaderMediaURL is set to a
+	// public link Meta can fetch - HeaderMediaLocalPath alone is never sent
+	// (worker.go:122,144-147).
+	if stagingID != "" {
+		if err := a.promoteRSVPReminderStagedMedia(&campaign, stagingID, stagingFilename, baseURL); err != nil {
+			return result, err
+		}
+	}
+
+	// The RSVP path calls enqueueCampaignRecipients directly and so never passed
+	// through StartCampaign's gate (campaigns.go:577). Without this, a media-header
+	// template fails once per recipient with Meta error 132012 — 1008 times on
+	// 15/07/2026, while the campaign reported "completed".
+	if err := a.validateCampaignReadyForStart(&campaign); err != nil {
+		// This is a backstop, not the primary gate (rsvpReminderMediaValidationError
+		// in rsvp_reminders.go rejects the common case earlier), but when it does
+		// fire - e.g. a scheduled reminder, which always passes stagingID "" per
+		// rsvp_scheduler.go - its message is exactly as user-fixable as the
+		// primary check's, so it is wrapped the same way rather than reaching the
+		// client as a generic 500.
+		return result, rsvpUserFacingError{err}
+	}
+
 	err = a.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&campaign).Error; err != nil {
 			return err
@@ -141,6 +319,7 @@ func (a *App) createRSVPReminderCampaign(
 
 	result.Campaign = &campaign
 	result.Queued = len(recipients)
+
 	if err := a.enqueueCampaignRecipients(ctx, &campaign, recipients, now, models.CampaignStatusDraft); err != nil {
 		return result, err
 	}

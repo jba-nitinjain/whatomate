@@ -89,25 +89,37 @@ header component entirely, and Meta rejects with 132012.
    the media must be accepted **before** the campaign is created and attached during creation —
    the existing endpoint requires an existing campaign ID. See Task ordering in the plan.
 
-2. **Pre-flight validation — and fix what it validates.**
+2. **Pre-flight validation.**
    `validateCampaignReadyForStart` (`campaigns.go:620-640`) must be called before enqueueing.
-
-   **Correction (2026-07-16) — the validator and the sender disagree.** The validator accepts a
-   campaign when `HeaderMediaID` **or** `HeaderMediaURL` is non-empty, but the worker sends
-   `HeaderMediaLocalPath` (`worker.go:144-145`), which the validator never checks. Consequences:
-   - a campaign with only `HeaderMediaLocalPath` set **fails validation** though it would send fine;
-   - `UploadCampaignMedia` writes in two phases (`campaigns.go:1665-1683`), first clearing
-     `header_media_url`/`header_media_id`, then setting the public URL. If the second write fails,
-     the campaign is permanently unstartable despite the file being on disk.
-
-   Therefore validation must treat **any** of `HeaderMediaLocalPath` / `HeaderMediaID` /
-   `HeaderMediaURL` as satisfying a media header — mirroring the existing tri-field check at
-   `campaigns.go:1841`. This is a **shared-path change**: it affects StartCampaign (`:577`), resend
-   (`:972`), import (`:1088`) and the campaign scheduler (`campaign_scheduler.go:61`). It only ever
-   turns a false rejection into an accept, so it cannot newly break a working campaign — but it must
-   ship with tests covering all four call sites.
-
    Refuse the send and surface the reason in the UI rather than failing N times downstream.
+
+   **RETRACTED (2026-07-17) — the "validator and sender disagree" claim was false.**
+   An earlier revision of this spec asserted that the validator checks
+   `HeaderMediaID`/`HeaderMediaURL` while the worker sends `HeaderMediaLocalPath`, and concluded
+   that validation must be widened to accept a local path. **That is wrong, and acting on it made
+   the bug worse.** Verified against the source:
+
+   - `worker.go:122` sends `w.sendTemplateMessage(..., campaign.HeaderMediaID, campaign.HeaderMediaURL)`.
+     The **send** reads only those two fields.
+   - `worker.go:144-147` assigns `HeaderMediaLocalPath` to `message.MediaURL` under the comment
+     *"Store campaign header media so it renders in the chat bubble"* — it populates the local
+     `Message` record for the UI. It is **not** the send path. The original investigation misread
+     this line, and the error propagated into this spec and its plan unchecked.
+   - `BuildTemplateComponentsWithQuickReplyPayloads` (`pkg/whatsapp/message.go:384`) attaches a
+     header component only `if headerMediaID != "" || headerMediaLink != ""`. With both empty, no
+     header is sent — Meta rejects with 132012.
+
+   **Therefore the original validator was correct** to require `HeaderMediaID` or `HeaderMediaURL`.
+   Widening it to accept `HeaderMediaLocalPath` creates a false accept: the campaign passes
+   validation and then sends no header at all — the precise failure this section exists to prevent.
+   Any such widening must be reverted.
+
+   This also explains why the manual 13/07 campaign succeeded (1,273 sent) while the 15/07 RSVP
+   reminder failed 1,008/1,008: the manual campaign had `header_media_url` populated by
+   `UploadCampaignMedia`'s second write (`campaigns.go:1683`); the RSVP path set no media field at all.
+
+   **Lesson for the implementer:** `HeaderMediaLocalPath` is for local rendering only. To make a
+   send work, `HeaderMediaURL` (a publicly fetchable URL) or `HeaderMediaID` must be set.
 3. **Honest reporting.** A campaign where `sent_count == 0 && failed_count == total_recipients` must
    not present as a clean `completed`. Surface `0 sent, N failed` in the RSVP UI and the campaigns
    list.

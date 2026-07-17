@@ -60,7 +60,11 @@ func (a *App) ProcessDueRSVPReminders(ctx context.Context) {
 			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": len(rows), "processed_at": now})
 			continue
 		}
-		campaignResult, err := a.createRSVPReminderCampaign(ctx, &event, template, jsonbToStringMap(schedule.TemplateParams), rows, models.RSVPReminderDeliveryScheduled, &schedule.ID, schedule.CreatedBy)
+		// No HTTP request to derive a public base URL from here (this runs on a
+		// ticker) - fall back to server.public_url so scheduled reminders with a
+		// media header still send with their attachment instead of repeating the
+		// 15/07/2026 132012 failure under a different trigger.
+		campaignResult, err := a.createRSVPReminderCampaign(ctx, &event, template, jsonbToStringMap(schedule.TemplateParams), rows, models.RSVPReminderDeliveryScheduled, &schedule.ID, schedule.CreatedBy, "", "", a.publicBaseURLFromConfig())
 		if err != nil {
 			a.Log.Error("Failed to create scheduled RSVP reminder campaign", "schedule_id", schedule.ID, "error", err)
 			a.DB.Model(schedule).Updates(map[string]interface{}{"status": models.RSVPReminderScheduleCompletedWithErrors, "failed_count": len(rows), "processed_at": now})

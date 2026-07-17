@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -13,12 +14,45 @@ import (
 	"github.com/zerodha/fastglue"
 )
 
+// rsvpUserFacingError marks an error whose message is safe and useful to show
+// the user, as opposed to infrastructure failures they cannot act on. It is a
+// local wrapper, not a sentinel - callers that produce a user-actionable error
+// (missing/expired staged media, the validateCampaignReadyForStart backstop)
+// wrap it at the return site, and SendRSVPReminders uses errors.As to decide
+// how to present it, rather than string-matching the message.
+type rsvpUserFacingError struct{ err error }
+
+func (e rsvpUserFacingError) Error() string { return e.err.Error() }
+func (e rsvpUserFacingError) Unwrap() error { return e.err }
+
+// rsvpReminderCampaignErrorEnvelope classifies an error returned from
+// createRSVPReminderCampaign into the (status, message) pair SendRSVPReminders
+// should send. A rsvpUserFacingError - the staged media was missing/expired,
+// or the validateCampaignReadyForStart backstop rejected the campaign - carries
+// a message that is safe and useful to show the user, so it surfaces as a 400
+// with that exact text (e.g. "failed to read staged media: ..." tells the user
+// to re-upload, rather than every error becoming an opaque "Failed to create
+// reminder campaign"). Everything else - tx.Create/CreateInBatches failures,
+// "campaign queue is unavailable", a load or enqueue error - is an
+// infrastructure failure the user cannot act on, so it stays a generic 500
+// rather than leaking internals. Mirrors StartCampaign's other error paths
+// (campaigns.go:584, 609), which stay generic for the same reason.
+func rsvpReminderCampaignErrorEnvelope(err error) (status int, message string) {
+	var userErr rsvpUserFacingError
+	if errors.As(err, &userErr) {
+		return fasthttp.StatusBadRequest, userErr.Error()
+	}
+	return fasthttp.StatusInternalServerError, "Failed to create reminder campaign"
+}
+
 type rsvpReminderSendRequest struct {
 	ResponseIDs        []string          `json:"response_ids"`
 	ExcludeResponseIDs []string          `json:"exclude_response_ids"`
 	AllNotStarted      bool              `json:"all_not_started"`
 	TemplateID         *string           `json:"template_id"`
 	TemplateParams     map[string]string `json:"template_params"`
+	StagingID          string            `json:"staging_id"`
+	StagingFilename    string            `json:"staging_filename"`
 }
 
 type rsvpReminderScheduleRequest struct {
@@ -169,8 +203,18 @@ func (a *App) RSVPReminderPreview(r *fastglue.Request) error {
 	if loadErr != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to preview reminders", nil, "")
 	}
+	// Apply the same dedupe and predicate the send path uses
+	// (dedupeRSVPReminderRowsWithSkips, rsvpReminderSkipReason) so this preview
+	// cannot promise more recipients than send will actually queue.
+	eligible, skipped := rsvpReminderEligibility(rows)
 	configured := event.WhatsAppAccount != "" && event.ReminderTemplateID != nil
-	return r.SendEnvelope(map[string]interface{}{"eligible": len(rows), "ineligible": maxInt(0, len(parts)-len(rows)), "invalid": invalid, "configured": configured})
+	return r.SendEnvelope(map[string]interface{}{
+		"eligible":   eligible,
+		"ineligible": maxInt(0, len(parts)-len(rows)) + len(skipped),
+		"skipped":    skipped,
+		"invalid":    invalid,
+		"configured": configured,
+	})
 }
 
 func (a *App) SendRSVPReminders(r *fastglue.Request) error {
@@ -205,6 +249,9 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 	if err := validateRSVPReminderParams(template, req.TemplateParams); err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
+	if err := rsvpReminderMediaValidationError(template, req.StagingID); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
 	if req.AllNotStarted {
 		ids = nil
 	}
@@ -212,10 +259,21 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to load reminder recipients", nil, "")
 	}
-	campaignResult, err := a.createRSVPReminderCampaign(r.RequestCtx, event, template, req.TemplateParams, rows, models.RSVPReminderDeliveryManual, nil, userID)
+	baseURL := a.requestPublicBaseURL(r.RequestCtx)
+	campaignResult, err := a.createRSVPReminderCampaign(r.RequestCtx, event, template, req.TemplateParams, rows, models.RSVPReminderDeliveryManual, nil, userID, req.StagingID, req.StagingFilename, baseURL)
 	if err != nil {
 		a.Log.Error("Failed to create RSVP reminder campaign", "event_id", event.ID, "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create reminder campaign", nil, "")
+		// The media check above (rsvpReminderMediaValidationError) already
+		// rejects the common user-fixable case before we get here, but it is
+		// not the only one - a staged file can expire or be cleaned up between
+		// upload and send, which surfaces as a rsvpUserFacingError out of
+		// loadStagedRSVPReminderMedia. rsvpReminderCampaignErrorEnvelope tells
+		// that apart from infrastructure failures (tx.Create/CreateInBatches,
+		// "campaign queue is unavailable", a load or enqueue error) via
+		// errors.As, not string-matching, so only errors safe to show the user
+		// ever reach them verbatim.
+		status, message := rsvpReminderCampaignErrorEnvelope(err)
+		return r.SendErrorEnvelope(status, message, nil, "")
 	}
 	requested := len(req.ResponseIDs)
 	if req.AllNotStarted {
@@ -226,7 +284,7 @@ func (a *App) SendRSVPReminders(r *fastglue.Request) error {
 		"queued":    campaignResult.Queued,
 		"sent":      0,
 		"failed":    0,
-		"skipped":   campaignResult.Skipped + invalid + maxInt(0, len(ids)-len(rows)),
+		"skipped":   len(campaignResult.Skipped) + invalid + maxInt(0, len(ids)-len(rows)),
 	}
 	if campaignResult.Campaign != nil {
 		result["campaign_id"] = campaignResult.Campaign.ID

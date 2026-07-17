@@ -735,6 +735,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/rsvp-events/{id}/guests", app.AddRSVPGuests)
 	g.POST("/api/rsvp-events/{id}/guests/import", app.ImportRSVPGuests)
 	g.GET("/api/rsvp-events/{id}/reminders/preview", app.RSVPReminderPreview)
+	g.POST("/api/rsvp-events/{id}/reminders/media", app.UploadRSVPReminderMedia)
 	g.POST("/api/rsvp-events/{id}/reminders/send", app.SendRSVPReminders)
 	g.GET("/api/rsvp-events/{id}/reminders", app.ListRSVPReminderSchedules)
 	g.POST("/api/rsvp-events/{id}/reminders", app.CreateRSVPReminderSchedule)
