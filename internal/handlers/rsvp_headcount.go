@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/nikyjain/whatomate/internal/models"
 )
 
 // headcountReviewCeiling is the largest count accepted without being flagged for a
@@ -115,4 +117,70 @@ func parseHeadcountValue(raw string) (int, bool) {
 // to a human. The value still counts.
 func headcountNeedsReview(value int) bool {
 	return value > headcountReviewCeiling
+}
+
+// headcountContribution is one contributor's verdict for one response.
+type headcountContribution struct {
+	People      int
+	Matched     bool
+	NeedsReview bool
+	Unparseable bool
+}
+
+// evaluateHeadcountContributor reads a contributor's answer from a response.
+// It checks both `<key>` and `<key>_title`, because the chatbot writes the raw
+// value to one and the display value to the other, and a flow author may map
+// either.
+func evaluateHeadcountContributor(c models.RSVPHeadcountContributor, answers models.JSONB, attendance models.RSVPAttendance) headcountContribution {
+	raw := normalizedRSVPAnswer(answers, c.AnswerKey, c.AnswerKey+"_title")
+
+	switch c.Mode {
+	case models.RSVPHeadcountModeNumeric:
+		if raw == "" {
+			return headcountContribution{}
+		}
+		value, ok := parseHeadcountValue(raw)
+		if !ok {
+			return headcountContribution{Unparseable: true}
+		}
+		return headcountContribution{
+			People:      value,
+			Matched:     value > 0,
+			NeedsReview: headcountNeedsReview(value),
+		}
+
+	default: // boolean
+		if raw == "" {
+			return headcountContribution{}
+		}
+		for _, want := range c.MatchValues {
+			if raw == strings.ToLower(strings.TrimSpace(want)) {
+				return headcountContribution{People: 1, Matched: true}
+			}
+		}
+		return headcountContribution{}
+	}
+}
+
+// legacyHeadcountContributors reproduces the pre-configuration behaviour for events
+// that have none set: member attendance plus the spouse_attendance key that used to
+// be hardcoded at rsvp_tally.go:52.
+func legacyHeadcountContributors(attendanceField string) models.RSVPHeadcountContributors {
+	if strings.TrimSpace(attendanceField) == "" {
+		attendanceField = "attendance"
+	}
+	return models.RSVPHeadcountContributors{
+		{
+			Label:       "Member attendance",
+			AnswerKey:   attendanceField,
+			Mode:        models.RSVPHeadcountModeBoolean,
+			MatchValues: []string{"yes", "attending"},
+		},
+		{
+			Label:       "Spouse attendance",
+			AnswerKey:   "spouse_attendance",
+			Mode:        models.RSVPHeadcountModeBoolean,
+			MatchValues: []string{"yes", "attending"},
+		},
+	}
 }

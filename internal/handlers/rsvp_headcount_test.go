@@ -1,6 +1,10 @@
 package handlers
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/nikyjain/whatomate/internal/models"
+)
 
 func TestParseHeadcountValue(t *testing.T) {
 	cases := []struct {
@@ -82,5 +86,84 @@ func TestHeadcountNeedsReview(t *testing.T) {
 	}
 	if !headcountNeedsReview(999) {
 		t.Error("999 must need review")
+	}
+}
+
+func TestEvaluateHeadcountContributorBoolean(t *testing.T) {
+	c := models.RSVPHeadcountContributor{
+		Label: "Spouse", AnswerKey: "spouse_attendance",
+		Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes", "attending"},
+	}
+
+	got := evaluateHeadcountContributor(c, models.JSONB{"spouse_attendance": "yes"}, models.RSVPAttendanceYes)
+	if got.People != 1 || !got.Matched {
+		t.Fatalf("expected 1 person matched, got %+v", got)
+	}
+
+	// The _title companion must satisfy the same contributor.
+	got = evaluateHeadcountContributor(c, models.JSONB{"spouse_attendance_title": "Attending"}, models.RSVPAttendanceYes)
+	if got.People != 1 || !got.Matched {
+		t.Fatalf("_title companion must match, got %+v", got)
+	}
+
+	got = evaluateHeadcountContributor(c, models.JSONB{"spouse_attendance": "no"}, models.RSVPAttendanceYes)
+	if got.People != 0 || got.Matched {
+		t.Fatalf("expected no match, got %+v", got)
+	}
+
+	got = evaluateHeadcountContributor(c, models.JSONB{}, models.RSVPAttendanceYes)
+	if got.People != 0 || got.Matched {
+		t.Fatalf("absent answer must not match, got %+v", got)
+	}
+}
+
+func TestEvaluateHeadcountContributorBooleanIsCaseInsensitive(t *testing.T) {
+	c := models.RSVPHeadcountContributor{
+		AnswerKey: "spouse_attendance", Mode: models.RSVPHeadcountModeBoolean,
+		MatchValues: []string{"Yes", "ATTENDING"},
+	}
+	got := evaluateHeadcountContributor(c, models.JSONB{"spouse_attendance": "  yes  "}, models.RSVPAttendanceYes)
+	if got.People != 1 {
+		t.Fatalf("matching must be case- and space-insensitive, got %+v", got)
+	}
+}
+
+func TestEvaluateHeadcountContributorNumeric(t *testing.T) {
+	c := models.RSVPHeadcountContributor{
+		Label: "Children", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric,
+	}
+
+	got := evaluateHeadcountContributor(c, models.JSONB{"children_count": "3"}, models.RSVPAttendanceYes)
+	if got.People != 3 || !got.Matched {
+		t.Fatalf("expected 3, got %+v", got)
+	}
+
+	got = evaluateHeadcountContributor(c, models.JSONB{"children_count": "abc"}, models.RSVPAttendanceYes)
+	if got.People != 0 || !got.Unparseable {
+		t.Fatalf("unparseable must count 0 and flag, got %+v", got)
+	}
+
+	got = evaluateHeadcountContributor(c, models.JSONB{"children_count": "50"}, models.RSVPAttendanceYes)
+	if got.People != 50 || !got.NeedsReview {
+		t.Fatalf("50 must count but flag for review, got %+v", got)
+	}
+
+	got = evaluateHeadcountContributor(c, models.JSONB{}, models.RSVPAttendanceYes)
+	if got.People != 0 || got.Unparseable {
+		t.Fatalf("absent answer is 0 and not a parse failure, got %+v", got)
+	}
+}
+
+func TestLegacyHeadcountContributors(t *testing.T) {
+	// Events predating this feature must tally exactly as before.
+	got := legacyHeadcountContributors("attendance")
+	if len(got) != 2 {
+		t.Fatalf("expected member + spouse, got %d: %+v", len(got), got)
+	}
+	if got[0].AnswerKey != "attendance" || got[0].Mode != models.RSVPHeadcountModeBoolean {
+		t.Fatalf("first must be member attendance: %+v", got[0])
+	}
+	if got[1].AnswerKey != "spouse_attendance" || got[1].Mode != models.RSVPHeadcountModeBoolean {
+		t.Fatalf("second must be spouse attendance: %+v", got[1])
 	}
 }
