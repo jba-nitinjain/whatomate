@@ -487,7 +487,7 @@ func (a *App) GetRSVPTally(r *fastglue.Request) error {
 		return nil
 	}
 	var ev models.RSVPEvent
-	if err := a.DB.Select("attendance_field", "spouse_mobile_field").
+	if err := a.DB.Select("attendance_field", "spouse_mobile_field", "headcount_contributors").
 		Where("id = ? AND organization_id = ?", eventID, orgID).First(&ev).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "RSVP event not found", nil, "")
 	}
@@ -543,6 +543,12 @@ func (a *App) GetRSVPTally(r *fastglue.Request) error {
 	}
 	attendanceBreakdown := buildRSVPAttendanceBreakdown(responses, ev.SpouseMobileField)
 
+	contributors := ev.HeadcountContributors
+	if len(contributors) == 0 {
+		contributors = legacyHeadcountContributors(ev.AttendanceField)
+	}
+	contributorTallies, totalAttending := buildRSVPHeadcount(responses, contributors)
+
 	return r.SendEnvelope(map[string]interface{}{
 		"yes": out["yes"], "no": out["no"], "maybe": out["maybe"],
 		"pending": out["pending"], "total": out["total"],
@@ -550,6 +556,8 @@ func (a *App) GetRSVPTally(r *fastglue.Request) error {
 		"attendance_field":  attendanceField,
 		"member_attendance": attendanceBreakdown.Member,
 		"spouse_attendance": attendanceBreakdown.Spouse,
+		"contributors":      contributorTallies,
+		"total_attending":   totalAttending,
 	})
 }
 
