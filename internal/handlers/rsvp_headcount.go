@@ -59,47 +59,55 @@ func parseHeadcountValue(raw string) (int, bool) {
 	if _, none := headcountNoneWords[s]; none {
 		return 0, true
 	}
+
+	// Collect every numeric reading from both the digit matches and the word
+	// matches into one set, then judge ambiguity on the unified set rather
+	// than on digits and words separately. Otherwise a digit reading returns
+	// unconditionally without ever consulting the word matches, so an answer
+	// like "2 or three" or "one, actually 2" would silently discard the
+	// conflicting word/digit and report only the digit. Repeats of the same
+	// value, or a digit and a word that agree (e.g. "1 or one"), collapse to
+	// one reading below and are not ambiguous.
+	readings := map[int]struct{}{}
+
 	if matches := headcountDigitsPattern.FindAllString(s, -1); len(matches) > 0 {
-		distinct := map[int]struct{}{}
-		var n int
 		for _, match := range matches {
 			v, err := strconv.Atoi(match)
 			if err != nil {
 				return 0, false
 			}
-			// Repeats of the same number (e.g. "2 kids, 2 of them") are treated
-			// as one value, not an ambiguity.
-			distinct[v] = struct{}{}
-			n = v
+			readings[v] = struct{}{}
 		}
-		if len(distinct) > 1 {
-			// More than one distinct number ("1 or 2", "2-3", "1 2"). The
-			// answer is ambiguous - a human decides, we don't silently pick
-			// the first one and discard the rest.
-			return 0, false
-		}
-		if n < 0 {
-			// A negative count is nonsense. Flag it for a human rather than
-			// silently inventing a positive count from it.
-			return 0, false
-		}
-		return n, true
 	}
+
 	if matches := headcountWordPattern.FindAllString(s, -1); len(matches) > 0 {
-		distinct := map[string]struct{}{}
 		for _, match := range matches {
-			distinct[match] = struct{}{}
-		}
-		if len(distinct) > 1 {
-			// Ambiguous for the same reason as multiple distinct digit runs.
-			return 0, false
-		}
-		for _, w := range headcountWords {
-			if w.word == matches[0] {
-				return w.n, true
+			for _, w := range headcountWords {
+				if w.word == match {
+					readings[w.n] = struct{}{}
+					break
+				}
 			}
 		}
 	}
+
+	if len(readings) == 1 {
+		for n := range readings {
+			if n < 0 {
+				// A negative count is nonsense. Flag it for a human rather
+				// than silently inventing a positive count from it.
+				return 0, false
+			}
+			return n, true
+		}
+	}
+	// Zero readings: nothing recognisable as a number, digit or word.
+	// More than one distinct reading ("1 or 2", "1 2", "2 or three", "one,
+	// actually 2") is ambiguous - a human decides, we don't silently pick one
+	// and discard the rest. Note "2-3" lands here too, but not because it's a
+	// range: headcountDigitsPattern is `-?\d+`, so FindAllString("2-3")
+	// yields ["2", "-3"] - the hyphen is captured as a minus sign, not
+	// recognised as a range separator - giving readings {2, -3}, not {2, 3}.
 	return 0, false
 }
 

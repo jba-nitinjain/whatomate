@@ -40,6 +40,12 @@ func TestParseHeadcountValue(t *testing.T) {
 		// "none at all" must not become 1 via a substring match on "one" inside
 		// "none" - word matching must be word-boundary aware.
 		{"none at all", 0, false},
+		// Cross-ambiguity between a digit reading and a conflicting word
+		// reading must not be silently resolved in favor of the digit.
+		{"2 or three", 0, false},
+		{"one, actually 2", 0, false},
+		// A digit and a word that agree on the same value are not ambiguous.
+		{"1 or one", 1, true},
 	}
 	for _, c := range cases {
 		value, ok := parseHeadcountValue(c.in)
