@@ -691,6 +691,182 @@ func TestStartFlow_WithSteps(t *testing.T) {
 }
 
 // =============================================================================
+// startFlow - RSVP duplicate guard (end-to-end)
+//
+// These exercise startFlow itself against a flow linked to a real RSVP event,
+// proving the guard at chatbot_processor.go:868-900 actually refuses a repeat
+// responder in practice - not just that the pure rsvpShouldBlockDuplicate
+// helper returns the right bool in isolation. A wiring regression (e.g. the
+// guard never being reached, or isFollowUp always resolving true) would pass
+// every other startFlow test, since none of them link an RSVP event to the
+// flow at all.
+// =============================================================================
+
+// rsvpDuplicateGuardFixture builds an RSVP-linked flow plus its event, shared
+// by the blocked/allowed tests below so the only difference between them is
+// whether a prior response exists for the contact.
+func rsvpDuplicateGuardFixture(t *testing.T, app *App, org *models.Organization, account *models.WhatsAppAccount, keyword string) (*models.ChatbotFlow, *models.RSVPEvent) {
+	t.Helper()
+
+	flowID := uuid.New()
+	flow := &models.ChatbotFlow{
+		BaseModel:       models.BaseModel{ID: flowID},
+		OrganizationID:  org.ID,
+		WhatsAppAccount: account.Name,
+		Name:            "RSVP Flow",
+		InitialMessage:  "Welcome to the flow!",
+		IsEnabled:       true,
+		Steps: []models.ChatbotFlowStep{
+			{
+				BaseModel:   models.BaseModel{ID: uuid.New()},
+				FlowID:      flowID,
+				StepName:    "step1",
+				StepOrder:   1,
+				Message:     "What is your name?",
+				MessageType: models.FlowStepTypeText,
+				InputType:   models.InputTypeText,
+				StoreAs:     "name",
+			},
+		},
+	}
+	require.NoError(t, app.DB.Create(flow).Error)
+
+	event := &models.RSVPEvent{
+		BaseModel:        models.BaseModel{ID: uuid.New()},
+		OrganizationID:   org.ID,
+		Name:             "Live Event 19/07/2026",
+		Status:           models.RSVPEventStatusActive,
+		AccessMode:       models.RSVPAccessModeOpenKeyword,
+		Keyword:          keyword,
+		FlowID:           &flowID,
+		AttendanceField:  "attendance",
+		DuplicateMessage: "Your RSVP has already been recorded - see you there!",
+		CreatedBy:        uuid.New(),
+	}
+	require.NoError(t, app.DB.Create(event).Error)
+
+	return flow, event
+}
+
+func TestStartFlow_RSVPDuplicateGuard_BlocksRepeatResponder(t *testing.T) {
+	app := newProcessorTestApp(t)
+	org, account := createProcessorTestOrg(t, app)
+
+	phone := "919840099001"
+	contact := testutil.CreateTestContactWith(t, app.DB, org.ID,
+		testutil.WithContactAccount(account.Name), testutil.WithPhoneNumber(phone))
+
+	flow, event := rsvpDuplicateGuardFixture(t, app, org, account, "DUPGUARD1")
+
+	// This contact already responded to the event.
+	respondedAt := time.Now().UTC().AddDate(0, 0, -1)
+	resp := models.RSVPResponse{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		RSVPEventID:    event.ID,
+		OrganizationID: org.ID,
+		ContactID:      contact.ID,
+		PhoneNumber:    phone,
+		Attendance:     models.RSVPAttendanceYes,
+		RespondedAt:    &respondedAt,
+		Source:         models.RSVPGuestSourceContactSelection,
+	}
+	require.NoError(t, app.DB.Create(&resp).Error)
+
+	session := &models.ChatbotSession{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  org.ID,
+		ContactID:       contact.ID,
+		WhatsAppAccount: account.Name,
+		PhoneNumber:     phone,
+		Status:          models.SessionStatusActive,
+		SessionData:     models.JSONB{}, // no follow-up flag - this is a fresh RSVP attempt
+		StartedAt:       time.Now(),
+		LastActivityAt:  time.Now(),
+	}
+	require.NoError(t, app.DB.Create(session).Error)
+
+	// This is the flow start a genuine repeat WhatsApp reply from this guest
+	// would trigger - it must be turned away, not walked through the flow.
+	app.startFlow(account, session, contact, flow, "", "")
+
+	// The guest was refused: exitFlow ran, so the session is done and the flow
+	// never advanced past its start.
+	var dbSession models.ChatbotSession
+	require.NoError(t, app.DB.First(&dbSession, session.ID).Error)
+	assert.Equal(t, models.SessionStatusCompleted, dbSession.Status,
+		"a repeat responder must be exited, not walked through the flow")
+	assert.Empty(t, dbSession.CurrentStep,
+		"a repeat responder must not be left on the flow's first step")
+
+	// The DuplicateMessage - and only it - was actually sent.
+	var duplicateCount int64
+	require.NoError(t, app.DB.Model(&models.Message{}).
+		Where("contact_id = ? AND direction = ? AND content = ?", contact.ID, models.DirectionOutgoing, event.DuplicateMessage).
+		Count(&duplicateCount).Error)
+	assert.Equal(t, int64(1), duplicateCount,
+		"the event's DuplicateMessage must be sent to a repeat responder")
+
+	var flowMessageCount int64
+	require.NoError(t, app.DB.Model(&models.Message{}).
+		Where("contact_id = ? AND direction = ? AND content = ?", contact.ID, models.DirectionOutgoing, flow.InitialMessage).
+		Count(&flowMessageCount).Error)
+	assert.Equal(t, int64(0), flowMessageCount,
+		"a repeat responder must not receive the flow's initial message - the guard must stop the flow before it starts")
+}
+
+func TestStartFlow_RSVPDuplicateGuard_AllowsFreshResponder(t *testing.T) {
+	app := newProcessorTestApp(t)
+	org, account := createProcessorTestOrg(t, app)
+
+	phone := "919840099002"
+	contact := testutil.CreateTestContactWith(t, app.DB, org.ID,
+		testutil.WithContactAccount(account.Name), testutil.WithPhoneNumber(phone))
+
+	flow, event := rsvpDuplicateGuardFixture(t, app, org, account, "DUPGUARD2")
+
+	// No prior RSVPResponse for this contact - this is a first-time responder
+	// and must proceed through the flow normally.
+
+	session := &models.ChatbotSession{
+		BaseModel:       models.BaseModel{ID: uuid.New()},
+		OrganizationID:  org.ID,
+		ContactID:       contact.ID,
+		WhatsAppAccount: account.Name,
+		PhoneNumber:     phone,
+		Status:          models.SessionStatusActive,
+		SessionData:     models.JSONB{},
+		StartedAt:       time.Now(),
+		LastActivityAt:  time.Now(),
+	}
+	require.NoError(t, app.DB.Create(session).Error)
+
+	app.startFlow(account, session, contact, flow, "", "")
+
+	// The flow proceeded to its first step rather than being exited.
+	var dbSession models.ChatbotSession
+	require.NoError(t, app.DB.First(&dbSession, session.ID).Error)
+	assert.Equal(t, models.SessionStatusActive, dbSession.Status,
+		"a first-time responder must not be exited by the duplicate guard")
+	assert.Equal(t, "step1", dbSession.CurrentStep,
+		"a first-time responder must be advanced to the flow's first step")
+
+	// The flow's initial message went out, and the DuplicateMessage did not.
+	var flowMessageCount int64
+	require.NoError(t, app.DB.Model(&models.Message{}).
+		Where("contact_id = ? AND direction = ? AND content = ?", contact.ID, models.DirectionOutgoing, flow.InitialMessage).
+		Count(&flowMessageCount).Error)
+	assert.Equal(t, int64(1), flowMessageCount,
+		"a first-time responder must receive the flow's initial message")
+
+	var duplicateCount int64
+	require.NoError(t, app.DB.Model(&models.Message{}).
+		Where("contact_id = ? AND direction = ? AND content = ?", contact.ID, models.DirectionOutgoing, event.DuplicateMessage).
+		Count(&duplicateCount).Error)
+	assert.Equal(t, int64(0), duplicateCount,
+		"a first-time responder must not receive the DuplicateMessage")
+}
+
+// =============================================================================
 // completeFlow
 // =============================================================================
 
