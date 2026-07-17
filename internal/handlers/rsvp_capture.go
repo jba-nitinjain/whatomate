@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -191,7 +192,19 @@ func (a *App) finalizeRSVPFromSession(session *models.ChatbotSession) {
 	// attendance or move responded_at, since the guest answered days ago and
 	// only told us one extra thing now. It also must never create a row -
 	// a follow-up with no existing response is a bug, not a new guest.
-	isFollowUp, _ := session.SessionData[rsvpFollowUpKey].(bool)
+	//
+	// If the key is present but isn't a bool, that's a programming error (e.g.
+	// the flag got written as a string or int somewhere) - refuse to act rather
+	// than silently falling through to the destructive replace path below.
+	var isFollowUp bool
+	if v, present := session.SessionData[rsvpFollowUpKey]; present {
+		isFollowUp, ok = v.(bool)
+		if !ok {
+			a.Log.Error("RSVP follow-up flag has unexpected type; refusing to finalize",
+				"session_id", session.ID, "type", fmt.Sprintf("%T", v))
+			return
+		}
+	}
 
 	updates := map[string]interface{}{}
 	if isFollowUp {
