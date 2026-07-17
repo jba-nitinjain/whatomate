@@ -780,47 +780,147 @@ which would re-ask attendance."
 
 ---
 
-## Task 6: Tag the follow-up session when the guest replies
+## Task 6: Resolve the follow-up event and tag the session
+
+**REWRITTEN 2026-07-17 — the original draft of this task was fatally wrong and would have shipped a
+feature that silently did nothing.**
+
+The original said "set `rsvpFollowUpKey: true` where `_rsvp_event_id` is set". Two verified facts
+make that impossible as written:
+
+1. **`rsvpEventForFlow` (`internal/handlers/rsvp_capture.go:86-93`) matches on
+   `rsvp_events.flow_id = ?`.** The follow-up flow is a DIFFERENT flow — Task 5 explicitly rejects
+   the event's primary flow as a follow-up flow. So for a follow-up tap-through, `rsvpEventForFlow`
+   returns **nil**, the entire RSVP hook block at `chatbot_processor.go:869+` is skipped, no
+   `_rsvp_event_id` is ever set, and `finalizeRSVPFromSession` returns early at its `rsvpEventIDKey`
+   lookup. **The children answer is never saved** — with Tasks 1-5 all correct and every test green.
+2. **`chatbot_processor.go:862-865` RESETS `session.SessionData`** to `{_flow_id, _flow_name}` and
+   saves, immediately before the flag is read at `:876`. Anything set before `startFlow` is wiped.
+   Follow-up-ness must be **derived inside the block from durable state**, never carried on the
+   session.
+
+**The fix:** resolve the event for a flow by two routes, and let the matching route say whether this
+is a follow-up. Task 5 already records the chosen flow on the campaign
+(`BulkMessageCampaign.FlowID`, with `SourceType = models.CampaignSourceRSVPFollowUp` and
+`SourceID = &event.ID`) — that is the durable link this needs.
 
 **Files:**
-- Modify: `internal/handlers/chatbot_processor.go:868-911`
+- Modify: `internal/handlers/rsvp_capture.go` (event resolution)
+- Modify: `internal/handlers/chatbot_processor.go` (use it; tag the session)
+- Modify: `internal/handlers/rsvp_followup_campaign.go` (Step 6)
+- Test: `internal/handlers/rsvp_followup_resolve_test.go` (create)
 
 **Interfaces:**
-- Consumes: `rsvpFollowUpKey` (Task 2), `CampaignSourceRSVPFollowUp` (Task 5).
-- Produces: none.
+- Consumes: `rsvpFollowUpKey`, `rsvpEventForFlow`; `models.CampaignSourceRSVPFollowUp`, `BulkMessageCampaign.FlowID` (Task 5).
+- Produces:
 
-- [ ] **Step 1: Set the flag when the session starts from a follow-up**
+  ```go
+  func (a *App) rsvpEventForFlowOrFollowUp(orgID, flowID uuid.UUID) (event *models.RSVPEvent, isFollowUp bool)
+  ```
 
-When a guest taps the follow-up template's button, the resulting session must carry `rsvpFollowUpKey: true` **before** the duplicate guard runs (Task 3) and before finalize (Task 2). Set it where the session's SessionData is first populated in the RSVP hook, keyed off the follow-up campaign the inbound message replies to.
+- [ ] **Step 1: Write the failing test**
 
-Read `chatbot_processor.go:868-911` to find where `_rsvp_event_id` is set (`rsvpEventIDKey`) and set the follow-up flag in the same place, from the same resolution.
+Create `internal/handlers/rsvp_followup_resolve_test.go` (`package handlers`, DB-backed — it must
+genuinely RUN, not skip). Seed an org, an ACTIVE `RSVPEvent` with `FlowID` = flowA, and a second flow
+flowB. Assert:
 
-- [ ] **Step 2: Verify the flag survives a multi-step flow**
+- `rsvpEventForFlowOrFollowUp(org, flowA)` → the event, `isFollowUp == false` (primary flow).
+- `rsvpEventForFlowOrFollowUp(org, flowB)` → **nil, false** — not linked to anything yet. This is the
+  regression the task exists to prevent; make the failure message say the follow-up answer would be
+  silently discarded.
+- After inserting `BulkMessageCampaign{SourceType: models.CampaignSourceRSVPFollowUp, SourceID: &event.ID, FlowID: &flowB.ID, OrganizationID: org.ID}`:
+  `rsvpEventForFlowOrFollowUp(org, flowB)` → the event, `isFollowUp == true`.
+- A `models.CampaignSourceRSVPReminder` campaign pointing at flowB must **not** make it a follow-up
+  (reminders do not run flows).
+- A closed/draft event must not resolve by either route — mirror `rsvpEventForFlow`'s
+  `status = active` condition.
+- Another org's campaign must not resolve.
 
-The flag must persist across every step of the follow-up flow, not just the first. Confirm SessionData is carried between steps (`chatbot_processor.go:1237-1239` saves incrementally) — if it is rebuilt rather than carried, the flag must be re-derived each step, or Task 2's merge silently degrades into a destructive replace on the final step.
-
-**This is the highest-risk step in the plan.** Verify it explicitly; do not assume.
-
-- [ ] **Step 3: Verify**
+- [ ] **Step 2: Run to verify it fails**
 
 ```bash
-go build ./... && TEST_DATABASE_URL=<url> go test ./internal/handlers/ -run 'TestRSVP|TestChatbot' -v
+go test ./internal/handlers/ -run TestRSVPEventForFlowOrFollowUp -count=1 -v
 ```
 
-Expected: PASS.
+Expected: FAIL to build — `undefined: rsvpEventForFlowOrFollowUp`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Implement the resolver**
+
+Add to `internal/handlers/rsvp_capture.go`, beside `rsvpEventForFlow` (keep that function — other
+callers use it):
+
+```go
+// rsvpEventForFlowOrFollowUp resolves the active RSVP event a flow belongs to. A flow reaches an
+// event by one of two routes: it is the event's own primary flow, or it is the flow a follow-up
+// campaign for that event hands the guest. isFollowUp reports which route matched, and is the only
+// safe source of that fact: startFlow resets session.SessionData immediately before the RSVP hook
+// runs (chatbot_processor.go:862-865), so nothing carried on the session survives to be read.
+func (a *App) rsvpEventForFlowOrFollowUp(orgID, flowID uuid.UUID) (*models.RSVPEvent, bool) {
+	if event := a.rsvpEventForFlow(orgID, flowID); event != nil {
+		return event, false
+	}
+
+	var campaign models.BulkMessageCampaign
+	if err := a.DB.Where("organization_id = ? AND flow_id = ? AND source_type = ? AND source_id IS NOT NULL",
+		orgID, flowID, models.CampaignSourceRSVPFollowUp).
+		Order("created_at DESC").First(&campaign).Error; err != nil {
+		return nil, false
+	}
+
+	var event models.RSVPEvent
+	if err := a.DB.Where("id = ? AND organization_id = ? AND status = ?",
+		campaign.SourceID, orgID, models.RSVPEventStatusActive).First(&event).Error; err != nil {
+		return nil, false
+	}
+	return &event, true
+}
+```
+
+- [ ] **Step 4: Use it in the chatbot hook, and tag the session**
+
+In `internal/handlers/chatbot_processor.go`, replace the `rsvpEventForFlow` call (~`:869`) and delete
+the bare `isFollowUp, _ := session.SessionData[rsvpFollowUpKey].(bool)` read (~`:876`), passing the
+derived value to `rsvpShouldBlockDuplicate` instead:
+
+```go
+	if event, isFollowUp := a.rsvpEventForFlowOrFollowUp(account.OrganizationID, flow.ID); event != nil {
+		if isFollowUp {
+			// Derived from the follow-up campaign, not carried on the session:
+			// SessionData was reset just above. finalizeRSVPFromSession reads this
+			// to merge rather than replace the guest's existing answers.
+			session.SessionData[rsvpFollowUpKey] = true
+		}
+```
+
+**The session must be persisted with the flag before any later step reads it.** `a.DB.Save(session)`
+already ran at `:866` — BEFORE your assignment. Read what the `_rsvp_event_id` tagging that follows
+does; if it does not save again, add a save. If the flag does not survive to
+`finalizeRSVPFromSession`, the merge degrades into a destructive replace and 271 live records lose
+their answers. **Verify explicitly; do not assume.**
+
+- [ ] **Step 5: Verify the flag survives every step of the flow**
+
+The flag must persist across every step, not just the first. `chatbot_processor.go:1237-1239` saves
+answers incrementally — confirm `SessionData` is carried between steps rather than rebuilt. Write or
+extend a test that runs a MULTI-step follow-up flow and asserts the merge still happens on the final
+step. **This is the highest-risk step in the plan.** Prove it; do not assume.
+
+- [ ] **Step 6: Validate the flow's WhatsApp account (carried from Task 5's review)**
+
+`rsvp_followup_campaign.go` scopes the follow-up flow lookup by `id + organization_id` but not
+`WhatsAppAccount`. `chatbot_processor.go:837` treats `ChatbotFlow.WhatsAppAccount` as a hard gate
+against the account a message arrives on, so a flow on a different account would send fine and then
+silently fail to start. Reject a flow whose `WhatsAppAccount` does not match the event's, at send
+time, with a clear message.
+
+- [ ] **Step 7: Verify and commit**
 
 ```bash
-git add internal/handlers/chatbot_processor.go
-git commit -m "Tag follow-up chatbot sessions
-
-The flag must be set before the duplicate guard and survive every step of
-the flow, or the final step would replace the response instead of merging
-into it."
+go build ./... && go vet ./internal/handlers/... && go test ./internal/handlers/ -run 'TestRSVP|TestChatbot|TestStartFlow' -count=1 -v
 ```
 
----
+Commit with a message explaining that a follow-up tap-through previously resolved to no event and
+the answer was silently discarded.
 
 ## Task 7: Follow-up dialog
 
