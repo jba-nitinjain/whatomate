@@ -92,6 +92,31 @@ func (a *App) rsvpEventForFlow(orgID, flowID uuid.UUID) *models.RSVPEvent {
 	return &event
 }
 
+// rsvpEventForFlowOrFollowUp resolves the active RSVP event a flow belongs to. A flow reaches an
+// event by one of two routes: it is the event's own primary flow, or it is the flow a follow-up
+// campaign for that event hands the guest. isFollowUp reports which route matched, and is the only
+// safe source of that fact: startFlow resets session.SessionData immediately before the RSVP hook
+// runs (chatbot_processor.go:862-865), so nothing carried on the session survives to be read.
+func (a *App) rsvpEventForFlowOrFollowUp(orgID, flowID uuid.UUID) (*models.RSVPEvent, bool) {
+	if event := a.rsvpEventForFlow(orgID, flowID); event != nil {
+		return event, false
+	}
+
+	var campaign models.BulkMessageCampaign
+	if err := a.DB.Where("organization_id = ? AND flow_id = ? AND source_type = ? AND source_id IS NOT NULL",
+		orgID, flowID, models.CampaignSourceRSVPFollowUp).
+		Order("created_at DESC").First(&campaign).Error; err != nil {
+		return nil, false
+	}
+
+	var event models.RSVPEvent
+	if err := a.DB.Where("id = ? AND organization_id = ? AND status = ?",
+		campaign.SourceID, orgID, models.RSVPEventStatusActive).First(&event).Error; err != nil {
+		return nil, false
+	}
+	return &event, true
+}
+
 // seedPendingRSVPResponse creates a pending response row for a contact entering an event.
 // No-op if a row already exists (does not overwrite an answered row).
 func (a *App) seedPendingRSVPResponse(orgID uuid.UUID, event *models.RSVPEvent, contactID uuid.UUID, phone string, sources ...models.RSVPGuestSource) {

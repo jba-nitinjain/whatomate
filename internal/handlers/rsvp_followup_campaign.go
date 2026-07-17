@@ -110,6 +110,19 @@ func rsvpFollowUpFlowIsEventPrimary(event *models.RSVPEvent, flowID uuid.UUID) b
 	return event.FlowID != nil && *event.FlowID == flowID
 }
 
+// rsvpFollowUpFlowWrongAccount reports whether a follow-up flow's WhatsApp
+// account does not match the event's. chatbot_processor.go treats
+// ChatbotFlow.WhatsAppAccount as a hard gate against the account a message
+// arrives on (matchFlowTrigger and startFlow's callers only ever consider a
+// flow for the account the message came in on), so a follow-up flow scoped
+// to a different account would send fine here and then silently fail to
+// start the moment the guest taps through. An empty WhatsAppAccount on the
+// flow (an org-level default) is not restricted to any one account, so it
+// never mismatches.
+func rsvpFollowUpFlowWrongAccount(event *models.RSVPEvent, flow *models.ChatbotFlow) bool {
+	return flow.WhatsAppAccount != "" && flow.WhatsAppAccount != event.WhatsAppAccount
+}
+
 // SendRSVPFollowUp sends a follow-up campaign to the audience an admin
 // configured, asking one extra question of guests who already responded. It
 // mirrors createRSVPReminderCampaign's shape closely, including the lesson of
@@ -180,6 +193,9 @@ func (a *App) SendRSVPFollowUp(r *fastglue.Request) error {
 	// exists for.
 	if rsvpFollowUpFlowIsEventPrimary(event, flow.ID) {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "follow-up cannot use the event's primary RSVP flow", nil, "")
+	}
+	if rsvpFollowUpFlowWrongAccount(event, &flow) {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "follow-up flow must belong to the event's WhatsApp account", nil, "")
 	}
 
 	rows, err := a.loadRSVPFollowUpGuests(orgID, eventID, audience, answerKey)

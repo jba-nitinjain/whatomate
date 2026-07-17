@@ -246,6 +246,23 @@ func TestRSVPFollowUpFlowIsEventPrimary(t *testing.T) {
 	assert.False(t, rsvpFollowUpFlowIsEventPrimary(&models.RSVPEvent{FlowID: nil}, otherFlowID))
 }
 
+// TestRSVPFollowUpFlowWrongAccount pins the rule carried over from Task 5's
+// review: chatbot_processor.go treats ChatbotFlow.WhatsAppAccount as a hard
+// gate against the account a message arrives on, so a follow-up flow scoped
+// to a different account from the event would send fine and then silently
+// fail to start the moment the guest taps through. That must be rejected up
+// front at send time instead.
+func TestRSVPFollowUpFlowWrongAccount(t *testing.T) {
+	event := &models.RSVPEvent{WhatsAppAccount: "primary-account"}
+
+	assert.True(t, rsvpFollowUpFlowWrongAccount(event, &models.ChatbotFlow{WhatsAppAccount: "other-account"}),
+		"a flow scoped to a different account than the event must be rejected")
+	assert.False(t, rsvpFollowUpFlowWrongAccount(event, &models.ChatbotFlow{WhatsAppAccount: "primary-account"}),
+		"a flow scoped to the event's own account must be allowed")
+	assert.False(t, rsvpFollowUpFlowWrongAccount(event, &models.ChatbotFlow{WhatsAppAccount: ""}),
+		"a flow with no account restriction (org-level default) must be allowed on any account")
+}
+
 // TestRSVPFollowUpRowsFilterByResponseID pins the optional response_ids
 // refinement: when supplied, it narrows the audience-loaded roster down to
 // exactly those ids; when empty or unparsable, the roster is untouched.
