@@ -1654,6 +1654,8 @@
     "followUpCount": "{count} guests will be asked",
     "followUpCountShrinks": "Guests drop off this list as they answer, so you can safely send again later.",
     "followUpCountFailed": "Failed to load the audience count",
+    "followUpRecipients": "Recipients",
+    "followUpRecipientsRequired": "Select at least one guest to follow up with",
     "followUpWhatToSend": "What to send",
     "followUpTemplateRequired": "Select a follow-up template",
     "followUpVariablesRequired": "Map every follow-up template variable",

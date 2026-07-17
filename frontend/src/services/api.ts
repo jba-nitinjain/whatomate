@@ -1706,7 +1706,7 @@ export const rsvpService = {
   // above) - there is no separate follow-up upload route.
   followUpPreview: (id: string, audience: string, answerKey?: string) =>
     api.get(`/rsvp-events/${id}/followup/preview`, { params: { audience, answer_key: answerKey || undefined } }),
-  sendFollowUp: (id: string, data: { audience: string; answer_key?: string; flow_id: string; template_id: string; template_params?: Record<string, string>; staging_id?: string; staging_filename?: string }) =>
+  sendFollowUp: (id: string, data: { audience: string; answer_key?: string; flow_id: string; template_id: string; template_params?: Record<string, string>; staging_id?: string; staging_filename?: string; response_ids?: string[] }) =>
     api.post(`/rsvp-events/${id}/followup/send`, data),
   exportUrl: (id: string) => `${api.defaults.baseURL}/rsvp-events/${id}/export`,
 };

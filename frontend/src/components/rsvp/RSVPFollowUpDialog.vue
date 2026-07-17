@@ -6,9 +6,11 @@ import { toast } from 'vue-sonner'
 import { rsvpService, templatesService, chatbotService } from '@/services/api'
 import { getErrorMessage } from '@/lib/api-utils'
 import { responseCollection, responsePayload, templateParameterNames } from './reminder-dialog-utils'
+import { useReminderRecipientSelection } from './reminder-recipient-selection'
+import { filterFollowUpRecipients, followUpRecipientPageCount, isFollowUpRecipient, paginateFollowUpRecipients, type FollowUpRecipient } from './followup-recipient-utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ExternalLink, Loader2, Send, X } from 'lucide-vue-next'
+import { ExternalLink, Loader2, Search, Send, X } from 'lucide-vue-next'
 
 interface Flow { id: string; name: string; whatsapp_account?: string }
 interface SkippedGuest { response_id: string; name: string; phone: string; reason: string }
@@ -49,6 +51,26 @@ const previewError = ref('')
 const eligibleCount = ref(0)
 const skippedGuests = ref<SkippedGuest[]>([])
 
+// The recipient list: unlike RSVPReminderDialog.vue's server-paginated list,
+// the follow-up preview returns every eligible recipient in one response, so
+// search/pagination here filter that in-memory list (followup-recipient-utils.ts).
+const recipients = ref<FollowUpRecipient[]>([])
+const recipientTotal = ref(0)
+const recipientSearch = ref('')
+const recipientPage = ref(1)
+const RECIPIENT_PAGE_LIMIT = 10
+
+const {
+  allSelected: allRecipientsSelected,
+  excludedIds: excludedRecipientIds,
+  includedIds: includedRecipientIds,
+  selectedCount: selectedRecipientCount,
+  selectAll: selectAllRecipients,
+  clearAll: clearAllRecipients,
+  isSelected: isRecipientSelected,
+  toggle: toggleRecipient,
+} = useReminderRecipientSelection(recipientTotal)
+
 const sending = ref(false)
 const createdCampaignId = ref('')
 const createdCampaignName = ref('')
@@ -74,11 +96,16 @@ const mediaMissingReason = computed(() => mediaMissing.value
   ? t('rsvp.reminderMediaRequired', { template: selectedTemplate.value?.name || '', type: selectedTemplateHeaderType.value.toLowerCase() })
   : '')
 
+const filteredRecipients = computed(() => filterFollowUpRecipients(recipients.value, recipientSearch.value))
+const recipientPages = computed(() => followUpRecipientPageCount(filteredRecipients.value.length, RECIPIENT_PAGE_LIMIT))
+const pagedRecipients = computed(() => paginateFollowUpRecipients(filteredRecipients.value, recipientPage.value, RECIPIENT_PAGE_LIMIT))
+
 // Everything that must be true before Send is allowed, in the order a user
-// would fix them working top-to-bottom through the three pickers (who, what
-// to send, what to ask).
+// would fix them working top-to-bottom through the dialog (who, which of
+// them, what to send, what to ask).
 const blockReason = computed(() => {
   if (audience.value === 'missing_answer' && !answerKey.value.trim()) return t('rsvp.followUpAnswerKeyRequired')
+  if (!selectedRecipientCount.value) return t('rsvp.followUpRecipientsRequired')
   if (!templateId.value) return t('rsvp.followUpTemplateRequired')
   if (missingTemplateParams.value.length) return t('rsvp.followUpVariablesRequired')
   if (mediaMissing.value) return mediaMissingReason.value
@@ -98,6 +125,19 @@ function validTemplates(response: any) { return responseCollection<any>(response
 function isFlow(value: unknown): value is Flow { return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string' }
 function isSkippedGuest(value: unknown): value is SkippedGuest { return isRecord(value) && typeof value.response_id === 'string' && typeof value.reason === 'string' }
 function validSkippedGuests(response: any) { return responseCollection<SkippedGuest>(response, 'skipped').filter(isSkippedGuest) }
+function validRecipients(response: any) { return responseCollection<FollowUpRecipient>(response, 'recipients').filter(isFollowUpRecipient) }
+
+// Resets the recipient list's search/pagination and puts selection back to
+// "all selected" - the default that preserves current behaviour for anyone
+// who never touches the list. Called every time a fresh preview list lands
+// (audience change, answer-key edit, or the post-send refresh) so a
+// selection can never survive into a preview it was not made against - the
+// exact staleness Part 1's backend guard exists to catch if it ever did.
+function resetRecipientSelection() {
+  recipientSearch.value = ''
+  recipientPage.value = 1
+  selectAllRecipients()
+}
 
 function loadErrorMessage(error?: unknown) {
   const fallback = t('rsvp.followUpLoadFailed')
@@ -118,6 +158,9 @@ async function loadPreview() {
     eligibleCount.value = 0
     skippedGuests.value = []
     previewError.value = ''
+    recipients.value = []
+    recipientTotal.value = 0
+    resetRecipientSelection()
     return
   }
   const requestId = ++previewRequestId
@@ -129,10 +172,16 @@ async function loadPreview() {
     const data = responsePayload(response)
     eligibleCount.value = typeof data.eligible === 'number' ? data.eligible : 0
     skippedGuests.value = validSkippedGuests(response)
+    recipients.value = validRecipients(response)
+    recipientTotal.value = recipients.value.length
+    resetRecipientSelection()
   } catch (error) {
     if (requestId !== previewRequestId) return
     eligibleCount.value = 0
     skippedGuests.value = []
+    recipients.value = []
+    recipientTotal.value = 0
+    resetRecipientSelection()
     previewError.value = getErrorMessage(error, t('rsvp.followUpCountFailed'))
   } finally {
     if (requestId === previewRequestId) previewLoading.value = false
@@ -144,6 +193,12 @@ function onAnswerKeyInput() {
   if (previewTimer) window.clearTimeout(previewTimer)
   previewTimer = window.setTimeout(loadPreview, 300)
 }
+
+// Filtering the already-loaded recipient list is local (no request in
+// flight to debounce), but the page must still snap back to 1 so a search
+// that narrows the list never leaves the view on a now out-of-range page.
+function onRecipientSearchInput() { recipientPage.value = 1 }
+function setRecipientPage(page: number) { recipientPage.value = page }
 
 async function load() {
   loading.value = true
@@ -261,6 +316,14 @@ function firstFollowUpErrorMessage(data: Record<string, any>): string {
   return typeof data.error_message === 'string' ? data.error_message.trim() : ''
 }
 
+// The ids to send when the selection is a strict subset of the audience.
+// When everything is selected, send() omits response_ids entirely instead
+// (see the comment there) rather than calling this.
+function selectedRecipientIds(): string[] {
+  if (allRecipientsSelected.value) return recipients.value.filter(recipient => !excludedRecipientIds.value.has(recipient.id)).map(recipient => recipient.id)
+  return [...includedRecipientIds.value]
+}
+
 async function send() {
   if (blockReason.value) { toast.error(blockReason.value); return }
   sending.value = true
@@ -268,6 +331,16 @@ async function send() {
     const media = stagedMedia.value
       ? { staging_id: stagedMedia.value.staging_id, staging_filename: stagedMedia.value.filename }
       : {}
+    // Every recipient selected is the same set the server would pick from
+    // audience/answer_key alone, so response_ids is omitted rather than sent
+    // - it stays self-cleaning as guests answer between preview and send,
+    // which is the existing (and still default) behaviour. response_ids is
+    // only sent once the admin has actually narrowed the selection; Part 1's
+    // backend guard (filterRSVPFollowUpRowsByResponseID) rejects an empty or
+    // fully-stale id list rather than silently falling back to "everyone",
+    // so a genuine narrowed selection must never be sent empty here.
+    const isFullSelection = allRecipientsSelected.value && !excludedRecipientIds.value.size
+    const selection = isFullSelection ? {} : { response_ids: selectedRecipientIds() }
     const response = await rsvpService.sendFollowUp(props.eventId, {
       audience: audience.value,
       answer_key: audience.value === 'missing_answer' ? answerKey.value.trim() : undefined,
@@ -275,6 +348,7 @@ async function send() {
       template_id: templateId.value,
       template_params: templateParams.value,
       ...media,
+      ...selection,
     })
     const data = responsePayload(response)
     const sentCount = Number(data.sent) || 0
@@ -359,6 +433,35 @@ async function viewCampaigns() {
           </div>
 
           <div class="space-y-3 rounded-lg border p-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="font-medium">{{ t('rsvp.followUpRecipients') }}</div>
+              <div class="text-sm text-muted-foreground">{{ t('rsvp.recipientSelectionSummary', { selected: selectedRecipientCount, total: recipientTotal }) }}</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <Button variant="outline" size="sm" :disabled="allRecipientsSelected && !excludedRecipientIds.size" @click="selectAllRecipients">{{ t('common.selectAll') }}</Button>
+              <Button variant="outline" size="sm" :disabled="!selectedRecipientCount" @click="clearAllRecipients">{{ t('rsvp.clearAllRecipients') }}</Button>
+            </div>
+            <div class="relative">
+              <Search class="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input v-model="recipientSearch" class="pl-9" :placeholder="t('rsvp.searchResponses')" @input="onRecipientSearchInput" />
+            </div>
+            <div v-if="previewLoading" class="flex justify-center py-5"><Loader2 class="h-5 w-5 animate-spin" /></div>
+            <div v-else-if="!pagedRecipients.length" class="py-4 text-center text-sm text-muted-foreground">{{ t('rsvp.noResponses') }}</div>
+            <div v-else class="max-h-56 divide-y overflow-y-auto rounded-md border">
+              <label v-for="recipient in pagedRecipients" :key="recipient.id" class="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-muted/40">
+                <input type="checkbox" :checked="isRecipientSelected(recipient.id)" @change="toggleRecipient(recipient.id)" />
+                <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">{{ recipient.contact?.profile_name || recipient.phone_number }}</span><span class="block text-xs text-muted-foreground">{{ recipient.phone_number }}</span></span>
+                <span v-if="!isRecipientSelected(recipient.id)" class="text-xs text-muted-foreground">{{ t('common.remove') }}</span>
+              </label>
+            </div>
+            <div v-if="recipientPages > 1" class="flex items-center justify-between text-sm">
+              <Button variant="outline" size="sm" :disabled="recipientPage <= 1" @click="setRecipientPage(recipientPage - 1)">‹</Button>
+              <span class="text-muted-foreground">{{ recipientPage }} / {{ recipientPages }}</span>
+              <Button variant="outline" size="sm" :disabled="recipientPage >= recipientPages" @click="setRecipientPage(recipientPage + 1)">›</Button>
+            </div>
+          </div>
+
+          <div class="space-y-3 rounded-lg border p-4">
             <div class="font-medium">{{ t('rsvp.followUpWhatToSend') }}</div>
             <select v-model="templateId" class="mt-1 w-full rounded border bg-transparent px-2 py-2" @change="onTemplateChange">
               <option value="">{{ t('rsvp.selectTemplate') }}</option>
@@ -401,7 +504,7 @@ async function viewCampaigns() {
 
           <div v-if="blockReason" class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{{ blockReason }}</div>
           <Button class="w-full" :disabled="sendDisabled" @click="send">
-            <Send class="mr-2 h-4 w-4" />{{ t('rsvp.followUpSend', { count: eligibleCount }) }}
+            <Send class="mr-2 h-4 w-4" />{{ t('rsvp.followUpSend', { count: selectedRecipientCount }) }}
           </Button>
 
           <div v-if="createdCampaignId" class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
