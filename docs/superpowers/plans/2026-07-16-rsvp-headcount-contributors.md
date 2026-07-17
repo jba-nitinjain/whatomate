@@ -502,7 +502,8 @@ func TestParseHeadcountValue(t *testing.T) {
 		{"no", 0, true},
 		{"none", 0, true},
 		{"nil", 0, true},
-		{"-1", 0, true},   // clamped, not rejected
+		{"-1", 0, false},   // nonsense: flagged for a human, never silently turned into 1
+		{"-3 kids", 0, false},
 		{"999", 999, true}, // parsed; flagged separately by headcountNeedsReview
 		{"abc", 0, false},
 		{"many", 0, false},
@@ -557,7 +558,9 @@ import (
 // human look. Above it the value is still counted - it is flagged, not rejected.
 const headcountReviewCeiling = 20
 
-var headcountDigitsPattern = regexp.MustCompile(`\d+`)
+// headcountDigitsPattern captures an optional leading sign so a negative answer is
+// recognised as nonsense rather than silently becoming a positive count.
+var headcountDigitsPattern = regexp.MustCompile(`-?\d+`)
 
 // headcountWords maps the number words a guest might type. Kept deliberately small:
 // beyond ten, a typed word is more likely a typo than a real count.
@@ -588,7 +591,9 @@ func parseHeadcountValue(raw string) (int, bool) {
 			return 0, false
 		}
 		if n < 0 {
-			return 0, true
+			// A negative count is nonsense. Flag it for a human rather than
+			// silently inventing a positive count from it.
+			return 0, false
 		}
 		return n, true
 	}
@@ -607,7 +612,14 @@ func headcountNeedsReview(value int) bool {
 }
 ```
 
-Note `"-1"` yields `0, true`: the digits pattern matches `1`, and the sign is not captured — so the clamp is incidental. The test pins the behaviour; leave the simpler code.
+**Correction (2026-07-17):** an earlier draft claimed `"-1"` yields `0, true` because "the digits
+pattern matches `1`, and the sign is not captured". That was self-contradictory: precisely because
+the sign was not captured, `n` was `1`, the `n < 0` clamp was dead code, and the function returned
+`1` — turning "-1" into one child, failing its own test table. Two independent implementers caught
+this and refused to proceed; both were right.
+
+The pattern now captures the sign and a negative answer is reported unparseable (`0, false`) so a
+human sees it flagged. Never silently invent a family, just as we never silently lose one.
 
 - [ ] **Step 4: Run to verify it passes**
 
