@@ -55,6 +55,25 @@ func (a *App) rsvpAlreadyResponded(event *models.RSVPEvent, phone string) bool {
 // rsvpEventIDKey is the SessionData key that ties a chatbot session to an RSVP event.
 const rsvpEventIDKey = "_rsvp_event_id"
 
+// rsvpFollowUpKey marks a session as a follow-up: it tops up an existing response
+// rather than making a new one. The "_" prefix keeps it out of stored answers via
+// the existing filter in finalizeRSVPFromSession.
+const rsvpFollowUpKey = "_rsvp_followup"
+
+// mergeRSVPAnswers overlays incoming answers onto existing ones. Incoming wins per
+// key so a guest can correct themselves; keys absent from incoming survive
+// untouched. Returns a new map - neither input is mutated.
+func mergeRSVPAnswers(existing, incoming models.JSONB) models.JSONB {
+	merged := models.JSONB{}
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for k, v := range incoming {
+		merged[k] = v
+	}
+	return merged
+}
+
 // rsvpEventForFlow returns the active RSVP event linked to a flow, or nil.
 func (a *App) rsvpEventForFlow(orgID, flowID uuid.UUID) *models.RSVPEvent {
 	var event models.RSVPEvent
@@ -167,18 +186,35 @@ func (a *App) finalizeRSVPFromSession(session *models.ChatbotSession) {
 	}
 
 	now := time.Now()
-	updates := map[string]interface{}{
-		"answers":      answers,
-		"attendance":   attendance,
-		"responded_at": now,
+
+	// A follow-up tops up an existing response: it must never recompute
+	// attendance or move responded_at, since the guest answered days ago and
+	// only told us one extra thing now. It also must never create a row -
+	// a follow-up with no existing response is a bug, not a new guest.
+	isFollowUp, _ := session.SessionData[rsvpFollowUpKey].(bool)
+
+	updates := map[string]interface{}{}
+	if isFollowUp {
+		var current models.RSVPResponse
+		if err := a.DB.Where("rsvp_event_id = ? AND contact_id = ?", event.ID, session.ContactID).
+			First(&current).Error; err != nil {
+			a.Log.Warn("RSVP follow-up has no existing response; ignoring",
+				"event_id", event.ID, "contact_id", session.ContactID)
+			return
+		}
+		updates["answers"] = mergeRSVPAnswers(current.Answers, answers)
+	} else {
+		updates["answers"] = answers
+		updates["attendance"] = attendance
+		updates["responded_at"] = now
+		updates["deleted_at"] = nil // revive a soft-deleted row rather than colliding on create
 	}
-	updates["deleted_at"] = nil // revive a soft-deleted row rather than colliding on create
 	// Upsert: update existing (pending or soft-deleted) row, else create. Unscoped
 	// so a previously deleted row for this contact is reused.
 	res := a.DB.Unscoped().Model(&models.RSVPResponse{}).
 		Where("rsvp_event_id = ? AND contact_id = ?", event.ID, session.ContactID).
 		Updates(updates)
-	if res.Error == nil && res.RowsAffected == 0 {
+	if res.Error == nil && res.RowsAffected == 0 && !isFollowUp {
 		_ = a.DB.Create(&models.RSVPResponse{
 			BaseModel:      models.BaseModel{ID: uuid.New()},
 			RSVPEventID:    event.ID,
