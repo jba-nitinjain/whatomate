@@ -215,6 +215,148 @@ func TestLegacyHeadcountContributors(t *testing.T) {
 	}
 }
 
+func TestValidateRSVPHeadcountContributors_Valid(t *testing.T) {
+	// The legacy default pair must always validate: it is what every
+	// unconfigured event silently runs on today.
+	if err := validateRSVPHeadcountContributors(legacyHeadcountContributors("attendance"), "attendance"); err != nil {
+		t.Fatalf("legacy contributors must be valid, got: %v", err)
+	}
+
+	contributors := models.RSVPHeadcountContributors{
+		{Label: "Member", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+		{Label: "Spouse", AnswerKey: "spouse_attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes", "attending"}},
+		{Label: "Children", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric},
+	}
+	if err := validateRSVPHeadcountContributors(contributors, "attendance"); err != nil {
+		t.Fatalf("expected a valid mixed configuration to pass, got: %v", err)
+	}
+
+	// An empty configuration (nothing configured yet) must also be accepted -
+	// the tally handler falls back to the legacy pair at read time.
+	if err := validateRSVPHeadcountContributors(nil, "attendance"); err != nil {
+		t.Fatalf("expected an empty configuration to pass, got: %v", err)
+	}
+}
+
+func TestValidateRSVPHeadcountContributors_EmptyAnswerKey(t *testing.T) {
+	cases := []struct {
+		name string
+		mode models.RSVPHeadcountMode
+	}{
+		{"boolean", models.RSVPHeadcountModeBoolean},
+		{"numeric", models.RSVPHeadcountModeNumeric},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			contributors := models.RSVPHeadcountContributors{
+				{Label: "Bad", Mode: c.mode, MatchValues: []string{"yes"}},
+			}
+			if err := validateRSVPHeadcountContributors(contributors, "attendance"); err == nil {
+				t.Fatalf("expected an error for a %s contributor with no answer_key", c.name)
+			}
+		})
+	}
+
+	// Attendance mode must NOT require an answer_key - it reads the attendance
+	// column, not the answers JSONB.
+	contributors := models.RSVPHeadcountContributors{
+		{Label: "Member", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+	}
+	if err := validateRSVPHeadcountContributors(contributors, "attendance"); err != nil {
+		t.Fatalf("attendance mode must not require an answer_key, got: %v", err)
+	}
+}
+
+func TestValidateRSVPHeadcountContributors_InvalidMode(t *testing.T) {
+	contributors := models.RSVPHeadcountContributors{
+		{Label: "Bad", AnswerKey: "children_count", Mode: "counted", MatchValues: []string{"yes"}},
+	}
+	err := validateRSVPHeadcountContributors(contributors, "attendance")
+	if err == nil {
+		t.Fatal("expected an error for an unrecognised mode")
+	}
+}
+
+func TestValidateRSVPHeadcountContributors_MissingMatchValues(t *testing.T) {
+	cases := []struct {
+		name string
+		c    models.RSVPHeadcountContributor
+	}{
+		{"boolean", models.RSVPHeadcountContributor{Label: "Spouse", AnswerKey: "spouse_attendance", Mode: models.RSVPHeadcountModeBoolean}},
+		{"attendance", models.RSVPHeadcountContributor{Label: "Member", Mode: models.RSVPHeadcountModeAttendance}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := validateRSVPHeadcountContributors(models.RSVPHeadcountContributors{c.c}, "attendance"); err == nil {
+				t.Fatalf("expected an error for a %s contributor with no match_values", c.name)
+			}
+		})
+	}
+
+	// Numeric mode must NOT require match_values - it counts the number given.
+	numeric := models.RSVPHeadcountContributors{
+		{Label: "Children", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric},
+	}
+	if err := validateRSVPHeadcountContributors(numeric, "attendance"); err != nil {
+		t.Fatalf("numeric mode must not require match_values, got: %v", err)
+	}
+}
+
+func TestValidateRSVPHeadcountContributors_DuplicateAnswerKey(t *testing.T) {
+	contributors := models.RSVPHeadcountContributors{
+		{Label: "Children A", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric},
+		{Label: "Children B", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric},
+	}
+	if err := validateRSVPHeadcountContributors(contributors, "attendance"); err == nil {
+		t.Fatal("expected an error for two contributors sharing an answer_key")
+	}
+
+	// Two attendance-mode rows never collide on answer_key, since the key is
+	// unused in that mode.
+	twoAttendance := models.RSVPHeadcountContributors{
+		{Label: "Member", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+		{Label: "Other", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+	}
+	if err := validateRSVPHeadcountContributors(twoAttendance, "attendance"); err != nil {
+		t.Fatalf("two attendance-mode contributors must not collide on answer_key, got: %v", err)
+	}
+}
+
+// TestValidateRSVPHeadcountContributors_DoubleCountsAttendanceField guards the
+// double-counting risk a reviewer flagged: a boolean contributor reusing the
+// event's own attendance_field alongside an attendance-mode contributor would
+// add the same "yes" twice - once via the attendance column, once via the
+// boolean contributor reading that same answer from the answers JSONB.
+func TestValidateRSVPHeadcountContributors_DoubleCountsAttendanceField(t *testing.T) {
+	contributors := models.RSVPHeadcountContributors{
+		{Label: "Member (attendance)", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+		{Label: "Member (boolean, duplicate)", AnswerKey: "attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+	}
+	err := validateRSVPHeadcountContributors(contributors, "attendance")
+	if err == nil {
+		t.Fatal("expected an error when a boolean contributor reuses the attendance field alongside an attendance-mode contributor")
+	}
+
+	// The same boolean contributor without an attendance-mode contributor
+	// present is fine - there is nothing to double-count against.
+	noAttendanceMode := models.RSVPHeadcountContributors{
+		{Label: "Member (boolean only)", AnswerKey: "attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+	}
+	if err := validateRSVPHeadcountContributors(noAttendanceMode, "attendance"); err != nil {
+		t.Fatalf("a boolean contributor on the attendance field is fine without an attendance-mode contributor, got: %v", err)
+	}
+
+	// A boolean contributor on a different key than attendance_field is fine
+	// even alongside an attendance-mode contributor.
+	differentKey := models.RSVPHeadcountContributors{
+		{Label: "Member (attendance)", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+		{Label: "Spouse", AnswerKey: "spouse_attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+	}
+	if err := validateRSVPHeadcountContributors(differentKey, "attendance"); err != nil {
+		t.Fatalf("a boolean contributor on a different key must not be flagged, got: %v", err)
+	}
+}
+
 // TestLegacyHeadcountContributors_MatchesLiveAttendanceColumn is the live-data
 // regression this fix addresses. UpdateRSVPResponse lets an admin PATCH
 // resp.Attendance without touching resp.Answers, and a non-identity

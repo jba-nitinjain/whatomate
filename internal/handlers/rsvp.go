@@ -22,23 +22,24 @@ import (
 // ---------------------------------------------------------------------------
 
 type rsvpEventRequest struct {
-	Name               string       `json:"name"`
-	Description        string       `json:"description"`
-	EventDate          *time.Time   `json:"event_date"`
-	RSVPCloseAt        *time.Time   `json:"rsvp_close_at"`
-	WhatsAppAccount    string       `json:"whatsapp_account"`
-	FlowID             *string      `json:"flow_id"`
-	Keyword            string       `json:"keyword"`
-	AttendanceField    string       `json:"attendance_field"`
-	AttendanceMap      models.JSONB `json:"attendance_map"`
-	SpouseMobileField  string       `json:"spouse_mobile_field"`
-	DuplicateMessage   string       `json:"duplicate_message"`
-	TemplateID         *string      `json:"template_id"`
-	ReminderEnabled    bool         `json:"reminder_enabled"`
-	ReminderAt         *time.Time   `json:"reminder_at"`
-	ReminderTemplateID *string      `json:"reminder_template_id"`
-	AccessMode         *string      `json:"access_mode"`
-	NotInvitedMessage  *string      `json:"not_invited_message"`
+	Name                  string                           `json:"name"`
+	Description           string                           `json:"description"`
+	EventDate             *time.Time                       `json:"event_date"`
+	RSVPCloseAt           *time.Time                       `json:"rsvp_close_at"`
+	WhatsAppAccount       string                           `json:"whatsapp_account"`
+	FlowID                *string                          `json:"flow_id"`
+	Keyword               string                           `json:"keyword"`
+	AttendanceField       string                           `json:"attendance_field"`
+	AttendanceMap         models.JSONB                     `json:"attendance_map"`
+	SpouseMobileField     string                           `json:"spouse_mobile_field"`
+	DuplicateMessage      string                           `json:"duplicate_message"`
+	TemplateID            *string                          `json:"template_id"`
+	ReminderEnabled       bool                             `json:"reminder_enabled"`
+	ReminderAt            *time.Time                       `json:"reminder_at"`
+	ReminderTemplateID    *string                          `json:"reminder_template_id"`
+	AccessMode            *string                          `json:"access_mode"`
+	NotInvitedMessage     *string                          `json:"not_invited_message"`
+	HeadcountContributors models.RSVPHeadcountContributors `json:"headcount_contributors"`
 }
 
 const defaultRSVPNotInvitedMessage = "Sorry, this RSVP is limited to invited guests."
@@ -58,7 +59,7 @@ func parseOptionalUUID(s *string) (*uuid.UUID, bool) {
 	return &id, true
 }
 
-func (a *App) applyRSVPEventRequest(e *models.RSVPEvent, req rsvpEventRequest) bool {
+func (a *App) applyRSVPEventRequest(e *models.RSVPEvent, req rsvpEventRequest) error {
 	e.Name = req.Name
 	e.Description = req.Description
 	e.EventDate = req.EventDate
@@ -80,7 +81,7 @@ func (a *App) applyRSVPEventRequest(e *models.RSVPEvent, req rsvpEventRequest) b
 	if req.AccessMode != nil {
 		mode := models.RSVPAccessMode(strings.TrimSpace(*req.AccessMode))
 		if !validRSVPAccessMode(mode) {
-			return false
+			return fmt.Errorf("invalid access mode")
 		}
 		e.AccessMode = mode
 	}
@@ -90,19 +91,30 @@ func (a *App) applyRSVPEventRequest(e *models.RSVPEvent, req rsvpEventRequest) b
 	if fid, ok := parseOptionalUUID(req.FlowID); ok {
 		e.FlowID = fid
 	} else {
-		return false
+		return fmt.Errorf("invalid flow ID")
 	}
 	if tid, ok := parseOptionalUUID(req.TemplateID); ok {
 		e.TemplateID = tid
 	} else {
-		return false
+		return fmt.Errorf("invalid template ID")
 	}
 	if rid, ok := parseOptionalUUID(req.ReminderTemplateID); ok {
 		e.ReminderTemplateID = rid
 	} else {
-		return false
+		return fmt.Errorf("invalid reminder template ID")
 	}
-	return true
+	// Headcount contributors: only touched when the request explicitly sends the
+	// field (nil means "leave whatever is already saved alone"), same as
+	// AttendanceMap above. Validated against the event's own (possibly
+	// just-updated) AttendanceField so the double-counting check below sees the
+	// value that is about to be saved, not the stale one on disk.
+	if req.HeadcountContributors != nil {
+		if err := validateRSVPHeadcountContributors(req.HeadcountContributors, e.AttendanceField); err != nil {
+			return err
+		}
+		e.HeadcountContributors = req.HeadcountContributors
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -162,8 +174,8 @@ func (a *App) CreateRSVPEvent(r *fastglue.Request) error {
 		AccessMode:        models.RSVPAccessModeGuestList,
 		NotInvitedMessage: defaultRSVPNotInvitedMessage,
 	}
-	if !a.applyRSVPEventRequest(&event, req) {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid RSVP field", nil, "")
+	if err := a.applyRSVPEventRequest(&event, req); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 	if err := a.DB.Create(&event).Error; err != nil {
 		a.Log.Error("Failed to create rsvp event", "error", err)
@@ -205,8 +217,8 @@ func (a *App) UpdateRSVPEvent(r *fastglue.Request) error {
 	if err := a.decodeRequest(r, &req); err != nil {
 		return nil
 	}
-	if !a.applyRSVPEventRequest(event, req) {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid RSVP field", nil, "")
+	if err := a.applyRSVPEventRequest(event, req); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
 	}
 	if event.Status == models.RSVPEventStatusActive {
 		if verr := a.validateUniqueActiveKeyword(orgID, event.Keyword, event.ID); verr != nil {

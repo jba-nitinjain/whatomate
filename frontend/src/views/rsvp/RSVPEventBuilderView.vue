@@ -9,7 +9,14 @@ import { PageHeader } from '@/components/shared'
 import { toast } from 'vue-sonner'
 import { getErrorMessage } from '@/lib/api-utils'
 import { rsvpService, accountsService, chatbotService, templatesService } from '@/services/api'
-import { CalendarCheck, RefreshCw, Sparkles, HelpCircle } from 'lucide-vue-next'
+import { CalendarCheck, RefreshCw, Sparkles, HelpCircle, Plus, X, ArrowUp, ArrowDown } from 'lucide-vue-next'
+import {
+  type HeadcountContributorRow,
+  contributorsToRows,
+  contributorRowsToPayload,
+  legacyHeadcountContributorRows,
+  nextContributorRowKey,
+} from './headcountContributors'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -23,6 +30,12 @@ const form = ref<any>({
   spouse_mobile_field: '', duplicate_message: '', access_mode: 'guest_list',
   not_invited_message: 'Sorry, this RSVP is limited to invited guests.'
 })
+// A brand-new event has nothing configured yet, so this starts prefilled with
+// the same member + spouse pair the tally handler falls back to - saving the
+// form as-is is then a no-op, not a behaviour change. Kept as its own typed
+// ref (rather than a field on the loosely-typed `form`) so row index/key
+// handling stays type-checked.
+const headcountContributors = ref<HeadcountContributorRow[]>(legacyHeadcountContributorRows())
 const status = ref('draft')
 const saving = ref(false)
 const creatingFlow = ref(false)
@@ -71,7 +84,30 @@ async function load() {
     access_mode: e.access_mode || 'open_keyword',
     not_invited_message: e.not_invited_message || 'Sorry, this RSVP is limited to invited guests.'
   }
+  // Nothing configured on this (possibly pre-existing) event is presented as
+  // the same legacy pair the tally already falls back to, so opening this
+  // page and clicking Save changes nothing about how the event is tallied.
+  headcountContributors.value = e.headcount_contributors && e.headcount_contributors.length
+    ? contributorsToRows(e.headcount_contributors)
+    : legacyHeadcountContributorRows()
   status.value = e.status || 'draft'
+}
+
+function addContributorRow() {
+  headcountContributors.value.push({
+    _key: nextContributorRowKey(),
+    label: '', answer_key: '', mode: 'boolean', match_values_text: ''
+  })
+}
+function removeContributorRow(index: number) {
+  headcountContributors.value.splice(index, 1)
+}
+function moveContributorRow(index: number, delta: number) {
+  const rows = headcountContributors.value
+  const target = index + delta
+  if (target < 0 || target >= rows.length) return
+  const [row] = rows.splice(index, 1)
+  rows.splice(target, 0, row)
 }
 
 onMounted(async () => {
@@ -96,7 +132,8 @@ function payload() {
     spouse_mobile_field: f.spouse_mobile_field || '',
     duplicate_message: f.duplicate_message || '',
     access_mode: f.access_mode,
-    not_invited_message: f.not_invited_message || ''
+    not_invited_message: f.not_invited_message || '',
+    headcount_contributors: contributorRowsToPayload(headcountContributors.value)
   }
 }
 
@@ -257,6 +294,65 @@ const templateExampleBody = "You're invited to {{1}}! Tap below to RSVP."
               <label class="block"><span class="text-sm">{{ t('rsvp.duplicateMessage') }}</span>
                 <textarea v-model="form.duplicate_message" :class="inputClass" :placeholder="t('rsvp.duplicateMessagePlaceholder')"></textarea>
                 <span class="text-xs text-muted-foreground">{{ t('rsvp.duplicateMessageHint') }}</span></label>
+
+              <!-- Headcount contributors -->
+              <div>
+                <div class="flex items-center justify-between">
+                  <span class="text-sm">{{ t('rsvp.headcountContributors') }}</span>
+                  <button type="button" class="text-xs text-primary hover:underline" @click="addContributorRow">
+                    <Plus class="inline h-3 w-3 mr-1" />{{ t('rsvp.headcountContributorAdd') }}
+                  </button>
+                </div>
+                <p class="text-xs text-muted-foreground mt-1 mb-2">{{ t('rsvp.headcountContributorsHint') }}</p>
+
+                <div v-if="!headcountContributors.length" class="text-xs text-muted-foreground italic">
+                  {{ t('rsvp.headcountContributorEmpty') }}
+                </div>
+
+                <div v-else class="space-y-2">
+                  <div class="hidden sm:grid grid-cols-12 gap-2 text-xs text-muted-foreground px-1">
+                    <span class="col-span-3">{{ t('rsvp.headcountContributorLabel') }}</span>
+                    <span class="col-span-3">{{ t('rsvp.headcountContributorAnswerKey') }}</span>
+                    <span class="col-span-2">{{ t('rsvp.headcountContributorMode') }}</span>
+                    <span class="col-span-3">{{ t('rsvp.headcountContributorMatchValues') }}</span>
+                    <span class="col-span-1"></span>
+                  </div>
+
+                  <div v-for="(row, idx) in headcountContributors" :key="row._key"
+                       class="grid grid-cols-12 gap-2 items-center rounded-lg border p-2">
+                    <input v-model="row.label" :class="[inputClass, 'col-span-12 sm:col-span-3']"
+                           :placeholder="t('rsvp.headcountContributorLabel')" />
+                    <input v-model="row.answer_key" :disabled="row.mode === 'attendance'"
+                           :class="[inputClass, 'col-span-12 sm:col-span-3', row.mode === 'attendance' ? 'opacity-50' : '']"
+                           :placeholder="t('rsvp.headcountContributorAnswerKeyPlaceholder')" />
+                    <select v-model="row.mode" :class="[inputClass, 'col-span-6 sm:col-span-2']">
+                      <option value="boolean">{{ t('rsvp.headcountContributorModeBoolean') }}</option>
+                      <option value="numeric">{{ t('rsvp.headcountContributorModeNumeric') }}</option>
+                      <option value="attendance">{{ t('rsvp.headcountContributorModeAttendance') }}</option>
+                    </select>
+                    <input v-model="row.match_values_text" v-if="row.mode !== 'numeric'"
+                           :class="[inputClass, 'col-span-6 sm:col-span-3']"
+                           :placeholder="t('rsvp.headcountContributorMatchValuesPlaceholder')" />
+                    <span v-else class="col-span-6 sm:col-span-3"></span>
+                    <div class="col-span-12 sm:col-span-1 flex items-center justify-end gap-1">
+                      <button type="button" class="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                              :disabled="idx === 0" :title="t('rsvp.headcountContributorMoveUp')"
+                              @click="moveContributorRow(idx, -1)">
+                        <ArrowUp class="h-3.5 w-3.5" />
+                      </button>
+                      <button type="button" class="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                              :disabled="idx === headcountContributors.length - 1" :title="t('rsvp.headcountContributorMoveDown')"
+                              @click="moveContributorRow(idx, 1)">
+                        <ArrowDown class="h-3.5 w-3.5" />
+                      </button>
+                      <button type="button" class="text-muted-foreground hover:text-red-500" :title="t('rsvp.headcountContributorRemove')"
+                              @click="removeContributorRow(idx)">
+                        <X class="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
               <div class="grid grid-cols-2 gap-4">
                 <label class="block"><span class="text-sm">{{ t('rsvp.eventDate') }}</span>

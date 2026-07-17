@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -206,4 +207,73 @@ func legacyHeadcountContributors(attendanceField string) models.RSVPHeadcountCon
 			MatchValues: []string{"yes", "attending"},
 		},
 	}
+}
+
+// contributorLabel picks the best available name for a contributor to show in a
+// validation error, since a half-filled-in row in the editor may not have a
+// label yet.
+func contributorLabel(c models.RSVPHeadcountContributor) string {
+	if label := strings.TrimSpace(c.Label); label != "" {
+		return label
+	}
+	if key := strings.TrimSpace(c.AnswerKey); key != "" {
+		return key
+	}
+	return "(unnamed contributor)"
+}
+
+// validateRSVPHeadcountContributors rejects a headcount contributor configuration
+// that either can't be evaluated (missing question key, unrecognised mode, no
+// "yes" values to match) or would silently double-count a guest: a boolean
+// contributor reading the same answer key as the event's own attendance field,
+// while an attendance-mode contributor is also configured, would add that same
+// "yes" a second time on top of the attendance-mode contributor that already
+// reads it from the response's attendance column.
+func validateRSVPHeadcountContributors(contributors models.RSVPHeadcountContributors, attendanceField string) error {
+	hasAttendanceMode := false
+	for _, c := range contributors {
+		if c.Mode == models.RSVPHeadcountModeAttendance {
+			hasAttendanceMode = true
+			break
+		}
+	}
+
+	seenKeys := map[string]bool{}
+	attendanceField = strings.TrimSpace(attendanceField)
+
+	for _, c := range contributors {
+		label := contributorLabel(c)
+
+		switch c.Mode {
+		case models.RSVPHeadcountModeBoolean, models.RSVPHeadcountModeNumeric, models.RSVPHeadcountModeAttendance:
+			// recognised
+		default:
+			return fmt.Errorf("headcount contributor %q has an unrecognised \"counts as\" value %q; it must be boolean, numeric, or attendance", label, c.Mode)
+		}
+
+		key := strings.TrimSpace(c.AnswerKey)
+		if c.Mode != models.RSVPHeadcountModeAttendance && key == "" {
+			return fmt.Errorf("headcount contributor %q needs a question key", label)
+		}
+
+		if (c.Mode == models.RSVPHeadcountModeBoolean || c.Mode == models.RSVPHeadcountModeAttendance) && len(c.MatchValues) == 0 {
+			return fmt.Errorf("headcount contributor %q needs at least one value that counts as yes", label)
+		}
+
+		if c.Mode != models.RSVPHeadcountModeAttendance {
+			if seenKeys[key] {
+				return fmt.Errorf("headcount contributor %q reuses question key %q, which is already used by another contributor", label, key)
+			}
+			seenKeys[key] = true
+		}
+
+		if c.Mode == models.RSVPHeadcountModeBoolean && hasAttendanceMode &&
+			attendanceField != "" && key == attendanceField {
+			return fmt.Errorf(
+				"headcount contributor %q reads the same question key (%q) as the event's attendance field, and an attendance-based contributor is also configured; this would count the same person's attendance twice",
+				label, attendanceField,
+			)
+		}
+	}
+	return nil
 }
