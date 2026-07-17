@@ -1701,6 +1701,13 @@ export const rsvpService = {
     api.post(`/rsvp-events/${id}/reminders`, data),
   cancelReminder: (id: string, scheduleId: string) =>
     api.delete(`/rsvp-events/${id}/reminders/${scheduleId}`),
+  // Follow-ups reach guests who already responded, to ask one extra
+  // question. Media re-uses the reminder staging endpoint (uploadReminderMedia
+  // above) - there is no separate follow-up upload route.
+  followUpPreview: (id: string, audience: string, answerKey?: string) =>
+    api.get(`/rsvp-events/${id}/followup/preview`, { params: { audience, answer_key: answerKey || undefined } }),
+  sendFollowUp: (id: string, data: { audience: string; answer_key?: string; flow_id: string; template_id: string; template_params?: Record<string, string>; staging_id?: string; staging_filename?: string }) =>
+    api.post(`/rsvp-events/${id}/followup/send`, data),
   exportUrl: (id: string) => `${api.defaults.baseURL}/rsvp-events/${id}/export`,
 };
 
