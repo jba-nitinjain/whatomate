@@ -64,3 +64,47 @@ func buildRSVPAttendanceBreakdown(responses []models.RSVPResponse, spouseMobileF
 	}
 	return result
 }
+
+// rsvpContributorTally is one configured contributor's totals across all responses.
+type rsvpContributorTally struct {
+	Label       string `json:"label"`
+	AnswerKey   string `json:"answer_key"`
+	Mode        string `json:"mode"`
+	People      int    `json:"people"`
+	Responses   int    `json:"responses"`
+	NeedsReview int    `json:"needs_review"`
+	Unparseable int    `json:"unparseable"`
+}
+
+// buildRSVPHeadcount tallies every configured contributor and sums the grand total.
+// This replaces the hardcoded spouse_attendance logic: children, drivers or anything
+// else are rows in the event's configuration, not branches in this function.
+func buildRSVPHeadcount(responses []models.RSVPResponse, contributors models.RSVPHeadcountContributors) ([]rsvpContributorTally, int) {
+	tallies := make([]rsvpContributorTally, 0, len(contributors))
+	total := 0
+
+	for _, contributor := range contributors {
+		tally := rsvpContributorTally{
+			Label:     contributor.Label,
+			AnswerKey: contributor.AnswerKey,
+			Mode:      string(contributor.Mode),
+		}
+		for _, response := range responses {
+			got := evaluateHeadcountContributor(contributor, response.Answers, response.Attendance)
+			tally.People += got.People
+			if got.Matched {
+				tally.Responses++
+			}
+			if got.NeedsReview {
+				tally.NeedsReview++
+			}
+			if got.Unparseable {
+				tally.Unparseable++
+			}
+		}
+		total += tally.People
+		tallies = append(tallies, tally)
+	}
+
+	return tallies, total
+}
