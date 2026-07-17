@@ -81,53 +81,108 @@ The column **keys** differ (`answers.spouse_attendance` vs `answers.spouse_atten
 
 This task is standalone and shippable on its own.
 
+**Correction (2026-07-17):** the original draft specified a Playwright e2e test requiring a running
+app and a seeded `RSVP_EVENT_ID` — unrunnable here and in CI. The repo now has vitest
+(`frontend/vitest.config.ts`, `npm run test:unit`, wired into CI), so test the logic directly. To
+make it testable, **extract the key-selection into a pure exported function** rather than testing a
+component internal.
+
 **Files:**
-- Modify: `frontend/src/views/rsvp/RSVPResultsView.vue:109-117`
-- Test: `frontend/e2e/tests/rsvp-results-columns.spec.ts` (create)
+- Create: `frontend/src/views/rsvp/answerColumns.ts`
+- Modify: `frontend/src/views/rsvp/RSVPResultsView.vue:109-117` (use the extracted function)
+- Test: `frontend/src/views/rsvp/answerColumns.spec.ts` (create)
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: nothing (Vue-internal).
+- Produces: `export function visibleAnswerKeys(rows: Array<{ answers?: Record<string, unknown> }>): string[]`
+  — first-seen order, `_`-prefixed keys excluded, and any raw key dropped when its `<key>_title`
+  companion is present. Task 9 also touches this file's labelling.
 
-- [ ] **Step 1: Write the failing e2e test**
+- [ ] **Step 1: Write the failing test**
 
-Create `frontend/e2e/tests/rsvp-results-columns.spec.ts`. Follow the existing conventions in `frontend/e2e/tests/` — read a neighbouring spec and copy its auth/setup helper usage rather than inventing one.
+Create `frontend/src/views/rsvp/answerColumns.spec.ts`:
 
 ```ts
-import { test, expect } from '@playwright/test'
+import { describe, it, expect } from 'vitest'
+import { visibleAnswerKeys } from './answerColumns'
 
-test('results grid shows each answer question exactly once', async ({ page }) => {
-  await page.goto(`/rsvp/${process.env.RSVP_EVENT_ID}/results`)
+describe('visibleAnswerKeys', () => {
+  it('drops the raw key when its _title companion exists', () => {
+    // The chatbot writes both spouse_attendance ("yes") and
+    // spouse_attendance_title ("Attending"); both became columns, both labelled
+    // "Spouse Attendance", with different values.
+    const rows = [{ answers: {
+      attendance: 'yes',
+      attendance_title: 'Attending',
+      spouse_attendance: 'yes',
+      spouse_attendance_title: 'Attending',
+      spouse_mobile: '919840026019',
+    } }]
 
-  const headers = await page.locator('table thead th').allInnerTexts()
-  const meaningful = headers.map(h => h.trim()).filter(Boolean)
-  const duplicates = meaningful.filter((h, i) => meaningful.indexOf(h) !== i)
+    expect(visibleAnswerKeys(rows)).toEqual([
+      'attendance_title',
+      'spouse_attendance_title',
+      'spouse_mobile',
+    ])
+  })
 
-  expect(duplicates, `duplicate column headers: ${duplicates.join(', ')}`).toEqual([])
+  it('keeps a raw key that has no _title companion', () => {
+    const rows = [{ answers: { children_count: '2' } }]
+    expect(visibleAnswerKeys(rows)).toEqual(['children_count'])
+  })
+
+  it('excludes internal underscore-prefixed keys', () => {
+    const rows = [{ answers: { _rsvp_event_id: 'abc', children_count: '2' } }]
+    expect(visibleAnswerKeys(rows)).toEqual(['children_count'])
+  })
+
+  it('unions keys across rows in first-seen order', () => {
+    const rows = [
+      { answers: { attendance_title: 'Attending' } },
+      { answers: { children_count: '1' } },
+      { answers: { attendance_title: 'Attending', spouse_mobile: '91' } },
+    ]
+    expect(visibleAnswerKeys(rows)).toEqual([
+      'attendance_title',
+      'children_count',
+      'spouse_mobile',
+    ])
+  })
+
+  it('tolerates missing or empty answers', () => {
+    expect(visibleAnswerKeys([])).toEqual([])
+    expect(visibleAnswerKeys([{}])).toEqual([])
+    expect(visibleAnswerKeys([{ answers: {} }])).toEqual([])
+  })
 })
 ```
 
 - [ ] **Step 2: Run to verify it fails**
 
 ```bash
-cd frontend && BASE_URL=<dev-url> RSVP_EVENT_ID=<event-id> npx playwright test rsvp-results-columns --project=chromium
+cd frontend && npm run test:unit
 ```
 
-Expected: FAIL — `duplicate column headers: Spouse Attendance`.
+Expected: FAIL — `Cannot find module './answerColumns'`.
 
-- [ ] **Step 3: Drop the raw key when a `_title` companion exists**
+- [ ] **Step 3: Extract the function, drop the raw key when a `_title` companion exists**
 
-In `RSVPResultsView.vue`, replace the `answerKeys` computed at `:109-117`:
+Create `frontend/src/views/rsvp/answerColumns.ts`:
 
 ```ts
-// Union of answer keys across all responses (first-seen order), one column each.
-// The chatbot writes both `<key>` (raw value, e.g. "yes") and `<key>_title`
-// (display value, e.g. "Attending"). Showing both produced two columns with the
-// same label and different values, so the raw key is dropped wherever its
-// _title companion is present.
-const answerKeys = computed<string[]>(() => {
+/**
+ * Union of answer keys across responses, in first-seen order — one column each.
+ *
+ * The chatbot writes both `<key>` (raw value, e.g. "yes") and `<key>_title`
+ * (display value, e.g. "Attending"). Rendering both produced two columns with
+ * the same label and different values, so the raw key is dropped wherever its
+ * _title companion is present.
+ */
+export function visibleAnswerKeys(
+  rows: Array<{ answers?: Record<string, unknown> }>,
+): string[] {
   const seen: string[] = []
-  for (const row of responses.value) {
+  for (const row of rows) {
     for (const k of Object.keys(row.answers || {})) {
       if (!k.startsWith('_') && !seen.includes(k)) seen.push(k)
     }
@@ -136,16 +191,26 @@ const answerKeys = computed<string[]>(() => {
     seen.filter(k => k.endsWith('_title')).map(k => k.slice(0, -'_title'.length)),
   )
   return seen.filter(k => !titled.has(k))
-})
+}
 ```
+
+Then in `RSVPResultsView.vue`, replace the `answerKeys` computed at `:109-117` with a call to it:
+
+```ts
+const answerKeys = computed<string[]>(() => visibleAnswerKeys(responses.value))
+```
+
+Add the import alongside the file's existing imports. Do not change `columns` (`:125-139`) — it maps
+over `answerKeys` and keeps working unchanged.
 
 - [ ] **Step 4: Run to verify it passes**
 
 ```bash
-cd frontend && BASE_URL=<dev-url> RSVP_EVENT_ID=<event-id> npx playwright test rsvp-results-columns --project=chromium
+cd frontend && npm run test:unit && npm run typecheck
 ```
 
-Expected: PASS. Grid becomes `Status | Member Attendance | Spouse Attendance | Spouse Mobile`.
+Expected: PASS. The grid becomes `Status | Member Attendance | Spouse Attendance | Spouse Mobile` —
+verify by eye on a dev instance if one is available, but the test is the gate.
 
 - [ ] **Step 5: Confirm export is unaffected**
 
@@ -154,8 +219,8 @@ Click **Export** on the results page. The export is built server-side (`ExportRS
 - [ ] **Step 6: Typecheck, lint, commit**
 
 ```bash
-cd frontend && npm run typecheck && npm run lint
-cd .. && git add frontend/src/views/rsvp/RSVPResultsView.vue frontend/e2e/tests/rsvp-results-columns.spec.ts
+cd frontend && npm run typecheck && npm run lint && npm run test:unit
+cd .. && git add frontend/src/views/rsvp/RSVPResultsView.vue frontend/src/views/rsvp/answerColumns.ts frontend/src/views/rsvp/answerColumns.spec.ts
 git commit -m "Show each RSVP answer question once in the results grid
 
 The chatbot writes both <key> and <key>_title into answers, and both
@@ -654,9 +719,6 @@ func TestEvaluateHeadcountContributorNumeric(t *testing.T) {
 	if got.People != 0 || got.Unparseable {
 		t.Fatalf("absent answer is 0 and not a parse failure, got %+v", got)
 	}
-}
-
-func TestEvaluateHeadcountContributorIgnoresNonAttendingMember() {
 }
 
 func TestLegacyHeadcountContributors(t *testing.T) {
