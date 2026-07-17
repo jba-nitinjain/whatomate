@@ -1,6 +1,9 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,6 +65,58 @@ const (
 	RSVPReminderDeliverySkipped   RSVPReminderDeliveryStatus = "skipped"
 )
 
+// RSVPHeadcountMode selects how a contributor's answer becomes a number of people.
+type RSVPHeadcountMode string
+
+const (
+	// RSVPHeadcountModeBoolean counts 1 when the answer matches MatchValues.
+	RSVPHeadcountModeBoolean RSVPHeadcountMode = "boolean"
+	// RSVPHeadcountModeNumeric counts the number the guest gave.
+	RSVPHeadcountModeNumeric RSVPHeadcountMode = "numeric"
+)
+
+// RSVPHeadcountContributor declares that one answer key contributes people to the
+// event headcount. This replaces the hardcoded spouse_attendance tally: children,
+// drivers, or anything else is configuration, not code.
+type RSVPHeadcountContributor struct {
+	Label       string            `json:"label"`
+	AnswerKey   string            `json:"answer_key"`
+	Mode        RSVPHeadcountMode `json:"mode"`
+	MatchValues []string          `json:"match_values,omitempty"`
+}
+
+// RSVPHeadcountContributors is an ordered list stored as jsonb. models.JSONB is a
+// map type and cannot hold an array, so this carries its own Scanner/Valuer.
+type RSVPHeadcountContributors []RSVPHeadcountContributor
+
+func (c RSVPHeadcountContributors) Value() (driver.Value, error) {
+	if c == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(c)
+}
+
+func (c *RSVPHeadcountContributors) Scan(value interface{}) error {
+	if value == nil {
+		*c = RSVPHeadcountContributors{}
+		return nil
+	}
+	var data []byte
+	switch v := value.(type) {
+	case []byte:
+		data = v
+	case string:
+		data = []byte(v)
+	default:
+		return fmt.Errorf("cannot scan %T into RSVPHeadcountContributors", value)
+	}
+	if len(data) == 0 {
+		*c = RSVPHeadcountContributors{}
+		return nil
+	}
+	return json.Unmarshal(data, c)
+}
+
 // RSVPEvent is an org-scoped RSVP that links a chatbot flow to tallied responses.
 type RSVPEvent struct {
 	BaseModel
@@ -93,6 +148,11 @@ type RSVPEvent struct {
 	// recorded spouse) is turned away with DuplicateMessage instead of re-asked.
 	SpouseMobileField string `gorm:"size:100" json:"spouse_mobile_field"`
 	DuplicateMessage  string `gorm:"type:text" json:"duplicate_message"`
+
+	// Headcount contributors: which answers add people to the event headcount and
+	// how. Empty means legacy behaviour (member + spouse), so events created before
+	// this existed keep working untouched.
+	HeadcountContributors RSVPHeadcountContributors `gorm:"type:jsonb;default:'[]'" json:"headcount_contributors"`
 
 	// Invite template (optional, for campaign/keyword invite send).
 	TemplateID *uuid.UUID `gorm:"type:uuid" json:"template_id,omitempty"`
