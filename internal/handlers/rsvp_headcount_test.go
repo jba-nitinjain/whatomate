@@ -266,6 +266,36 @@ func TestDeriveSpouseAttendanceKey(t *testing.T) {
 	}
 }
 
+// TestDeriveSpouseAttendanceKey_PlusOneAboveSpouseDoesNotStealTheKey guards the
+// positional-picking bug a reviewer flagged: the old rule took the FIRST
+// boolean contributor whose key isn't the attendance field, with no regard for
+// which one is actually the spouse question. An admin adding a "Plus one"
+// boolean row ABOVE the existing Spouse row - exactly what live-event admins
+// do when adding a new headcount category - silently re-pointed both the
+// Spouse card (buildRSVPAttendanceBreakdown) and the guest list's
+// spouse_status filter at plus_one instead. This test fails without the fix:
+// reverting to the plain first-boolean scan returns "plus_one" here instead
+// of "spouse_attendance".
+func TestDeriveSpouseAttendanceKey_PlusOneAboveSpouseDoesNotStealTheKey(t *testing.T) {
+	contributors := models.RSVPHeadcountContributors{
+		{Label: "Plus one", AnswerKey: "plus_one", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+		{Label: "Spouse attendance", AnswerKey: "spouse_attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes", "attending"}},
+	}
+	if got := deriveSpouseAttendanceKey(contributors, "attendance"); got != "spouse_attendance" {
+		t.Fatalf("a boolean row added above Spouse must not steal the spouse key, got %q", got)
+	}
+
+	// Order reversed: the conventional key still wins regardless of position,
+	// not merely by accident of already being first.
+	reversed := models.RSVPHeadcountContributors{
+		{Label: "Spouse attendance", AnswerKey: "spouse_attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes", "attending"}},
+		{Label: "Plus one", AnswerKey: "plus_one", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+	}
+	if got := deriveSpouseAttendanceKey(reversed, "attendance"); got != "spouse_attendance" {
+		t.Fatalf("the conventional spouse key must win regardless of list order, got %q", got)
+	}
+}
+
 func TestValidateRSVPHeadcountContributors_Valid(t *testing.T) {
 	// The legacy default pair must always validate: it is what every
 	// unconfigured event silently runs on today.
@@ -363,13 +393,45 @@ func TestValidateRSVPHeadcountContributors_DuplicateAnswerKey(t *testing.T) {
 	}
 
 	// Two attendance-mode rows never collide on answer_key, since the key is
-	// unused in that mode.
+	// unused in that mode - but they are still rejected, by the separate
+	// attendance-mode-count rule covered in
+	// TestValidateRSVPHeadcountContributors_TwoAttendanceModeRowsRejected.
 	twoAttendance := models.RSVPHeadcountContributors{
 		{Label: "Member", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
 		{Label: "Other", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
 	}
-	if err := validateRSVPHeadcountContributors(twoAttendance, "attendance"); err != nil {
-		t.Fatalf("two attendance-mode contributors must not collide on answer_key, got: %v", err)
+	if err := validateRSVPHeadcountContributors(twoAttendance, "attendance"); err == nil {
+		t.Fatal("expected an error for two attendance-mode contributors, even though they don't share an answer_key")
+	}
+}
+
+// TestValidateRSVPHeadcountContributors_TwoAttendanceModeRowsRejected guards
+// the double-count guard gap a reviewer flagged: seenKeys only tracks
+// AnswerKey collisions, but attendance-mode contributors have no AnswerKey at
+// all (they read the response's own Attendance column instead), so two of
+// them sailed through validation undetected. Both would then match "yes" for
+// every attending guest, silently doubling total_attending. This test fails
+// without the fix: reverting the attendance-mode-count check makes
+// validateRSVPHeadcountContributors return nil here.
+func TestValidateRSVPHeadcountContributors_TwoAttendanceModeRowsRejected(t *testing.T) {
+	contributors := models.RSVPHeadcountContributors{
+		{Label: "Member attendance", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+		{Label: "Attending (duplicate)", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+	}
+	err := validateRSVPHeadcountContributors(contributors, "attendance")
+	if err == nil {
+		t.Fatal("expected an error for two attendance-mode contributors")
+	}
+
+	// Exactly one attendance-mode contributor, alongside other modes, remains
+	// valid - this is the normal legacy-plus-children shape.
+	oneAttendance := models.RSVPHeadcountContributors{
+		{Label: "Member attendance", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+		{Label: "Spouse", AnswerKey: "spouse_attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+		{Label: "Children", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric},
+	}
+	if err := validateRSVPHeadcountContributors(oneAttendance, "attendance"); err != nil {
+		t.Fatalf("exactly one attendance-mode contributor must remain valid, got: %v", err)
 	}
 }
 

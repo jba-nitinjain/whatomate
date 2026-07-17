@@ -23,6 +23,7 @@ import { formatDateTimeIST } from '@/lib/utils'
 import { BarChart3, Bell, Download, Mail, Pencil, Trash2, Send, DownloadCloud, Users } from 'lucide-vue-next'
 import { visibleAnswerKeys } from './answerColumns'
 import { contributorFlagCount, type RSVPContributor } from './contributorFlags'
+import { resolveAnswerColumnLabel, resolveContributorCardLabel } from './answerLabels'
 
 interface RSVPRow { id: string; contact_id: string; phone_number: string; attendance: string; source: string; journey_status: string; invite_sent_at?: string; reminder_count: number; last_reminder_at?: string; rsvp_started_at?: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; reprompted_at?: string; contact?: { profile_name?: string } }
 interface AttendanceCounts { attending: number; not_attending: number; maybe: number; pending: number }
@@ -117,12 +118,16 @@ const answerKeys = computed<string[]>(() => visibleAnswerKeys(responses.value))
 // warning.
 const contributors = computed<RSVPContributor[]>(() => tally.value.contributors)
 
+// See answerLabels.ts for the translation-precedence rules these delegate to
+// (built-in member/spouse columns always translated; a contributor's own
+// label is the correct, untranslated display only for a user-authored row).
 function prettyKey(k: string): string {
   const base = k.endsWith('_title') ? k.slice(0, -'_title'.length) : k
-  const contributor = contributors.value.find(c => c.answer_key === base)
-  if (contributor?.label) return contributor.label
-  if (base === attendanceField.value) return t('rsvp.memberAttendance')
-  return base.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+  return resolveAnswerColumnLabel(base, attendanceField.value, contributors.value, t)
+}
+
+function contributorDisplayLabel(c: RSVPContributor): string {
+  return resolveContributorCardLabel(c, t)
 }
 
 const columns = computed<Column<RSVPRow>[]>(() => [
@@ -413,7 +418,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
             </div>
             <div v-if="tally.contributors.length" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               <div v-for="c in tally.contributors" :key="c.answer_key" class="rounded-xl border bg-card p-4">
-                <div class="text-xs font-medium text-muted-foreground truncate">{{ c.label }}</div>
+                <div class="text-xs font-medium text-muted-foreground truncate">{{ contributorDisplayLabel(c) }}</div>
                 <div class="mt-1 text-2xl font-bold tabular-nums">{{ c.people }}</div>
                 <div v-if="contributorFlagCount(c) > 0" class="mt-2 flex items-center gap-1 text-xs text-amber-500">
                   <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></span>

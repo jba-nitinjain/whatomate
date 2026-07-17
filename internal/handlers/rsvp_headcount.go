@@ -209,6 +209,12 @@ func legacyHeadcountContributors(attendanceField string) models.RSVPHeadcountCon
 	}
 }
 
+// conventionalSpouseAttendanceKey is the historical hardcoded spouse question
+// key (formerly rsvp_tally.go:52). It is also the answer key the event builder
+// pre-fills for the Spouse row in legacyHeadcountContributorRows, so it is what
+// an admin's row is keyed as unless they deliberately retype it.
+const conventionalSpouseAttendanceKey = "spouse_attendance"
+
 // deriveSpouseAttendanceKey finds the configured contributor that stands in for
 // the event's dedicated Member/Spouse attendance cards (rsvpAttendanceBreakdown)
 // and the guest list's spouse_status filter, so a flow author renaming the spouse
@@ -217,21 +223,46 @@ func legacyHeadcountContributors(attendanceField string) models.RSVPHeadcountCon
 // RSVPHeadcountContributor has no field marking a row as "the spouse contributor" -
 // label text and list position are both freely edited via the event builder (see
 // legacyHeadcountContributorRows in the frontend, which only seeds the initial
-// order) and are not a durable identity. A positional rule of "the SECOND boolean
-// contributor whose key isn't the attendance field" was considered and rejected:
-// the legacy default - and every event that has only configured a single spouse
-// question, the overwhelmingly common case - has exactly ONE boolean contributor
-// whose key differs from the attendance field, because Member attendance is
-// attendance-mode and carries no AnswerKey at all. Requiring a second such row
-// never finds it, silently falls through to the "spouse_attendance" default, and
-// reintroduces the exact bug this task removes for any renamed single-spouse
-// configuration. Taking the FIRST boolean contributor whose key isn't the
-// attendance field matches the legacy default and every single-spouse-contributor
-// configuration. If an event ever configures more than one such contributor (e.g.
-// an added "plus one"), the first in list order is used; that residual ambiguity
-// is inherent to the current config shape (no role field) and out of scope here.
+// order) and are not a durable identity. Precedence, in order:
+//
+//  1. An exact match on the conventional key "spouse_attendance" wins outright,
+//     regardless of position. This is what keeps a newly added boolean row (e.g.
+//     an admin inserting a "Plus one" question ABOVE the Spouse row) from
+//     silently stealing the spouse identity: as long as a contributor is still
+//     literally keyed spouse_attendance, list order can't move it out of the
+//     way.
+//  2. Otherwise, fall back to the FIRST boolean contributor whose key isn't the
+//     attendance field. A positional rule of "the SECOND boolean contributor
+//     whose key isn't the attendance field" was considered and rejected: the
+//     legacy default - and every event that has only configured a single,
+//     renamed spouse question, the overwhelmingly common case - has exactly ONE
+//     boolean contributor whose key differs from the attendance field, because
+//     Member attendance is attendance-mode and carries no AnswerKey at all.
+//     Requiring a second such row never finds it, silently falls through to the
+//     "spouse_attendance" default, and reintroduces the exact bug Task 9 removed
+//     for any renamed single-spouse configuration. Taking the first qualifying
+//     boolean contributor matches the legacy default and every
+//     single-spouse-contributor configuration, renamed or not.
+//  3. If nothing qualifies at all, fall back to the historical default key
+//     rather than an empty string.
+//
+// A residual ambiguity remains only when an event configures two or more
+// non-attendance-field boolean rows and NEITHER is keyed spouse_attendance
+// (e.g. two independently renamed rows, "plus_one" and "extra_guest"); the
+// first in list order is used then. That case has no durable identity to
+// resolve it by (no role field on the contributor) and is out of scope here.
 func deriveSpouseAttendanceKey(contributors models.RSVPHeadcountContributors, attendanceField string) string {
 	attendanceField = strings.TrimSpace(attendanceField)
+
+	for _, c := range contributors {
+		if c.Mode != models.RSVPHeadcountModeBoolean {
+			continue
+		}
+		if strings.TrimSpace(c.AnswerKey) == conventionalSpouseAttendanceKey {
+			return conventionalSpouseAttendanceKey
+		}
+	}
+
 	for _, c := range contributors {
 		if c.Mode != models.RSVPHeadcountModeBoolean {
 			continue
@@ -242,7 +273,7 @@ func deriveSpouseAttendanceKey(contributors models.RSVPHeadcountContributors, at
 		}
 		return key
 	}
-	return "spouse_attendance"
+	return conventionalSpouseAttendanceKey
 }
 
 // contributorLabel picks the best available name for a contributor to show in a
@@ -260,18 +291,33 @@ func contributorLabel(c models.RSVPHeadcountContributor) string {
 
 // validateRSVPHeadcountContributors rejects a headcount contributor configuration
 // that either can't be evaluated (missing question key, unrecognised mode, no
-// "yes" values to match) or would silently double-count a guest: a boolean
-// contributor reading the same answer key as the event's own attendance field,
-// while an attendance-mode contributor is also configured, would add that same
-// "yes" a second time on top of the attendance-mode contributor that already
-// reads it from the response's attendance column.
+// "yes" values to match) or would silently double-count a guest. Two distinct
+// double-count shapes are checked:
+//
+//   - More than one attendance-mode contributor. Attendance-mode reads the
+//     response's own Attendance column rather than an AnswerKey (so seenKeys,
+//     which only tracks AnswerKey collisions, can't catch this - two
+//     attendance-mode rows never share a key because attendance-mode doesn't
+//     use one). Every attending guest would then be counted once per such row.
+//   - A boolean contributor reading the same answer key as the event's own
+//     attendance field, while an attendance-mode contributor is also
+//     configured, would add that same "yes" a second time on top of the
+//     attendance-mode contributor that already reads it from the response's
+//     attendance column.
 func validateRSVPHeadcountContributors(contributors models.RSVPHeadcountContributors, attendanceField string) error {
 	hasAttendanceMode := false
+	var attendanceModeLabels []string
 	for _, c := range contributors {
 		if c.Mode == models.RSVPHeadcountModeAttendance {
 			hasAttendanceMode = true
-			break
+			attendanceModeLabels = append(attendanceModeLabels, contributorLabel(c))
 		}
+	}
+	if len(attendanceModeLabels) > 1 {
+		return fmt.Errorf(
+			"headcount contributors %s both read the attendance column directly; with more than one, every guest marked attending would be counted once for each of them - keep only one",
+			strings.Join(attendanceModeLabels, " and "),
+		)
 	}
 
 	seenKeys := map[string]bool{}
