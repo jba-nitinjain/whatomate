@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
@@ -29,12 +30,20 @@ type rsvpFollowUpSkip struct {
 func (a *App) loadRSVPFollowUpGuests(orgID, eventID uuid.UUID, audience RSVPFollowUpAudience, answerKey string) ([]rsvpGuestRosterRow, error) {
 	clause, args, err := rsvpFollowUpAudienceClause(audience, answerKey)
 	if err != nil {
-		return nil, err
+		// Bad/missing answer_key or an unknown audience: the caller supplied
+		// this, and the message (e.g. "missing_answer requires an answer
+		// key") is safe and useful to show them verbatim. Wrap it so
+		// PreviewRSVPFollowUp can tell it apart, via errors.As, from the
+		// Find error below - a genuine DB failure the user cannot act on.
+		return nil, rsvpUserFacingError{err}
 	}
 	q := a.DB.Where("rsvp_responses.organization_id = ? AND rsvp_responses.rsvp_event_id = ?", orgID, eventID).
 		Where(clause, args...)
 	var responses []models.RSVPResponse
 	if err := q.Preload("Contact").Order("rsvp_responses.created_at DESC").Find(&responses).Error; err != nil {
+		// Left unwrapped: a Find failure (DB timeout, connection drop) is an
+		// infrastructure error, not something the user can fix, so it must
+		// not be classified as user-facing by rsvpFollowUpPreviewErrorEnvelope.
 		return nil, err
 	}
 	rows := make([]rsvpGuestRosterRow, 0, len(responses))
@@ -92,6 +101,22 @@ func rsvpFollowUpEligibility(rows []rsvpGuestRosterRow) (recipients []rsvpGuestR
 	return recipients, skipped
 }
 
+// rsvpFollowUpPreviewErrorEnvelope classifies an error from
+// loadRSVPFollowUpGuests into the (status, message) pair PreviewRSVPFollowUp
+// sends. Mirrors rsvpReminderCampaignErrorEnvelope (rsvp_reminders.go): an
+// audience-clause validation error (bad/missing answer_key, unknown
+// audience) is wrapped in rsvpUserFacingError at rsvpFollowUpAudienceClause's
+// call site and is safe to show verbatim as a 400. Everything else - a Find
+// timeout, connection drop - is an infrastructure failure the user cannot
+// act on, so it stays a generic 500 rather than leaking driver-level text.
+func rsvpFollowUpPreviewErrorEnvelope(err error) (status int, message string) {
+	var userErr rsvpUserFacingError
+	if errors.As(err, &userErr) {
+		return fasthttp.StatusBadRequest, userErr.Error()
+	}
+	return fasthttp.StatusInternalServerError, "Failed to preview follow-up"
+}
+
 // PreviewRSVPFollowUp reports who an audience filter would message and who
 // it would skip and why, using the exact loader and eligibility predicate
 // Task 5's send reuses - so this preview cannot promise more recipients than
@@ -115,7 +140,8 @@ func (a *App) PreviewRSVPFollowUp(r *fastglue.Request) error {
 	answerKey := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("answer_key")))
 	rows, err := a.loadRSVPFollowUpGuests(orgID, eventID, audience, answerKey)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+		status, msg := rsvpFollowUpPreviewErrorEnvelope(err)
+		return r.SendErrorEnvelope(status, msg, nil, "")
 	}
 	recipients, skipped := rsvpFollowUpEligibility(rows)
 	if skipped == nil {

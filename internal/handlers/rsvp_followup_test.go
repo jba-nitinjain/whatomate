@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/nikyjain/whatomate/test/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/valyala/fasthttp"
 )
 
 // TestLoadRSVPFollowUpGuests pins the missing_answer audience against a real
@@ -124,4 +127,76 @@ func TestRSVPFollowUpEligibilityDedupesDuplicatePhones(t *testing.T) {
 	require.Len(t, skipped, 1)
 	assert.Equal(t, "duplicate phone number", skipped[0].Reason)
 	assert.Equal(t, rows[1].ID, skipped[0].ResponseID)
+}
+
+// TestRSVPFollowUpPreviewErrorEnvelope mirrors
+// TestRSVPReminderCampaignErrorEnvelope (rsvp_reminder_campaign_test.go):
+// loadRSVPFollowUpGuests conflates two different error classes - an
+// audience-clause validation error (bad/missing answer_key, unknown
+// audience) that is safe and useful to show the user, and a genuine DB Find
+// error (timeout, connection drop) that is not. This asserts
+// rsvpFollowUpPreviewErrorEnvelope tells them apart via errors.As - a
+// user-facing error surfaces its own message as a 400, everything else stays
+// a generic 500 rather than leaking driver-level text - and that the
+// distinction survives an extra layer of %w wrapping.
+func TestRSVPFollowUpPreviewErrorEnvelope(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantMsg    string
+	}{
+		{
+			name:       "user-facing audience validation error surfaces its own message as a 400",
+			err:        rsvpUserFacingError{fmt.Errorf("missing_answer requires an answer key")},
+			wantStatus: fasthttp.StatusBadRequest,
+			wantMsg:    "missing_answer requires an answer key",
+		},
+		{
+			name:       "user-facing error wrapped further by %w is still detected",
+			err:        fmt.Errorf("load follow-up guests: %w", rsvpUserFacingError{fmt.Errorf("unknown follow-up audience: \"bogus\"")}),
+			wantStatus: fasthttp.StatusBadRequest,
+			wantMsg:    `unknown follow-up audience: "bogus"`,
+		},
+		{
+			name:       "plain infrastructure error stays a generic 500, not leaked",
+			err:        fmt.Errorf("pq: connection reset by peer"),
+			wantStatus: fasthttp.StatusInternalServerError,
+			wantMsg:    "Failed to preview follow-up",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			status, msg := rsvpFollowUpPreviewErrorEnvelope(c.err)
+			if status != c.wantStatus || msg != c.wantMsg {
+				t.Fatalf("rsvpFollowUpPreviewErrorEnvelope(%v) = (%d, %q), want (%d, %q)", c.err, status, msg, c.wantStatus, c.wantMsg)
+			}
+		})
+	}
+}
+
+// TestLoadRSVPFollowUpGuests_InvalidAudienceIsUserFacing exercises the real
+// production call chain (loadRSVPFollowUpGuests ->
+// rsvpFollowUpPreviewErrorEnvelope) end to end, not a synthetic error - the
+// test the task asked for. An unknown audience never reaches the DB (the
+// clause is validated before a.DB is touched), so this needs no database.
+// Without the fix, loadRSVPFollowUpGuests returns the validation error
+// unwrapped: the errors.As assertion fails, and
+// rsvpFollowUpPreviewErrorEnvelope would have nothing to classify - proving
+// this test would fail if the wrapping in rsvp_followup.go were reverted.
+func TestLoadRSVPFollowUpGuests_InvalidAudienceIsUserFacing(t *testing.T) {
+	app := &App{}
+	orgID, eventID := uuid.New(), uuid.New()
+
+	_, err := app.loadRSVPFollowUpGuests(orgID, eventID, RSVPFollowUpAudience("bogus"), "")
+	require.Error(t, err)
+
+	var userErr rsvpUserFacingError
+	if !errors.As(err, &userErr) {
+		t.Fatalf("loadRSVPFollowUpGuests(bogus audience) = %v, want a rsvpUserFacingError so PreviewRSVPFollowUp can surface it as a 400 instead of a generic 500", err)
+	}
+
+	status, msg := rsvpFollowUpPreviewErrorEnvelope(err)
+	assert.Equal(t, fasthttp.StatusBadRequest, status, "an audience validation error must not fall back to the generic 500")
+	assert.Equal(t, `unknown follow-up audience: "bogus"`, msg)
 }
