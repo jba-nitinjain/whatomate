@@ -170,18 +170,30 @@ func (a *App) ListRSVPGuests(r *fastglue.Request) error {
 		if strings.TrimSpace(mobileField) == "" {
 			mobileField = "spouse_mobile"
 		}
-		answerSQL := `LOWER(TRIM(COALESCE(NULLIF(rsvp_responses.answers ->> 'spouse_attendance', ''), rsvp_responses.answers ->> 'spouse_attendance_title', '')))`
+		contributors := event.HeadcountContributors
+		if len(contributors) == 0 {
+			contributors = legacyHeadcountContributors(event.AttendanceField)
+		}
+		spouseKey := deriveSpouseAttendanceKey(contributors, event.AttendanceField)
+		spouseKeyTitle := spouseKey + "_title"
+		// spouseKey is user-editable configuration (event.HeadcountContributors), so
+		// it is bound as a parameter below via `?`, never interpolated into the SQL
+		// string, the same pattern mobileField already follows in phoneSQL.
+		answerSQL := `LOWER(TRIM(COALESCE(NULLIF(rsvp_responses.answers ->> ?, ''), rsvp_responses.answers ->> ?, '')))`
 		phoneSQL := `LENGTH(regexp_replace(COALESCE(rsvp_responses.answers ->> ?, ''), '[^0-9]', '', 'g'))`
 		switch v {
 		case "attending":
-			q = q.Where(answerSQL+" IN ?", []string{"yes", "attending"})
+			q = q.Where(answerSQL+" IN ?", spouseKey, spouseKeyTitle, []string{"yes", "attending"})
 		case "not_attending":
-			q = q.Where(answerSQL+" IN ?", []string{"no", "not attending", "not_attending"})
+			q = q.Where(answerSQL+" IN ?", spouseKey, spouseKeyTitle, []string{"no", "not attending", "not_attending"})
 		case "maybe":
-			q = q.Where(answerSQL + " = 'maybe'")
+			q = q.Where(answerSQL+" = 'maybe'", spouseKey, spouseKeyTitle)
 		case "pending":
 			q = q.Where("("+answerSQL+" IN ? AND "+phoneSQL+" < 10) OR NOT ("+answerSQL+" IN ? OR "+answerSQL+" IN ? OR "+answerSQL+" = 'maybe')",
-				[]string{"yes", "attending"}, mobileField, []string{"yes", "attending"}, []string{"no", "not attending", "not_attending"})
+				spouseKey, spouseKeyTitle, []string{"yes", "attending"}, mobileField,
+				spouseKey, spouseKeyTitle, []string{"yes", "attending"},
+				spouseKey, spouseKeyTitle, []string{"no", "not attending", "not_attending"},
+				spouseKey, spouseKeyTitle)
 		}
 	}
 	if v := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("source"))); v != "" {

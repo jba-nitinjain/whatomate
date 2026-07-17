@@ -38,3 +38,83 @@ func TestBuildRSVPAttendanceBreakdownUsesConfiguredSpouseMobileField(t *testing.
 		t.Fatalf("unexpected spouse counts: %+v", got.Spouse)
 	}
 }
+
+func TestBuildRSVPAttendanceBreakdownUsesConfiguredSpouseKey(t *testing.T) {
+	// Renaming the spouse question in the flow builder must not silently zero the
+	// spouse card - which is exactly what the hardcoded key at rsvp_tally.go:52 did.
+	responses := []models.RSVPResponse{{
+		Attendance: models.RSVPAttendanceYes,
+		Answers:    models.JSONB{"partner_coming": "yes", "spouse_mobile": "919840445616"},
+	}}
+
+	got := buildRSVPAttendanceBreakdownWithKey(responses, "spouse_mobile", "partner_coming")
+	if got.Spouse.Attending != 1 {
+		t.Fatalf("configured spouse key must be honoured: %+v", got.Spouse)
+	}
+}
+
+func TestBuildRSVPHeadcount(t *testing.T) {
+	contributors := models.RSVPHeadcountContributors{
+		{Label: "Member", AnswerKey: "attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+		{Label: "Spouse", AnswerKey: "spouse_attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+		{Label: "Children", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric},
+	}
+	responses := []models.RSVPResponse{
+		{Attendance: models.RSVPAttendanceYes, Answers: models.JSONB{"attendance": "yes", "spouse_attendance": "yes", "children_count": "2"}},
+		{Attendance: models.RSVPAttendanceYes, Answers: models.JSONB{"attendance": "yes", "spouse_attendance": "no", "children_count": "1"}},
+		{Attendance: models.RSVPAttendanceNo, Answers: models.JSONB{"attendance": "no"}},
+	}
+
+	tallies, total := buildRSVPHeadcount(responses, contributors)
+
+	if len(tallies) != 3 {
+		t.Fatalf("expected 3 tallies, got %d", len(tallies))
+	}
+	if tallies[0].People != 2 {
+		t.Errorf("member people = %d, want 2", tallies[0].People)
+	}
+	if tallies[1].People != 1 {
+		t.Errorf("spouse people = %d, want 1", tallies[1].People)
+	}
+	if tallies[2].People != 3 {
+		t.Errorf("children people = %d, want 3", tallies[2].People)
+	}
+	// 2 members + 1 spouse + 3 children
+	if total != 6 {
+		t.Errorf("total = %d, want 6", total)
+	}
+}
+
+func TestBuildRSVPHeadcountFlagsBadNumbers(t *testing.T) {
+	contributors := models.RSVPHeadcountContributors{
+		{Label: "Children", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric},
+	}
+	responses := []models.RSVPResponse{
+		{Attendance: models.RSVPAttendanceYes, Answers: models.JSONB{"children_count": "2"}},
+		{Attendance: models.RSVPAttendanceYes, Answers: models.JSONB{"children_count": "lots"}},
+		{Attendance: models.RSVPAttendanceYes, Answers: models.JSONB{"children_count": "50"}},
+	}
+
+	tallies, total := buildRSVPHeadcount(responses, contributors)
+
+	if tallies[0].Unparseable != 1 {
+		t.Errorf("unparseable = %d, want 1", tallies[0].Unparseable)
+	}
+	if tallies[0].NeedsReview != 1 {
+		t.Errorf("needs review = %d, want 1", tallies[0].NeedsReview)
+	}
+	// "lots" contributes 0, and is not silently dropped from the flag counts.
+	if total != 52 {
+		t.Errorf("total = %d, want 52", total)
+	}
+}
+
+func TestBuildRSVPHeadcountNoContributorsIsZero(t *testing.T) {
+	tallies, total := buildRSVPHeadcount([]models.RSVPResponse{
+		{Attendance: models.RSVPAttendanceYes, Answers: models.JSONB{"attendance": "yes"}},
+	}, models.RSVPHeadcountContributors{})
+
+	if len(tallies) != 0 || total != 0 {
+		t.Fatalf("no contributors must yield no tallies and zero total, got %+v / %d", tallies, total)
+	}
+}

@@ -41,15 +41,27 @@ func addAttendanceCount(counts *rsvpAttendanceCounts, value string) {
 	}
 }
 
+// buildRSVPAttendanceBreakdown preserves the original signature and defaults for
+// callers that have no configured spouse key.
 func buildRSVPAttendanceBreakdown(responses []models.RSVPResponse, spouseMobileField string) rsvpAttendanceBreakdown {
+	return buildRSVPAttendanceBreakdownWithKey(responses, spouseMobileField, "spouse_attendance")
+}
+
+// buildRSVPAttendanceBreakdownWithKey takes the spouse attendance key explicitly.
+// It used to be hardcoded, so renaming the question in the flow builder silently
+// zeroed the spouse card with no warning.
+func buildRSVPAttendanceBreakdownWithKey(responses []models.RSVPResponse, spouseMobileField, spouseAttendanceKey string) rsvpAttendanceBreakdown {
 	if strings.TrimSpace(spouseMobileField) == "" {
 		spouseMobileField = "spouse_mobile"
+	}
+	if strings.TrimSpace(spouseAttendanceKey) == "" {
+		spouseAttendanceKey = "spouse_attendance"
 	}
 	var result rsvpAttendanceBreakdown
 	for _, response := range responses {
 		addAttendanceCount(&result.Member, string(response.Attendance))
 
-		spouseAnswer := normalizedRSVPAnswer(response.Answers, "spouse_attendance", "spouse_attendance_title")
+		spouseAnswer := normalizedRSVPAnswer(response.Answers, spouseAttendanceKey, spouseAttendanceKey+"_title")
 		if spouseAnswer == "yes" || spouseAnswer == "attending" {
 			result.Spouse.Attending++
 			mobile := normalizedRSVPAnswer(response.Answers, spouseMobileField)
@@ -63,4 +75,48 @@ func buildRSVPAttendanceBreakdown(responses []models.RSVPResponse, spouseMobileF
 		addAttendanceCount(&result.Spouse, spouseAnswer)
 	}
 	return result
+}
+
+// rsvpContributorTally is one configured contributor's totals across all responses.
+type rsvpContributorTally struct {
+	Label       string `json:"label"`
+	AnswerKey   string `json:"answer_key"`
+	Mode        string `json:"mode"`
+	People      int    `json:"people"`
+	Responses   int    `json:"responses"`
+	NeedsReview int    `json:"needs_review"`
+	Unparseable int    `json:"unparseable"`
+}
+
+// buildRSVPHeadcount tallies every configured contributor and sums the grand total.
+// This replaces the hardcoded spouse_attendance logic: children, drivers or anything
+// else are rows in the event's configuration, not branches in this function.
+func buildRSVPHeadcount(responses []models.RSVPResponse, contributors models.RSVPHeadcountContributors) ([]rsvpContributorTally, int) {
+	tallies := make([]rsvpContributorTally, 0, len(contributors))
+	total := 0
+
+	for _, contributor := range contributors {
+		tally := rsvpContributorTally{
+			Label:     contributor.Label,
+			AnswerKey: contributor.AnswerKey,
+			Mode:      string(contributor.Mode),
+		}
+		for _, response := range responses {
+			got := evaluateHeadcountContributor(contributor, response.Answers, response.Attendance)
+			tally.People += got.People
+			if got.Matched {
+				tally.Responses++
+			}
+			if got.NeedsReview {
+				tally.NeedsReview++
+			}
+			if got.Unparseable {
+				tally.Unparseable++
+			}
+		}
+		total += tally.People
+		tallies = append(tallies, tally)
+	}
+
+	return tallies, total
 }
