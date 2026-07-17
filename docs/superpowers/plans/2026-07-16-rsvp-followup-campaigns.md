@@ -421,29 +421,54 @@ Expected: all four PASS.
 
 - [ ] **Step 5: Write the failing test for finalize's follow-up branch**
 
-Append to `internal/handlers/rsvp_capture_followup_test.go`. This is a DB test — move it to a `_test.go` file in `package handlers_test` if `finalizeRSVPFromSession` is unexported and unreachable; the repo already exposes `FinalizeRSVPFromSessionForTest` (`rsvp_capture.go`) for exactly this, so prefer that.
+**Correction (2026-07-17):** an earlier draft of this step wrote a `t.Skip` stub and told the
+implementer to replace it in Step 6. That was a plan defect — a skipped test on the one path that
+can corrupt 271 live records reads as covered while proving nothing. Write the real test here.
+
+This is DB-backed. `finalizeRSVPFromSession` is unexported, but the repo already exposes
+`FinalizeRSVPFromSessionForTest` (`internal/handlers/rsvp_capture.go`) for exactly this — use it, and
+do not export anything further just for testing.
+
+Create `internal/handlers/rsvp_capture_followup_db_test.go` (`package handlers_test`). Mirror the
+fixture setup in `rsvp_test.go` and `rsvp_tally_livedata_test.go`. Note `rsvp_responses.contact_id`
+has a foreign key — create real `Contact` rows (this is why the pre-existing
+`TestRSVPModels_Migrate_And_CRUD` fails on main: it uses a random ContactID with no Contact).
+
+Arrange a guest who already responded:
 
 ```go
-func TestFinalizeFollowUpPreservesAttendanceAndAnswers(t *testing.T) {
-	db := testutil.SetupTestDB(t)
-	// Arrange: a guest who already responded yes, with spouse answers.
-	// Act: run a follow-up session carrying only children_count.
-	// Assert:
-	//   - attendance is still "yes" (NOT recomputed to pending)
-	//   - spouse_attendance and spouse_mobile survive
-	//   - children_count is added
-	//   - responded_at is NOT moved (they responded days ago)
-	//
-	// Build this using testutil.CreateTestOrganization + models.RSVPEvent +
-	// models.RSVPResponse fixtures, mirroring rsvp_test.go's setup, then call
-	// app.FinalizeRSVPFromSessionForTest with SessionData containing
-	// rsvpEventIDKey, rsvpFollowUpKey and children_count.
-	_ = db
-	t.Skip("implement alongside Step 6 - see rsvp_test.go for the fixture pattern")
+resp := models.RSVPResponse{
+    BaseModel:      models.BaseModel{ID: uuid.New()},
+    RSVPEventID:    event.ID,
+    OrganizationID: org.ID,
+    ContactID:      contact.ID,
+    PhoneNumber:    "919840445616",
+    Attendance:     models.RSVPAttendanceYes,
+    Answers: models.JSONB{
+        "attendance":              "yes",
+        "attendance_title":        "Attending",
+        "spouse_attendance":       "yes",
+        "spouse_attendance_title": "Attending",
+        "spouse_mobile":           "919840026019",
+    },
+    RespondedAt: &respondedAt, // days ago
+    Source:      models.RSVPGuestSourceContactSelection,
 }
 ```
 
-Replace the `t.Skip` with the real test in Step 6. **Do not leave it skipped** — a skipped test on the one path that can corrupt 271 live records is worse than no test, because it reads as covered.
+Act: run a follow-up session carrying ONLY `children_count`, with `rsvpEventIDKey` and
+`rsvpFollowUpKey: true` in `SessionData`.
+
+Assert, and make each failure message say plainly that a live record was corrupted:
+
+- `attendance` is still `yes` — **not** recomputed to `pending`
+- `spouse_attendance`, `spouse_attendance_title` and `spouse_mobile` are **byte-identical**
+- `attendance_title` survives
+- `children_count == "2"` was added
+- `responded_at` is **unchanged** (they responded days ago; a follow-up is not a new response)
+
+Also assert the negative case: a follow-up for a contact with **no** existing response must NOT
+create one (a follow-up with no existing row is a bug, not a new guest).
 
 - [ ] **Step 6: Add the follow-up branch to finalize**
 
