@@ -7,6 +7,7 @@ import (
 )
 
 const CampaignSourceRSVPReminder = "rsvp_reminder"
+const CampaignSourceRSVPFollowUp = "rsvp_followup"
 
 // BulkMessageCampaign represents a bulk message campaign
 type BulkMessageCampaign struct {
@@ -32,6 +33,10 @@ type BulkMessageCampaign struct {
 	CreatedBy            uuid.UUID      `gorm:"type:uuid;not null" json:"created_by"`
 	SourceType           string         `gorm:"size:50;index" json:"source_type,omitempty"`
 	SourceID             *uuid.UUID     `gorm:"type:uuid;index" json:"source_id,omitempty"`
+	// FlowID records which chatbot flow a source-specific send should hand a
+	// recipient into when they tap through (e.g. an RSVP follow-up's chosen
+	// flow). Unset for campaign types with no follow-up flow of their own.
+	FlowID *uuid.UUID `gorm:"type:uuid" json:"flow_id,omitempty"`
 
 	// Relations
 	Organization *Organization          `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
