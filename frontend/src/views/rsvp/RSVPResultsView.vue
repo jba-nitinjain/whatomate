@@ -21,6 +21,7 @@ import RSVPReminderDialog from '@/components/rsvp/RSVPReminderDialog.vue'
 import { rsvpService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
 import { BarChart3, Bell, Download, Mail, Pencil, Trash2, Send, DownloadCloud, Users } from 'lucide-vue-next'
+import { visibleAnswerKeys } from './answerColumns'
 
 interface RSVPRow { id: string; contact_id: string; phone_number: string; attendance: string; source: string; journey_status: string; invite_sent_at?: string; reminder_count: number; last_reminder_at?: string; rsvp_started_at?: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; reprompted_at?: string; contact?: { profile_name?: string } }
 interface AttendanceCounts { attending: number; not_attending: number; maybe: number; pending: number }
@@ -106,15 +107,7 @@ function toneText(value: string) { return TONE_TEXT[bucketTone(value)] }
 function toneDot(value: string) { return TONE_DOT[bucketTone(value)] }
 
 // Union of answer keys across all responses (first-seen order), one column each.
-const answerKeys = computed<string[]>(() => {
-  const seen: string[] = []
-  for (const row of responses.value) {
-    for (const k of Object.keys(row.answers || {})) {
-      if (!k.startsWith('_') && !seen.includes(k)) seen.push(k)
-    }
-  }
-  return seen
-})
+const answerKeys = computed<string[]>(() => visibleAnswerKeys(responses.value))
 
 function prettyKey(k: string): string {
   if (k === attendanceField.value + '_title') return t('rsvp.memberAttendance')
