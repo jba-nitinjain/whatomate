@@ -18,9 +18,10 @@ import {
 import { PageHeader, DataTable, SearchInput, type Column } from '@/components/shared'
 import RSVPGuestManagerDialog from '@/components/rsvp/RSVPGuestManagerDialog.vue'
 import RSVPReminderDialog from '@/components/rsvp/RSVPReminderDialog.vue'
+import RSVPFollowUpDialog from '@/components/rsvp/RSVPFollowUpDialog.vue'
 import { rsvpService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
-import { BarChart3, Bell, Download, Mail, Pencil, Trash2, Send, DownloadCloud, Users } from 'lucide-vue-next'
+import { BarChart3, Bell, Download, Mail, Pencil, Trash2, Send, DownloadCloud, Users, MessageCirclePlus } from 'lucide-vue-next'
 import { visibleAnswerKeys } from './answerColumns'
 import { contributorFlagCount, type RSVPContributor } from './contributorFlags'
 import { resolveAnswerColumnLabel, resolveContributorCardLabel } from './answerLabels'
@@ -50,6 +51,7 @@ const selectedGuestIds = ref<Set<string>>(new Set())
 const guestManagerOpen = ref(false)
 const reminderManagerOpen = ref(false)
 const reminderRenderError = ref('')
+const followUpOpen = ref(false)
 let searchTimer: number | undefined
 let timer: number | undefined
 const attendanceOptions = ['pending', 'yes', 'no', 'maybe']
@@ -369,6 +371,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
         <Button variant="outline" size="sm" @click="guestManagerOpen = true"><Users class="h-4 w-4 mr-2" />{{ t('rsvp.manageGuests') }}</Button>
         <Button variant="outline" size="sm" :disabled="!selectedRows.length" @click="sendInvitations"><Mail class="h-4 w-4 mr-2" />{{ t('rsvp.sendInvites') }}</Button>
         <Button variant="outline" size="sm" @click="openReminderManager"><Bell class="h-4 w-4 mr-2" />{{ t('rsvp.reminders') }}</Button>
+        <Button variant="outline" size="sm" @click="followUpOpen = true"><MessageCirclePlus class="h-4 w-4 mr-2" />{{ t('rsvp.followUp') }}</Button>
         <Button variant="outline" size="sm" :disabled="recovering" @click="recoverPartials" :title="t('rsvp.recoverHint')">
           <DownloadCloud class="h-4 w-4 mr-2" />
           {{ t('rsvp.recover') }}
@@ -496,6 +499,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 
     <RSVPGuestManagerDialog v-model:open="guestManagerOpen" :event-id="id" @changed="loadResponses" />
     <RSVPReminderDialog v-if="!reminderRenderError" v-model:open="reminderManagerOpen" :event-id="id" :selected-ids="selectedReminderIds" @changed="loadResponses" />
+    <RSVPFollowUpDialog v-model:open="followUpOpen" :event-id="id" @changed="loadResponses" />
     <Teleport to="body">
       <div v-if="reminderManagerOpen && reminderRenderError" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
         <section role="alertdialog" aria-modal="true" aria-labelledby="rsvp-reminder-error-title" class="w-full max-w-lg space-y-4 rounded-lg border bg-background p-6 shadow-lg">

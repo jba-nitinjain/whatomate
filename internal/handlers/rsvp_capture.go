@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -55,6 +56,32 @@ func (a *App) rsvpAlreadyResponded(event *models.RSVPEvent, phone string) bool {
 // rsvpEventIDKey is the SessionData key that ties a chatbot session to an RSVP event.
 const rsvpEventIDKey = "_rsvp_event_id"
 
+// rsvpFollowUpKey marks a session as a follow-up: it tops up an existing response
+// rather than making a new one. The "_" prefix keeps it out of stored answers via
+// the existing filter in finalizeRSVPFromSession.
+const rsvpFollowUpKey = "_rsvp_followup"
+
+// mergeRSVPAnswers overlays incoming answers onto existing ones. Incoming wins per
+// key so a guest can correct themselves; keys absent from incoming survive
+// untouched. Returns a new map - neither input is mutated.
+func mergeRSVPAnswers(existing, incoming models.JSONB) models.JSONB {
+	merged := models.JSONB{}
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for k, v := range incoming {
+		merged[k] = v
+	}
+	return merged
+}
+
+// rsvpShouldBlockDuplicate decides whether to turn a sender away with the event's
+// DuplicateMessage. A follow-up deliberately targets people who already responded,
+// so the guard must not apply to it - but it still protects the main RSVP.
+func rsvpShouldBlockDuplicate(isFollowUp, alreadyResponded bool) bool {
+	return !isFollowUp && alreadyResponded
+}
+
 // rsvpEventForFlow returns the active RSVP event linked to a flow, or nil.
 func (a *App) rsvpEventForFlow(orgID, flowID uuid.UUID) *models.RSVPEvent {
 	var event models.RSVPEvent
@@ -63,6 +90,31 @@ func (a *App) rsvpEventForFlow(orgID, flowID uuid.UUID) *models.RSVPEvent {
 		return nil
 	}
 	return &event
+}
+
+// rsvpEventForFlowOrFollowUp resolves the active RSVP event a flow belongs to. A flow reaches an
+// event by one of two routes: it is the event's own primary flow, or it is the flow a follow-up
+// campaign for that event hands the guest. isFollowUp reports which route matched, and is the only
+// safe source of that fact: startFlow resets session.SessionData immediately before the RSVP hook
+// runs (chatbot_processor.go:862-865), so nothing carried on the session survives to be read.
+func (a *App) rsvpEventForFlowOrFollowUp(orgID, flowID uuid.UUID) (*models.RSVPEvent, bool) {
+	if event := a.rsvpEventForFlow(orgID, flowID); event != nil {
+		return event, false
+	}
+
+	var campaign models.BulkMessageCampaign
+	if err := a.DB.Where("organization_id = ? AND flow_id = ? AND source_type = ? AND source_id IS NOT NULL",
+		orgID, flowID, models.CampaignSourceRSVPFollowUp).
+		Order("created_at DESC").First(&campaign).Error; err != nil {
+		return nil, false
+	}
+
+	var event models.RSVPEvent
+	if err := a.DB.Where("id = ? AND organization_id = ? AND status = ?",
+		campaign.SourceID, orgID, models.RSVPEventStatusActive).First(&event).Error; err != nil {
+		return nil, false
+	}
+	return &event, true
 }
 
 // seedPendingRSVPResponse creates a pending response row for a contact entering an event.
@@ -167,18 +219,47 @@ func (a *App) finalizeRSVPFromSession(session *models.ChatbotSession) {
 	}
 
 	now := time.Now()
-	updates := map[string]interface{}{
-		"answers":      answers,
-		"attendance":   attendance,
-		"responded_at": now,
+
+	// A follow-up tops up an existing response: it must never recompute
+	// attendance or move responded_at, since the guest answered days ago and
+	// only told us one extra thing now. It also must never create a row -
+	// a follow-up with no existing response is a bug, not a new guest.
+	//
+	// If the key is present but isn't a bool, that's a programming error (e.g.
+	// the flag got written as a string or int somewhere) - refuse to act rather
+	// than silently falling through to the destructive replace path below.
+	var isFollowUp bool
+	if v, present := session.SessionData[rsvpFollowUpKey]; present {
+		isFollowUp, ok = v.(bool)
+		if !ok {
+			a.Log.Error("RSVP follow-up flag has unexpected type; refusing to finalize",
+				"session_id", session.ID, "type", fmt.Sprintf("%T", v))
+			return
+		}
 	}
-	updates["deleted_at"] = nil // revive a soft-deleted row rather than colliding on create
+
+	updates := map[string]interface{}{}
+	if isFollowUp {
+		var current models.RSVPResponse
+		if err := a.DB.Where("rsvp_event_id = ? AND contact_id = ?", event.ID, session.ContactID).
+			First(&current).Error; err != nil {
+			a.Log.Warn("RSVP follow-up has no existing response; ignoring",
+				"event_id", event.ID, "contact_id", session.ContactID)
+			return
+		}
+		updates["answers"] = mergeRSVPAnswers(current.Answers, answers)
+	} else {
+		updates["answers"] = answers
+		updates["attendance"] = attendance
+		updates["responded_at"] = now
+		updates["deleted_at"] = nil // revive a soft-deleted row rather than colliding on create
+	}
 	// Upsert: update existing (pending or soft-deleted) row, else create. Unscoped
 	// so a previously deleted row for this contact is reused.
 	res := a.DB.Unscoped().Model(&models.RSVPResponse{}).
 		Where("rsvp_event_id = ? AND contact_id = ?", event.ID, session.ContactID).
 		Updates(updates)
-	if res.Error == nil && res.RowsAffected == 0 {
+	if res.Error == nil && res.RowsAffected == 0 && !isFollowUp {
 		_ = a.DB.Create(&models.RSVPResponse{
 			BaseModel:      models.BaseModel{ID: uuid.New()},
 			RSVPEventID:    event.ID,

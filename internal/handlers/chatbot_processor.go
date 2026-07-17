@@ -865,12 +865,25 @@ func (a *App) startFlow(account *models.WhatsAppAccount, session *models.Chatbot
 	}
 	a.DB.Save(session)
 
-	// RSVP: if this flow belongs to an active RSVP event, enforce cutoff, tag the
-	// session, and seed a pending response so the guest is tracked.
-	if event := a.rsvpEventForFlow(account.OrganizationID, flow.ID); event != nil {
+	// RSVP: if this flow belongs to an active RSVP event - either as the event's
+	// own primary flow, or as the flow a follow-up campaign hands the guest -
+	// enforce cutoff, tag the session, and seed a pending response so the guest
+	// is tracked.
+	if event, isFollowUp := a.rsvpEventForFlowOrFollowUp(account.OrganizationID, flow.ID); event != nil {
+		if isFollowUp {
+			// Derived from the follow-up campaign, not carried on the session:
+			// SessionData was reset just above (session.SessionData = models.JSONB{...}
+			// a few lines up), so nothing set on it before startFlow survives to be
+			// read here. finalizeRSVPFromSession reads this flag to merge rather than
+			// replace the guest's existing answers.
+			session.SessionData[rsvpFollowUpKey] = true
+		}
 		// Turn away a repeat responder (same number, or a number already recorded
-		// as a spouse) with the already-recorded message instead of re-asking.
-		if a.rsvpAlreadyResponded(event, contact.PhoneNumber) {
+		// as a spouse) with the already-recorded message instead of re-asking. A
+		// follow-up deliberately targets people who already responded, so it is
+		// let through this guard - the not-invited and closed-event checks below
+		// still apply to it.
+		if rsvpShouldBlockDuplicate(isFollowUp, a.rsvpAlreadyResponded(event, contact.PhoneNumber)) {
 			msg := strings.TrimSpace(event.DuplicateMessage)
 			if msg == "" {
 				msg = "Your RSVP has already been recorded. Thank you!"

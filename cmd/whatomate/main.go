@@ -740,6 +740,8 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/rsvp-events/{id}/reminders", app.ListRSVPReminderSchedules)
 	g.POST("/api/rsvp-events/{id}/reminders", app.CreateRSVPReminderSchedule)
 	g.DELETE("/api/rsvp-events/{id}/reminders/{scheduleId}", app.CancelRSVPReminderSchedule)
+	g.GET("/api/rsvp-events/{id}/followup/preview", app.PreviewRSVPFollowUp)
+	g.POST("/api/rsvp-events/{id}/followup/send", app.SendRSVPFollowUp)
 	g.GET("/api/rsvp-events/{id}/export", app.ExportRSVPResponses)
 	g.POST("/api/rsvp-events/{id}/flow-form", app.GenerateRSVPFlowForm)
 	g.GET("/api/rsvp-events/{id}/reprompt/preview", app.RepromptPreview)
