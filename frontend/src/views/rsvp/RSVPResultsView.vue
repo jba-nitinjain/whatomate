@@ -22,17 +22,18 @@ import { rsvpService } from '@/services/api'
 import { formatDateTimeIST } from '@/lib/utils'
 import { BarChart3, Bell, Download, Mail, Pencil, Trash2, Send, DownloadCloud, Users } from 'lucide-vue-next'
 import { visibleAnswerKeys } from './answerColumns'
+import { contributorFlagCount, type RSVPContributor } from './contributorFlags'
 
 interface RSVPRow { id: string; contact_id: string; phone_number: string; attendance: string; source: string; journey_status: string; invite_sent_at?: string; reminder_count: number; last_reminder_at?: string; rsvp_started_at?: string; answers?: Record<string, unknown>; notes?: string; responded_at?: string; reprompted_at?: string; contact?: { profile_name?: string } }
 interface AttendanceCounts { attending: number; not_attending: number; maybe: number; pending: number }
-interface RSVPTally extends AttendanceCounts { yes: number; no: number; total: number; member_attendance: AttendanceCounts; spouse_attendance: AttendanceCounts }
+interface RSVPTally extends AttendanceCounts { yes: number; no: number; total: number; member_attendance: AttendanceCounts; spouse_attendance: AttendanceCounts; total_attending: number; contributors: RSVPContributor[] }
 
 const { t } = useI18n()
 const route = useRoute()
 const id = route.params.id as string
 
 const emptyAttendance = (): AttendanceCounts => ({ attending: 0, not_attending: 0, maybe: 0, pending: 0 })
-const tally = ref<RSVPTally>({ yes: 0, no: 0, total: 0, ...emptyAttendance(), member_attendance: emptyAttendance(), spouse_attendance: emptyAttendance() })
+const tally = ref<RSVPTally>({ yes: 0, no: 0, total: 0, ...emptyAttendance(), member_attendance: emptyAttendance(), spouse_attendance: emptyAttendance(), total_attending: 0, contributors: [] })
 const attendanceField = ref('attendance')
 const responses = ref<RSVPRow[]>([])
 const isLoading = ref(true)
@@ -206,6 +207,8 @@ async function loadTally() {
     attending: d.yes || 0, not_attending: d.no || 0,
     member_attendance: { ...emptyAttendance(), ...(d.member_attendance || {}) },
     spouse_attendance: { ...emptyAttendance(), ...(d.spouse_attendance || {}) },
+    total_attending: d.total_attending || 0,
+    contributors: d.contributors || [],
   }
   attendanceField.value = d.attendance_field || 'attendance'
 }
@@ -370,9 +373,13 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
     <ScrollArea class="flex-1">
       <div class="p-6">
         <div class="max-w-6xl mx-auto space-y-6">
-          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <button type="button" class="rounded-xl border p-4 text-left" :class="!journeyFilter ? 'border-primary bg-primary/5' : ''" @click="journeyFilter = ''; loadResponses()"><div class="text-xs text-muted-foreground">{{ t('rsvp.total') }}</div><div class="text-3xl font-bold">{{ tally.total }}</div></button>
             <button v-for="status in ['not_started', 'in_progress', 'responded']" :key="status" type="button" class="rounded-xl border p-4 text-left" :class="journeyFilter === status ? 'border-primary bg-primary/5' : ''" @click="setJourneyFilter(status)"><div class="text-xs text-muted-foreground">{{ t('rsvp.' + status) }}</div><div class="text-3xl font-bold">{{ journeyCount(status) }}</div></button>
+            <div class="rounded-xl border border-primary bg-primary/10 p-4 text-left">
+              <div class="text-xs font-medium text-primary">{{ t('rsvp.totalAttending') }}</div>
+              <div class="text-3xl font-bold text-primary">{{ tally.total_attending }}</div>
+            </div>
           </div>
           <div class="space-y-4">
             <div class="grid gap-4 md:grid-cols-2">
@@ -392,6 +399,16 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
                     </div>
                     <div :class="['mt-1 text-2xl font-bold tabular-nums', toneText(b.value)]">{{ b.count }}</div>
                   </button>
+                </div>
+              </div>
+            </div>
+            <div v-if="tally.contributors.length" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div v-for="c in tally.contributors" :key="c.answer_key" class="rounded-xl border bg-card p-4">
+                <div class="text-xs font-medium text-muted-foreground truncate">{{ c.label }}</div>
+                <div class="mt-1 text-2xl font-bold tabular-nums">{{ c.people }}</div>
+                <div v-if="contributorFlagCount(c) > 0" class="mt-2 flex items-center gap-1 text-xs text-amber-500">
+                  <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></span>
+                  {{ t('rsvp.needsChecking', { count: contributorFlagCount(c) }) }}
                 </div>
               </div>
             </div>

@@ -1526,6 +1526,8 @@
     "clearFilter": "Clear filter",
     "memberAttendance": "Member Attendance",
     "spouseAttendance": "Spouse Attendance",
+    "totalAttending": "Total attending",
+    "needsChecking": "{count} answer(s) need checking",
     "reprompted": "Re-prompted",
     "alreadyReprompted": "resent",
     "searchResponses": "Search name or number",
