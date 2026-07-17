@@ -73,6 +73,10 @@ const (
 	RSVPHeadcountModeBoolean RSVPHeadcountMode = "boolean"
 	// RSVPHeadcountModeNumeric counts the number the guest gave.
 	RSVPHeadcountModeNumeric RSVPHeadcountMode = "numeric"
+	// RSVPHeadcountModeAttendance counts 1 when the response's attendance column
+	// matches. It reads the derived attendance column, not the answers JSONB, so it
+	// stays consistent with the member card and with an admin's manual edit.
+	RSVPHeadcountModeAttendance RSVPHeadcountMode = "attendance"
 )
 
 // RSVPHeadcountContributor declares that one answer key contributes people to the

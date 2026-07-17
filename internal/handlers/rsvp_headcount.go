@@ -132,10 +132,9 @@ type headcountContribution struct {
 // value to one and the display value to the other, and a flow author may map
 // either.
 func evaluateHeadcountContributor(c models.RSVPHeadcountContributor, answers models.JSONB, attendance models.RSVPAttendance) headcountContribution {
-	raw := normalizedRSVPAnswer(answers, c.AnswerKey, c.AnswerKey+"_title")
-
 	switch c.Mode {
 	case models.RSVPHeadcountModeNumeric:
+		raw := normalizedRSVPAnswer(answers, c.AnswerKey, c.AnswerKey+"_title")
 		if raw == "" {
 			return headcountContribution{}
 		}
@@ -143,13 +142,33 @@ func evaluateHeadcountContributor(c models.RSVPHeadcountContributor, answers mod
 		if !ok {
 			return headcountContribution{Unparseable: true}
 		}
+		// Matched means "this response gave a usable answer for this
+		// contributor", which is true even when that answer is zero (a guest
+		// who validly answers "0 children" still answered). It is false only
+		// when the answer was absent or unparseable.
 		return headcountContribution{
 			People:      value,
-			Matched:     value > 0,
+			Matched:     true,
 			NeedsReview: headcountNeedsReview(value),
 		}
 
+	case models.RSVPHeadcountModeAttendance:
+		// Reads the derived attendance column, not the answers JSONB, so this
+		// stays consistent with the member card and with an admin's manual
+		// PATCH edit to Attendance that doesn't touch Answers.
+		raw := strings.ToLower(strings.TrimSpace(string(attendance)))
+		if raw == "" {
+			return headcountContribution{}
+		}
+		for _, want := range c.MatchValues {
+			if raw == strings.ToLower(strings.TrimSpace(want)) {
+				return headcountContribution{People: 1, Matched: true}
+			}
+		}
+		return headcountContribution{}
+
 	default: // boolean
+		raw := normalizedRSVPAnswer(answers, c.AnswerKey, c.AnswerKey+"_title")
 		if raw == "" {
 			return headcountContribution{}
 		}
@@ -171,10 +190,14 @@ func legacyHeadcountContributors(attendanceField string) models.RSVPHeadcountCon
 	}
 	return models.RSVPHeadcountContributors{
 		{
-			Label:       "Member attendance",
-			AnswerKey:   attendanceField,
-			Mode:        models.RSVPHeadcountModeBoolean,
-			MatchValues: []string{"yes", "attending"},
+			Label: "Member attendance",
+			// AnswerKey is unused in attendance mode: the response's
+			// Attendance column is authoritative, matching buildRSVPAttendanceBreakdown
+			// (rsvp_tally.go) and staying correct even when an admin PATCHes
+			// Attendance without touching Answers, or AttendanceMap maps a raw
+			// answer to a different column value.
+			Mode:        models.RSVPHeadcountModeAttendance,
+			MatchValues: []string{string(models.RSVPAttendanceYes)},
 		},
 		{
 			Label:       "Spouse attendance",

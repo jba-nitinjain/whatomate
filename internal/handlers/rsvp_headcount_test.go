@@ -154,16 +154,90 @@ func TestEvaluateHeadcountContributorNumeric(t *testing.T) {
 	}
 }
 
+// TestEvaluateHeadcountContributorNumeric_ZeroIsMatched guards the fix for
+// Matched conflating "answered zero" with "didn't answer": a guest who
+// validly answers "0 children" must still show up as a matched response
+// (People: 0), distinct from a guest who never answered at all.
+func TestEvaluateHeadcountContributorNumeric_ZeroIsMatched(t *testing.T) {
+	c := models.RSVPHeadcountContributor{
+		Label: "Children", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric,
+	}
+
+	got := evaluateHeadcountContributor(c, models.JSONB{"children_count": "0"}, models.RSVPAttendanceYes)
+	if got.People != 0 || !got.Matched || got.Unparseable {
+		t.Fatalf("a valid zero answer must be Matched with People 0, got %+v", got)
+	}
+
+	got = evaluateHeadcountContributor(c, models.JSONB{}, models.RSVPAttendanceYes)
+	if got.Matched {
+		t.Fatalf("an absent answer must not be Matched, got %+v", got)
+	}
+}
+
+func TestEvaluateHeadcountContributorAttendance(t *testing.T) {
+	c := models.RSVPHeadcountContributor{
+		Label: "Member attendance", Mode: models.RSVPHeadcountModeAttendance,
+		MatchValues: []string{string(models.RSVPAttendanceYes)},
+	}
+
+	got := evaluateHeadcountContributor(c, models.JSONB{}, models.RSVPAttendanceYes)
+	if got.People != 1 || !got.Matched {
+		t.Fatalf("attendance mode must read the attendance column even with empty answers, got %+v", got)
+	}
+
+	got = evaluateHeadcountContributor(c, models.JSONB{}, models.RSVPAttendanceNo)
+	if got.People != 0 || got.Matched {
+		t.Fatalf("non-yes attendance column must not match, got %+v", got)
+	}
+
+	// AnswerKey is unused in attendance mode: a raw code sitting in the
+	// answers JSONB under "attendance" must not influence the result at all.
+	got = evaluateHeadcountContributor(c, models.JSONB{"attendance": "btn_42"}, models.RSVPAttendanceYes)
+	if got.People != 1 || !got.Matched {
+		t.Fatalf("attendance mode must ignore the answers JSONB, got %+v", got)
+	}
+}
+
 func TestLegacyHeadcountContributors(t *testing.T) {
 	// Events predating this feature must tally exactly as before.
 	got := legacyHeadcountContributors("attendance")
 	if len(got) != 2 {
 		t.Fatalf("expected member + spouse, got %d: %+v", len(got), got)
 	}
-	if got[0].AnswerKey != "attendance" || got[0].Mode != models.RSVPHeadcountModeBoolean {
-		t.Fatalf("first must be member attendance: %+v", got[0])
+	if got[0].Mode != models.RSVPHeadcountModeAttendance {
+		t.Fatalf("first must be member attendance, read from the attendance column: %+v", got[0])
+	}
+	if len(got[0].MatchValues) != 1 || got[0].MatchValues[0] != string(models.RSVPAttendanceYes) {
+		t.Fatalf("member attendance must match against the column's own \"yes\" vocabulary: %+v", got[0])
 	}
 	if got[1].AnswerKey != "spouse_attendance" || got[1].Mode != models.RSVPHeadcountModeBoolean {
 		t.Fatalf("second must be spouse attendance: %+v", got[1])
+	}
+}
+
+// TestLegacyHeadcountContributors_MatchesLiveAttendanceColumn is the live-data
+// regression this fix addresses. UpdateRSVPResponse lets an admin PATCH
+// resp.Attendance without touching resp.Answers, and a non-identity
+// AttendanceMap can map a raw button code into the attendance column while
+// leaving a different raw value in the answers JSONB. Either way, the member
+// contributor must agree with buildRSVPAttendanceBreakdown (rsvp_tally.go),
+// which counts strictly from the response.Attendance column. Reverting the
+// member contributor to AnswerKey/boolean mode makes both of these fail,
+// because normalizedRSVPAnswer reads the (here absent or misleading) answers
+// JSONB instead of the attendance column.
+func TestLegacyHeadcountContributors_MatchesLiveAttendanceColumn(t *testing.T) {
+	member := legacyHeadcountContributors("attendance")[0]
+
+	// Admin manually set Attendance=yes via PATCH; Answers was never touched.
+	got := evaluateHeadcountContributor(member, models.JSONB{}, models.RSVPAttendanceYes)
+	if got.People != 1 || !got.Matched {
+		t.Fatalf("a response with Attendance=yes and no answers must count 1 member, got %+v", got)
+	}
+
+	// AttendanceMap mapped a raw button code to "yes" in the column, but the
+	// raw code (not "yes"/"attending") is what's stored in the answers JSONB.
+	got = evaluateHeadcountContributor(member, models.JSONB{"attendance": "btn_rsvp_1"}, models.RSVPAttendanceYes)
+	if got.People != 1 || !got.Matched {
+		t.Fatalf("a yes attendance column must count 1 member regardless of the raw answers value, got %+v", got)
 	}
 }
