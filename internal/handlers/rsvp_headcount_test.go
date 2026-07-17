@@ -215,6 +215,57 @@ func TestLegacyHeadcountContributors(t *testing.T) {
 	}
 }
 
+func TestDeriveSpouseAttendanceKey(t *testing.T) {
+	// The legacy default must resolve to the same literal it used to be
+	// hardcoded to, so nothing shifts for an unconfigured event.
+	if got := deriveSpouseAttendanceKey(legacyHeadcountContributors("attendance"), "attendance"); got != "spouse_attendance" {
+		t.Fatalf("legacy contributors must resolve to spouse_attendance, got %q", got)
+	}
+
+	// A renamed spouse question, still the only non-attendance-field boolean
+	// contributor, must be honoured. This is the exact scenario a "second
+	// boolean contributor" rule would miss: Member is attendance-mode and
+	// contributes no boolean row at all, so there is only ONE boolean
+	// contributor here, not two.
+	renamed := models.RSVPHeadcountContributors{
+		{Label: "Member attendance", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+		{Label: "Partner attending", AnswerKey: "partner_coming", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes", "attending"}},
+	}
+	if got := deriveSpouseAttendanceKey(renamed, "attendance"); got != "partner_coming" {
+		t.Fatalf("renamed single spouse contributor must be honoured, got %q", got)
+	}
+
+	// A boolean contributor that reuses the event's own attendance field must
+	// be skipped - it is the member's own answer, not the spouse's.
+	memberAsBoolean := models.RSVPHeadcountContributors{
+		{Label: "Member (boolean)", AnswerKey: "attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+		{Label: "Spouse", AnswerKey: "partner_coming", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+	}
+	if got := deriveSpouseAttendanceKey(memberAsBoolean, "attendance"); got != "partner_coming" {
+		t.Fatalf("a boolean contributor on the attendance field must be skipped, got %q", got)
+	}
+
+	// Numeric and attendance-mode contributors are never candidates, even if
+	// they appear before a valid boolean one.
+	mixed := models.RSVPHeadcountContributors{
+		{Label: "Children", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric},
+		{Label: "Spouse", AnswerKey: "partner_coming", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},
+	}
+	if got := deriveSpouseAttendanceKey(mixed, "attendance"); got != "partner_coming" {
+		t.Fatalf("non-boolean contributors must be skipped, got %q", got)
+	}
+
+	// No qualifying contributor at all falls back to the historical default
+	// rather than an empty key.
+	noneQualify := models.RSVPHeadcountContributors{
+		{Label: "Member attendance", Mode: models.RSVPHeadcountModeAttendance, MatchValues: []string{"yes"}},
+		{Label: "Children", AnswerKey: "children_count", Mode: models.RSVPHeadcountModeNumeric},
+	}
+	if got := deriveSpouseAttendanceKey(noneQualify, "attendance"); got != "spouse_attendance" {
+		t.Fatalf("no qualifying contributor must fall back to spouse_attendance, got %q", got)
+	}
+}
+
 func TestValidateRSVPHeadcountContributors_Valid(t *testing.T) {
 	// The legacy default pair must always validate: it is what every
 	// unconfigured event silently runs on today.

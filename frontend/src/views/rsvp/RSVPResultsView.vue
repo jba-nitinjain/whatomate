@@ -110,10 +110,19 @@ function toneDot(value: string) { return TONE_DOT[bucketTone(value)] }
 // Union of answer keys across all responses (first-seen order), one column each.
 const answerKeys = computed<string[]>(() => visibleAnswerKeys(responses.value))
 
+// Configured contributors (or the legacy member+spouse pair the API falls back
+// to), used below to label a results column from its contributor label instead
+// of a hardcoded "spouse_attendance" key check - a renamed spouse question used
+// to fall through to the generic underscore-replacement prettifier with no
+// warning.
+const contributors = computed<RSVPContributor[]>(() => tally.value.contributors)
+
 function prettyKey(k: string): string {
-  if (k === attendanceField.value + '_title') return t('rsvp.memberAttendance')
-  if (k === 'spouse_attendance_title') return t('rsvp.spouseAttendance')
-  return k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+  const base = k.endsWith('_title') ? k.slice(0, -'_title'.length) : k
+  const contributor = contributors.value.find(c => c.answer_key === base)
+  if (contributor?.label) return contributor.label
+  if (base === attendanceField.value) return t('rsvp.memberAttendance')
+  return base.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
 const columns = computed<Column<RSVPRow>[]>(() => [

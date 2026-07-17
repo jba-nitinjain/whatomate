@@ -39,6 +39,20 @@ func TestBuildRSVPAttendanceBreakdownUsesConfiguredSpouseMobileField(t *testing.
 	}
 }
 
+func TestBuildRSVPAttendanceBreakdownUsesConfiguredSpouseKey(t *testing.T) {
+	// Renaming the spouse question in the flow builder must not silently zero the
+	// spouse card - which is exactly what the hardcoded key at rsvp_tally.go:52 did.
+	responses := []models.RSVPResponse{{
+		Attendance: models.RSVPAttendanceYes,
+		Answers:    models.JSONB{"partner_coming": "yes", "spouse_mobile": "919840445616"},
+	}}
+
+	got := buildRSVPAttendanceBreakdownWithKey(responses, "spouse_mobile", "partner_coming")
+	if got.Spouse.Attending != 1 {
+		t.Fatalf("configured spouse key must be honoured: %+v", got.Spouse)
+	}
+}
+
 func TestBuildRSVPHeadcount(t *testing.T) {
 	contributors := models.RSVPHeadcountContributors{
 		{Label: "Member", AnswerKey: "attendance", Mode: models.RSVPHeadcountModeBoolean, MatchValues: []string{"yes"}},

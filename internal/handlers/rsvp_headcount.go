@@ -209,6 +209,42 @@ func legacyHeadcountContributors(attendanceField string) models.RSVPHeadcountCon
 	}
 }
 
+// deriveSpouseAttendanceKey finds the configured contributor that stands in for
+// the event's dedicated Member/Spouse attendance cards (rsvpAttendanceBreakdown)
+// and the guest list's spouse_status filter, so a flow author renaming the spouse
+// question no longer silently zeros both.
+//
+// RSVPHeadcountContributor has no field marking a row as "the spouse contributor" -
+// label text and list position are both freely edited via the event builder (see
+// legacyHeadcountContributorRows in the frontend, which only seeds the initial
+// order) and are not a durable identity. A positional rule of "the SECOND boolean
+// contributor whose key isn't the attendance field" was considered and rejected:
+// the legacy default - and every event that has only configured a single spouse
+// question, the overwhelmingly common case - has exactly ONE boolean contributor
+// whose key differs from the attendance field, because Member attendance is
+// attendance-mode and carries no AnswerKey at all. Requiring a second such row
+// never finds it, silently falls through to the "spouse_attendance" default, and
+// reintroduces the exact bug this task removes for any renamed single-spouse
+// configuration. Taking the FIRST boolean contributor whose key isn't the
+// attendance field matches the legacy default and every single-spouse-contributor
+// configuration. If an event ever configures more than one such contributor (e.g.
+// an added "plus one"), the first in list order is used; that residual ambiguity
+// is inherent to the current config shape (no role field) and out of scope here.
+func deriveSpouseAttendanceKey(contributors models.RSVPHeadcountContributors, attendanceField string) string {
+	attendanceField = strings.TrimSpace(attendanceField)
+	for _, c := range contributors {
+		if c.Mode != models.RSVPHeadcountModeBoolean {
+			continue
+		}
+		key := strings.TrimSpace(c.AnswerKey)
+		if key == "" || key == attendanceField {
+			continue
+		}
+		return key
+	}
+	return "spouse_attendance"
+}
+
 // contributorLabel picks the best available name for a contributor to show in a
 // validation error, since a half-filled-in row in the editor may not have a
 // label yet.

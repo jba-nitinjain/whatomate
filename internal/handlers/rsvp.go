@@ -553,12 +553,13 @@ func (a *App) GetRSVPTally(r *fastglue.Request) error {
 		Where("organization_id = ? AND rsvp_event_id = ?", orgID, eventID).Find(&responses).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to tally RSVP responses", nil, "")
 	}
-	attendanceBreakdown := buildRSVPAttendanceBreakdown(responses, ev.SpouseMobileField)
-
 	contributors := ev.HeadcountContributors
 	if len(contributors) == 0 {
 		contributors = legacyHeadcountContributors(ev.AttendanceField)
 	}
+	spouseAttendanceKey := deriveSpouseAttendanceKey(contributors, ev.AttendanceField)
+	attendanceBreakdown := buildRSVPAttendanceBreakdownWithKey(responses, ev.SpouseMobileField, spouseAttendanceKey)
+
 	contributorTallies, totalAttending := buildRSVPHeadcount(responses, contributors)
 
 	return r.SendEnvelope(map[string]interface{}{

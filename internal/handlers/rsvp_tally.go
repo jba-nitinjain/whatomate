@@ -41,15 +41,27 @@ func addAttendanceCount(counts *rsvpAttendanceCounts, value string) {
 	}
 }
 
+// buildRSVPAttendanceBreakdown preserves the original signature and defaults for
+// callers that have no configured spouse key.
 func buildRSVPAttendanceBreakdown(responses []models.RSVPResponse, spouseMobileField string) rsvpAttendanceBreakdown {
+	return buildRSVPAttendanceBreakdownWithKey(responses, spouseMobileField, "spouse_attendance")
+}
+
+// buildRSVPAttendanceBreakdownWithKey takes the spouse attendance key explicitly.
+// It used to be hardcoded, so renaming the question in the flow builder silently
+// zeroed the spouse card with no warning.
+func buildRSVPAttendanceBreakdownWithKey(responses []models.RSVPResponse, spouseMobileField, spouseAttendanceKey string) rsvpAttendanceBreakdown {
 	if strings.TrimSpace(spouseMobileField) == "" {
 		spouseMobileField = "spouse_mobile"
+	}
+	if strings.TrimSpace(spouseAttendanceKey) == "" {
+		spouseAttendanceKey = "spouse_attendance"
 	}
 	var result rsvpAttendanceBreakdown
 	for _, response := range responses {
 		addAttendanceCount(&result.Member, string(response.Attendance))
 
-		spouseAnswer := normalizedRSVPAnswer(response.Answers, "spouse_attendance", "spouse_attendance_title")
+		spouseAnswer := normalizedRSVPAnswer(response.Answers, spouseAttendanceKey, spouseAttendanceKey+"_title")
 		if spouseAnswer == "yes" || spouseAnswer == "attending" {
 			result.Spouse.Attending++
 			mobile := normalizedRSVPAnswer(response.Answers, spouseMobileField)
