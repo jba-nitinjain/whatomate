@@ -869,8 +869,12 @@ func (a *App) startFlow(account *models.WhatsAppAccount, session *models.Chatbot
 	// session, and seed a pending response so the guest is tracked.
 	if event := a.rsvpEventForFlow(account.OrganizationID, flow.ID); event != nil {
 		// Turn away a repeat responder (same number, or a number already recorded
-		// as a spouse) with the already-recorded message instead of re-asking.
-		if a.rsvpAlreadyResponded(event, contact.PhoneNumber) {
+		// as a spouse) with the already-recorded message instead of re-asking. A
+		// follow-up deliberately targets people who already responded, so it is
+		// let through this guard - the not-invited and closed-event checks below
+		// still apply to it.
+		isFollowUp, _ := session.SessionData[rsvpFollowUpKey].(bool)
+		if rsvpShouldBlockDuplicate(isFollowUp, a.rsvpAlreadyResponded(event, contact.PhoneNumber)) {
 			msg := strings.TrimSpace(event.DuplicateMessage)
 			if msg == "" {
 				msg = "Your RSVP has already been recorded. Thank you!"

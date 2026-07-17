@@ -75,6 +75,13 @@ func mergeRSVPAnswers(existing, incoming models.JSONB) models.JSONB {
 	return merged
 }
 
+// rsvpShouldBlockDuplicate decides whether to turn a sender away with the event's
+// DuplicateMessage. A follow-up deliberately targets people who already responded,
+// so the guard must not apply to it - but it still protects the main RSVP.
+func rsvpShouldBlockDuplicate(isFollowUp, alreadyResponded bool) bool {
+	return !isFollowUp && alreadyResponded
+}
+
 // rsvpEventForFlow returns the active RSVP event linked to a flow, or nil.
 func (a *App) rsvpEventForFlow(orgID, flowID uuid.UUID) *models.RSVPEvent {
 	var event models.RSVPEvent
