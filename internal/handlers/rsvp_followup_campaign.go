@@ -77,16 +77,23 @@ func rsvpFollowUpCampaignName(eventName string, now time.Time) string {
 }
 
 // filterRSVPFollowUpRowsByResponseID narrows a loaded follow-up roster down to
-// the requested response ids, when the caller supplied any. An empty or
-// unparsable id list leaves rows untouched - response_ids is an optional
-// refinement of the audience, not a required selector.
-func filterRSVPFollowUpRowsByResponseID(rows []rsvpGuestRosterRow, responseIDs []string) []rsvpGuestRosterRow {
+// the requested response ids, when the caller supplied any. No response_ids
+// at all means "use the whole audience" - the intended default, since the UI
+// never has to send this field for an untouched selection. But once the
+// caller DOES supply response_ids, this must not fail open: a stale or
+// garbled selection (every id unparsable, or every id valid but none of them
+// present in the loaded roster) previously fell back to returning `rows`
+// untouched - silently sending to the entire audience instead of the chosen
+// few, the opposite of what the caller asked for. Both cases now return a
+// rsvpUserFacingError instead, which SendRSVPFollowUp surfaces as a 400
+// (mirrors the rsvpUserFacingError contract documented in rsvp_reminders.go).
+func filterRSVPFollowUpRowsByResponseID(rows []rsvpGuestRosterRow, responseIDs []string) ([]rsvpGuestRosterRow, error) {
 	if len(responseIDs) == 0 {
-		return rows
+		return rows, nil
 	}
 	ids, _ := parseRSVPResponseIDs(responseIDs)
 	if len(ids) == 0 {
-		return rows
+		return nil, rsvpUserFacingError{fmt.Errorf("selected guests could not be recognized - refresh the recipient list and try again")}
 	}
 	want := make(map[uuid.UUID]bool, len(ids))
 	for _, id := range ids {
@@ -98,7 +105,10 @@ func filterRSVPFollowUpRowsByResponseID(rows []rsvpGuestRosterRow, responseIDs [
 			filtered = append(filtered, row)
 		}
 	}
-	return filtered
+	if len(filtered) == 0 {
+		return nil, rsvpUserFacingError{fmt.Errorf("selected guests are no longer part of this audience - refresh the recipient list and try again")}
+	}
+	return filtered, nil
 }
 
 // rsvpFollowUpFlowIsEventPrimary reports whether flowID is the event's own
@@ -203,7 +213,11 @@ func (a *App) SendRSVPFollowUp(r *fastglue.Request) error {
 		status, message := rsvpFollowUpGuestLoadErrorEnvelope(err)
 		return r.SendErrorEnvelope(status, message, nil, "")
 	}
-	rows = filterRSVPFollowUpRowsByResponseID(rows, req.ResponseIDs)
+	rows, err = filterRSVPFollowUpRowsByResponseID(rows, req.ResponseIDs)
+	if err != nil {
+		status, message := rsvpFollowUpGuestLoadErrorEnvelope(err)
+		return r.SendErrorEnvelope(status, message, nil, "")
+	}
 
 	baseURL := a.requestPublicBaseURL(r.RequestCtx)
 	result, err := a.createRSVPFollowUpCampaign(r.RequestCtx, event, &template, flow.ID, req.TemplateParams, rows, userID, req.StagingID, req.StagingFilename, baseURL)

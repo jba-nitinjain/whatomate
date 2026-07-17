@@ -264,8 +264,9 @@ func TestRSVPFollowUpFlowWrongAccount(t *testing.T) {
 }
 
 // TestRSVPFollowUpRowsFilterByResponseID pins the optional response_ids
-// refinement: when supplied, it narrows the audience-loaded roster down to
-// exactly those ids; when empty or unparsable, the roster is untouched.
+// refinement: when supplied and valid, it narrows the audience-loaded roster
+// down to exactly those ids; when the caller supplies nothing at all, the
+// roster is untouched (the intended default - "use the whole audience").
 func TestRSVPFollowUpRowsFilterByResponseID(t *testing.T) {
 	keep := uuid.New()
 	drop := uuid.New()
@@ -274,10 +275,50 @@ func TestRSVPFollowUpRowsFilterByResponseID(t *testing.T) {
 		{RSVPResponse: models.RSVPResponse{BaseModel: models.BaseModel{ID: drop}}},
 	}
 
-	filtered := filterRSVPFollowUpRowsByResponseID(rows, []string{keep.String()})
+	filtered, err := filterRSVPFollowUpRowsByResponseID(rows, []string{keep.String()})
+	require.NoError(t, err)
 	require.Len(t, filtered, 1)
 	assert.Equal(t, keep, filtered[0].ID)
 
-	assert.Equal(t, rows, filterRSVPFollowUpRowsByResponseID(rows, nil))
-	assert.Equal(t, rows, filterRSVPFollowUpRowsByResponseID(rows, []string{"not-a-uuid"}))
+	noneSupplied, err := filterRSVPFollowUpRowsByResponseID(rows, nil)
+	require.NoError(t, err)
+	assert.Equal(t, rows, noneSupplied)
+}
+
+// TestRSVPFollowUpRowsFilterByResponseIDRejectsUnparsableSelection pins the
+// fix for the fail-open this task closed: previously, a response_ids slice
+// that yielded zero valid ids (e.g. every entry was garbled/stale) fell back
+// to returning the full roster untouched - silently sending to the entire
+// audience instead of the empty/garbled selection the caller actually sent.
+// That is the opposite of what an admin who picked specific guests asked
+// for, so it must now return a user-facing error instead.
+func TestRSVPFollowUpRowsFilterByResponseIDRejectsUnparsableSelection(t *testing.T) {
+	rows := []rsvpGuestRosterRow{
+		{RSVPResponse: models.RSVPResponse{BaseModel: models.BaseModel{ID: uuid.New()}}},
+	}
+
+	filtered, err := filterRSVPFollowUpRowsByResponseID(rows, []string{"not-a-uuid"})
+	require.Error(t, err, "an unparsable response_ids selection must not silently fall back to the whole audience")
+	assert.Nil(t, filtered)
+	var userErr rsvpUserFacingError
+	require.ErrorAs(t, err, &userErr, "must be a rsvpUserFacingError so SendRSVPFollowUp surfaces it as a 400 instead of a generic 500")
+}
+
+// TestRSVPFollowUpRowsFilterByResponseIDRejectsNoMatchingRows pins the other
+// half of the same fix: response_ids that parse fine but match none of the
+// rows in the loaded audience (a stale selection from a previous
+// audience/answer_key) must also error rather than silently sending to
+// everyone - an admin who selected specific guests and got "sent to
+// everyone" would be a serious surprise on a live event.
+func TestRSVPFollowUpRowsFilterByResponseIDRejectsNoMatchingRows(t *testing.T) {
+	rows := []rsvpGuestRosterRow{
+		{RSVPResponse: models.RSVPResponse{BaseModel: models.BaseModel{ID: uuid.New()}}},
+	}
+	staleID := uuid.New()
+
+	filtered, err := filterRSVPFollowUpRowsByResponseID(rows, []string{staleID.String()})
+	require.Error(t, err, "response_ids that match no row in the loaded audience must not silently fall back to the whole audience")
+	assert.Nil(t, filtered)
+	var userErr rsvpUserFacingError
+	require.ErrorAs(t, err, &userErr, "must be a rsvpUserFacingError so SendRSVPFollowUp surfaces it as a 400 instead of a generic 500")
 }
