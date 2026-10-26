@@ -236,6 +236,7 @@ func DefaultPermissions() []Permission {
 		{Resource: ResourceLeadAds, Action: ActionWrite, Description: "Create and edit lead sources and mappings"},
 		{Resource: ResourceLeadAds, Action: ActionDelete, Description: "Delete lead sources and mappings"},
 		{Resource: ResourceLeadAds, Action: ActionExecute, Description: "Sync, retry and trigger leads"},
+		{Resource: ResourceLeadAds, Action: ActionExport, Description: "Export leads"},
 	}
 }
 
@@ -290,7 +291,7 @@ func SystemRolePermissions() map[string][]string {
 		"call_transfers:read", "call_transfers:write",
 		"outgoing_calls:read", "outgoing_calls:write",
 		// Lead Ads
-		"lead_ads:read", "lead_ads:write", "lead_ads:delete", "lead_ads:execute",
+		"lead_ads:read", "lead_ads:write", "lead_ads:delete", "lead_ads:execute", "lead_ads:export",
 	}
 
 	agentPermissions := []string{
