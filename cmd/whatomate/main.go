@@ -164,6 +164,9 @@ func runServer(args []string) {
 		if err := database.RunMigrationWithProgress(db, &cfg.DefaultAdmin); err != nil {
 			lo.Fatal("Migration failed", "error", err)
 		}
+		// NOTE: upstream's handlers.BackfillChatbotFlowGraph is intentionally NOT
+		// run here. This fork keeps the step-based chatbot engine (ChatbotFlowStep)
+		// as the runtime for all flows and RSVP; the v2 graph runner is dormant.
 	}
 
 	// Connect to Redis
@@ -519,6 +522,8 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/health", app.HealthCheck)
 	g.GET("/ready", app.ReadyCheck)
 
+	g.GET("/api/embedded-signup/config", app.GetEmbeddedSignupConfig)
+
 	// Auth routes (public, optionally rate-limited)
 	if cfg.RateLimit.Enabled {
 		window := time.Duration(cfg.RateLimit.WindowSeconds) * time.Second
@@ -694,9 +699,11 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/accounts/onboarding/sessions/{id}/validate-webhook", app.ValidateOnboardingWebhook)
 	g.POST("/api/accounts/onboarding/sessions/{id}/subscribe-webhooks", app.SubscribeOnboardingWebhooks)
 	g.POST("/api/accounts/onboarding/sessions/{id}/finalize", app.FinalizeWhatsAppOnboarding)
+	g.POST("/api/accounts/exchange-token", app.ExchangeToken) // Embedded signup
 	g.GET("/api/accounts/{id}", app.GetAccount)
 	g.PUT("/api/accounts/{id}", app.UpdateAccount)
 	g.DELETE("/api/accounts/{id}", app.DeleteAccount)
+	g.POST("/api/accounts/{id}/register", app.RegisterPhoneNumber) // Embedded signup manual/2fa registration
 	g.POST("/api/accounts/{id}/test", app.TestAccountConnection)
 	g.POST("/api/accounts/{id}/subscribe", app.SubscribeApp)
 	g.GET("/api/accounts/{id}/phone-status", app.GetAccountPhoneStatus)

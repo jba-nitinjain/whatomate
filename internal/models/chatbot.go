@@ -162,6 +162,9 @@ type ChatbotFlow struct {
 	CancelKeywords     StringArray  `gorm:"type:jsonb" json:"cancel_keywords"`
 	PanelConfig        JSONB        `gorm:"type:jsonb;default:'{}'" json:"panel_config"`  // Contact info panel configuration
 	CanvasLayout       JSONB        `gorm:"type:jsonb;default:'{}'" json:"canvas_layout"` // Node positions for flow diagram
+	// Graph holds upstream's v2 graph representation. It is stored for
+	// forward compatibility only; the step engine (Steps) remains the runtime.
+	Graph JSONB `gorm:"type:jsonb" json:"graph,omitempty"`
 	CreatedByID        *uuid.UUID   `gorm:"type:uuid" json:"created_by_id,omitempty"`
 	UpdatedByID        *uuid.UUID   `gorm:"type:uuid" json:"updated_by_id,omitempty"`
 

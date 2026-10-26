@@ -309,6 +309,8 @@ func SystemRolePermissions() map[string][]string {
 
 	agentPermissions := []string{
 		"rsvp:read",
+		// Accounts (read only)
+		"accounts:read",
 		// Chat
 		"chat:read", "chat:write",
 		// Contacts (read only)

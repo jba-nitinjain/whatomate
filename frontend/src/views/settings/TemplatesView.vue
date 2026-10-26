@@ -20,6 +20,7 @@ import { useSearchPagination } from '@/composables/useSearchPagination'
 import { useViewRefresh } from '@/composables/useViewRefresh'
 import { useDebounceFn } from '@vueuse/core'
 import { openCampaignFromTemplate } from '@/utils/templateCampaign'
+import { getQualityBadgeClass, getQualityRatingLabel } from '@/lib/utils'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -48,6 +49,7 @@ interface Template {
   sample_values: any[]
   created_at: string
   updated_at: string
+  quality_rating?: string
 }
 
 const organizationsStore = useOrganizationsStore()
@@ -77,6 +79,7 @@ const columns = computed<Column<Template>[]>(() => [
   { key: 'name', label: t('templates.name'), sortable: true },
   { key: 'category', label: t('templates.category'), sortable: true },
   { key: 'status', label: t('templates.status'), sortable: true },
+  { key: 'quality_rating', label: t('templates.qualityRating'), sortable: true },
   { key: 'language', label: t('templates.language'), sortable: true },
   { key: 'header_type', label: t('templates.header') },
   { key: 'actions', label: '', align: 'right' },
@@ -552,6 +555,12 @@ function getHeaderIcon(type: string) {
                   <Badge :class="getStatusBadgeClass(template.status)" class="text-xs">
                     {{ template.status }}
                   </Badge>
+                </template>
+                <template #cell-quality_rating="{ item: template }">
+                  <Badge v-if="template.quality_rating" :class="getQualityBadgeClass(template.quality_rating)" class="text-xs">
+                    {{ getQualityRatingLabel(template.quality_rating, t) }}
+                  </Badge>
+                  <span v-else class="text-muted-foreground text-xs">—</span>
                 </template>
                 <template #cell-language="{ item: template }">
                   <span class="text-muted-foreground">{{ getLanguageName(template.language) }}</span>

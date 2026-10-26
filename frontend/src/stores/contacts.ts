@@ -190,6 +190,9 @@ export const useContactsStore = defineStore('contacts', () => {
 
   async function fetchMessages(contactId: string, params?: { page?: number; limit?: number; account?: string }) {
     isLoadingMessages.value = true
+    // Drop the previous contact's messages immediately so the list doesn't show
+    // stale content under the new contact's header while the fetch is in flight.
+    messages.value = []
     try {
       const response = await messagesService.list(contactId, params)
       // API returns { status: "success", data: { messages: [...], has_more: boolean } }
@@ -262,12 +265,14 @@ export const useContactsStore = defineStore('contacts', () => {
     templateParams?: Record<string, string>,
     accountName?: string,
     headerFile?: File,
-    buttonParams?: Record<string, string>
+    buttonParams?: Record<string, string>,
+    headerParams?: Record<string, string>
   ) {
     try {
       const response = await messagesService.sendTemplate(contactId, {
         template_name: templateName,
         template_params: templateParams,
+        header_params: headerParams,
         button_params: buttonParams,
         account_name: accountName
       }, headerFile)

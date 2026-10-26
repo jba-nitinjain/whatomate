@@ -268,8 +268,40 @@ func (a *App) applyPhoneStatusToSession(session *models.WhatsAppOnboardingSessio
 		step.Status = onboardingStateActionRequired
 		step.Summary = "Meta reports this as a sandbox or test number. Switch to a production number before final launch."
 	}
+	if status.IsCoexistence() {
+		// Coexistence: the number stays on the WhatsApp Business app and is
+		// already registered, so verification/registration is not required.
+		step.Status = onboardingStateCompleted
+		step.Summary = "Number is connected from the WhatsApp Business app (Coexistence); Meta registration is not required."
+		step.Details = mergeMaps(step.Details, map[string]any{
+			"is_smb":              true,
+			"platform_type":       status.PlatformType,
+			"registration_status": onboardingStateCompleted,
+		})
+		a.markOnboardingAccountCoexistence(session)
+	}
 
 	a.setOnboardingStepState(session, onboardingStepPhoneSetup, step)
+}
+
+// markOnboardingAccountCoexistence flags the session's imported account as a
+// Coexistence (WhatsApp Business app) number.
+func (a *App) markOnboardingAccountCoexistence(session *models.WhatsAppOnboardingSession) {
+	if session.AccountID == nil || *session.AccountID == uuid.Nil {
+		return
+	}
+	var account models.WhatsAppAccount
+	if err := a.DB.Where("id = ? AND organization_id = ?", *session.AccountID, session.OrganizationID).First(&account).Error; err != nil {
+		return
+	}
+	if account.IsSMB {
+		return
+	}
+	if err := a.DB.Model(&account).Update("is_smb", true).Error; err != nil {
+		a.Log.Warn("Failed to flag account as coexistence", "account_id", account.ID, "error", err)
+		return
+	}
+	a.InvalidateWhatsAppAccountCache(account.PhoneID)
 }
 
 func (a *App) setOnboardingFailure(session *models.WhatsAppOnboardingSession, stepName string, err error) {

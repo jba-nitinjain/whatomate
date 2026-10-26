@@ -105,7 +105,7 @@ func (a *App) runAccountConnectionCheck(account *models.WhatsAppAccount) (*accou
 		}, nil
 	}
 
-	requestURL := fmt.Sprintf("%s/%s/%s?fields=display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier",
+	requestURL := fmt.Sprintf("%s/%s/%s?fields=display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier,whatsapp_business_manager_messaging_limit",
 		a.Config.WhatsApp.BaseURL, account.APIVersion, account.PhoneID)
 	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
 	if err != nil {
@@ -140,12 +140,28 @@ func (a *App) runAccountConnectionCheck(account *models.WhatsAppAccount) (*accou
 	verifiedName, _ := result["verified_name"].(string)
 	isTestNumber := accountMode == "SANDBOX" || strings.EqualFold(verifiedName, "Test Number")
 
+	// Resolve messaging limit tier, falling back to the newer portfolio-based
+	// field and then to the WABA when the deprecated field is missing.
+	messagingLimitTier := toString(result["messaging_limit_tier"])
+	if messagingLimitTier == "" {
+		messagingLimitTier = toString(result["whatsapp_business_manager_messaging_limit"])
+	}
+	if messagingLimitTier == "" && account.BusinessID != "" {
+		wabaURL := fmt.Sprintf("%s/%s/%s?fields=whatsapp_business_manager_messaging_limit",
+			a.Config.WhatsApp.BaseURL, account.APIVersion, account.BusinessID)
+		if wabaResult, wabaStatus, wabaErr := a.fetchMetaJSON(wabaURL, account.AccessToken); wabaErr == nil && wabaStatus == http.StatusOK {
+			messagingLimitTier = toString(wabaResult["whatsapp_business_manager_messaging_limit"])
+		} else if wabaErr != nil {
+			a.Log.Warn("WABA messaging limit fallback failed", "waba_id", account.BusinessID, "error", wabaErr)
+		}
+	}
+
 	check := &accountConnectionCheck{
 		Success:                true,
 		DisplayPhoneNumber:     toString(result["display_phone_number"]),
 		VerifiedName:           verifiedName,
 		QualityRating:          toString(result["quality_rating"]),
-		MessagingLimitTier:     toString(result["messaging_limit_tier"]),
+		MessagingLimitTier:     messagingLimitTier,
 		CodeVerificationStatus: verificationStatus,
 		AccountMode:            accountMode,
 		IsTestNumber:           isTestNumber,

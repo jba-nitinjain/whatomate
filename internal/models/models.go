@@ -325,7 +325,9 @@ type WhatsAppAccount struct {
 	// Calling API. Used by the canned-response editor to disable the Call
 	// button option, and by the send path to refuse voice_call sends.
 	BusinessCallingEnabled bool       `gorm:"default:false" json:"business_calling_enabled"`
+	IsSMB                  bool       `gorm:"default:false" json:"is_smb"`
 	Status                 string     `gorm:"size:20;default:'active'" json:"status"`
+	Pin                    string     `gorm:"size:255" json:"-"` // 6-digit 2FA PIN (encrypted)
 	CreatedByID            *uuid.UUID `gorm:"type:uuid" json:"created_by_id,omitempty"`
 	UpdatedByID            *uuid.UUID `gorm:"type:uuid" json:"updated_by_id,omitempty"`
 
@@ -381,9 +383,9 @@ func (a *WhatsAppAccount) ToWAAccount() *whatsapp.Account {
 	}
 }
 
-// DecryptSecrets decrypts the encrypted access token and app secret fields.
+// DecryptSecrets decrypts the encrypted access token, app secret, and pin fields.
 func (a *WhatsAppAccount) DecryptSecrets(encryptionKey string) {
-	crypto.DecryptFields(encryptionKey, &a.AccessToken, &a.AppSecret)
+	crypto.DecryptFields(encryptionKey, &a.AccessToken, &a.AppSecret, &a.Pin)
 }
 
 // Contact represents a WhatsApp contact/profile
@@ -469,7 +471,8 @@ type Template struct {
 	Language        string     `gorm:"size:10;not null" json:"language"`
 	Category        string     `gorm:"size:50" json:"category"`                 // MARKETING, UTILITY, AUTHENTICATION
 	Status          string     `gorm:"size:20;default:'PENDING'" json:"status"` // PENDING, APPROVED, REJECTED
-	HeaderType      string     `gorm:"size:20" json:"header_type"`              // TEXT, IMAGE, DOCUMENT, VIDEO
+	QualityRating   string     `gorm:"size:50;default:'UNKNOWN'" json:"quality_rating"`
+	HeaderType      string     `gorm:"size:20" json:"header_type"` // TEXT, IMAGE, DOCUMENT, VIDEO
 	HeaderContent   string     `gorm:"type:text" json:"header_content"`
 	BodyContent     string     `gorm:"type:text;not null" json:"body_content"`
 	FooterContent   string     `gorm:"type:text" json:"footer_content"`

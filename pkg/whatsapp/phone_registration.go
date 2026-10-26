@@ -15,6 +15,20 @@ type PhoneNumberStatus struct {
 	AccountMode            string `json:"account_mode"`
 	QualityRating          string `json:"quality_rating"`
 	MessagingLimitTier     string `json:"messaging_limit_tier"`
+	// IsOnBizApp / PlatformType identify WhatsApp Business app numbers that
+	// were onboarded via Coexistence (they are already registered and must
+	// not go through the Cloud API /register call).
+	IsOnBizApp   bool   `json:"is_on_biz_app"`
+	PlatformType string `json:"platform_type"`
+}
+
+// IsCoexistence reports whether the number is a WhatsApp Business app (SMB)
+// number connected to the Cloud API via Coexistence.
+func (s *PhoneNumberStatus) IsCoexistence() bool {
+	if s == nil {
+		return false
+	}
+	return s.IsOnBizApp || s.PlatformType == "SMB" || s.PlatformType == "SMB_CLOUD_API"
 }
 
 // RequestCodeResponse represents a successful response from Meta's request_code endpoint.
@@ -55,7 +69,7 @@ type RegisterPhoneNumberRequest struct {
 
 // GetPhoneNumberStatus retrieves phone number metadata needed for verification and registration flows.
 func (c *Client) GetPhoneNumberStatus(ctx context.Context, account *Account) (*PhoneNumberStatus, error) {
-	fields := "display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier"
+	fields := "display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier,is_on_biz_app,platform_type"
 	url := fmt.Sprintf("%s/%s/%s?fields=%s", c.getBaseURL(), account.APIVersion, account.PhoneID, fields)
 
 	respBody, err := c.doRequest(ctx, http.MethodGet, url, nil, account.AccessToken)

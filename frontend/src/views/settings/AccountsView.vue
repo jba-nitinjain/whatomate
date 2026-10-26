@@ -66,6 +66,7 @@ interface WhatsAppAccount {
   marketing_messages_lite_onboarded: boolean;
   marketing_messages_lite_enabled: boolean;
   business_calling_enabled?: boolean;
+  is_smb?: boolean;
   status: string;
   has_access_token: boolean;
   has_app_secret: boolean;
@@ -675,6 +676,15 @@ const webhookUrl = window.location.origin + basePath + "/api/webhook";
                       >
                         <TestTube2 class="h-3 w-3 mr-1" />
                         {{ $t("accounts.testNumber") }}
+                      </Badge>
+                      <!-- Coexistence (WhatsApp Business app) Badge -->
+                      <Badge
+                        v-if="account.is_smb"
+                        variant="outline"
+                        class="border-sky-600 text-sky-600 light:border-sky-500 light:text-sky-700"
+                        :title="$t('accounts.coexistenceBadgeDesc')"
+                      >
+                        {{ $t("accounts.coexistenceBadge") }}
                       </Badge>
                     </div>
 

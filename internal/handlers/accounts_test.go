@@ -20,7 +20,7 @@ func TestApp_ListAccounts_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	// Create two accounts for this org
 	acc1 := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
@@ -55,7 +55,7 @@ func TestApp_ListAccounts_Empty(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -93,8 +93,8 @@ func TestApp_ListAccounts_OrgIsolation(t *testing.T) {
 	app := newTestApp(t)
 	org1 := testutil.CreateTestOrganization(t, app.DB)
 	org2 := testutil.CreateTestOrganization(t, app.DB)
-	user1 := testutil.CreateTestUser(t, app.DB, org1.ID)
-	user2 := testutil.CreateTestUser(t, app.DB, org2.ID)
+	user1 := createAdminUser(t, app, org1.ID)
+	user2 := createAdminUser(t, app, org2.ID)
 
 	// Create accounts for org1
 	testutil.CreateTestWhatsAppAccount(t, app.DB, org1.ID)
@@ -143,7 +143,7 @@ func TestApp_CreateAccount_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":         "My WhatsApp Account",
@@ -177,7 +177,7 @@ func TestApp_CreateAccount_WithOptionalFields(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	req := testutil.NewJSONRequest(t, map[string]interface{}{
 		"name":                              "Full Account",
@@ -223,7 +223,8 @@ func TestApp_CreateAccount_RejectsMMLiteWithoutOnboarding(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	// CreateAccount is gated on accounts:write (upstream #415).
+	user := createAdminUser(t, app, org.ID)
 
 	req := testutil.NewJSONRequest(t, map[string]interface{}{
 		"name":                            "MM Lite Account",
@@ -244,7 +245,7 @@ func TestApp_CreateAccount_ValidationErrors(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	tests := []struct {
 		name string
@@ -325,7 +326,7 @@ func TestApp_GetAccount_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	req := testutil.NewGETRequest(t)
@@ -355,7 +356,7 @@ func TestApp_GetAccount_NotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -371,7 +372,7 @@ func TestApp_GetAccount_InvalidID(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -391,7 +392,7 @@ func TestApp_GetAccount_CrossOrgIsolation(t *testing.T) {
 	org1 := testutil.CreateTestOrganization(t, app.DB)
 	org2 := testutil.CreateTestOrganization(t, app.DB)
 
-	user2 := testutil.CreateTestUser(t, app.DB, org2.ID)
+	user2 := createAdminUser(t, app, org2.ID)
 
 	// Create account in org1
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org1.ID)
@@ -413,7 +414,7 @@ func TestApp_UpdateAccount_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	req := testutil.NewJSONRequest(t, map[string]any{
@@ -449,6 +450,7 @@ func TestApp_UpdateAccount_Success(t *testing.T) {
 	require.NoError(t, app.DB.Where("id = ?", account.ID).First(&updated).Error)
 	assert.Equal(t, "Updated Account Name", updated.Name)
 	assert.Equal(t, "new-phone-id", updated.PhoneID)
+	updated.DecryptSecrets(app.Config.App.EncryptionKey)
 	assert.Equal(t, "new-access-token", updated.AccessToken)
 }
 
@@ -457,7 +459,7 @@ func TestApp_UpdateAccount_PartialUpdate(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	// Only update the name, leave other fields unchanged
@@ -488,7 +490,7 @@ func TestApp_UpdateAccount_NotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	req := testutil.NewJSONRequest(t, map[string]any{
 		"name": "Updated Name",
@@ -506,7 +508,7 @@ func TestApp_UpdateAccount_InvalidID(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	req := testutil.NewJSONRequest(t, map[string]any{
 		"name": "Updated",
@@ -526,7 +528,7 @@ func TestApp_DeleteAccount_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	req := testutil.NewGETRequest(t)
@@ -557,7 +559,7 @@ func TestApp_DeleteAccount_NotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -573,7 +575,7 @@ func TestApp_DeleteAccount_InvalidID(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := createAdminUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -592,7 +594,7 @@ func TestApp_DeleteAccount_CrossOrgIsolation(t *testing.T) {
 	org1 := testutil.CreateTestOrganization(t, app.DB)
 	org2 := testutil.CreateTestOrganization(t, app.DB)
 
-	user2 := testutil.CreateTestUser(t, app.DB, org2.ID)
+	user2 := createAdminUser(t, app, org2.ID)
 
 	// Create account in org1
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org1.ID)

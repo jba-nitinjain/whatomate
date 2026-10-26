@@ -599,7 +599,7 @@ export const messagesService = {
       }
     },
   ) => api.post(`/contacts/${contactId}/messages`, data),
-  sendTemplate: (contactId: string, data: { template_name: string; template_params?: Record<string, string>; button_params?: Record<string, string>; account_name?: string }, headerFile?: File) => {
+  sendTemplate: (contactId: string, data: { template_name: string; template_params?: Record<string, string>; header_params?: Record<string, string>; button_params?: Record<string, string>; account_name?: string }, headerFile?: File) => {
     if (headerFile) {
       const formData = new FormData();
       formData.append("contact_id", contactId);
@@ -609,6 +609,9 @@ export const messagesService = {
           "template_params",
           JSON.stringify(data.template_params),
         );
+      }
+      if (data.header_params) {
+        formData.append('header_params', JSON.stringify(data.header_params))
       }
       if (data.button_params) {
         formData.append('button_params', JSON.stringify(data.button_params))
@@ -1496,6 +1499,46 @@ export interface IVRFlowData {
   nodes: IVRNode[];
   edges: IVREdge[];
   entry_node: string;
+}
+
+// v2 Node-based Chatbot Flow types. Mirrors IVR's graph shape with a
+// chat-specific node-type union. Only types listed in the union are
+// implemented today; others land in Phase 3.
+export type ChatNodeType =
+  | 'start'
+  | 'message'
+  | 'buttons'
+  | 'end'
+  | 'prompt'
+  | 'api_call'
+  | 'condition'
+  | 'timing'
+  | 'set_variable'
+  | 'ai_response'
+  | 'transfer'
+  | 'webhook'
+  | 'goto_flow'
+  | 'whatsapp_flow'
+
+export interface ChatNode {
+  id: string
+  type: ChatNodeType
+  label: string
+  position: IVRNodePosition
+  config: Record<string, any>
+}
+
+export interface ChatEdge {
+  from: string
+  to: string
+  condition: string
+}
+
+export interface ChatFlowGraph {
+  version: 2
+  nodes: ChatNode[]
+  edges: ChatEdge[]
+  entry_node: string
 }
 
 export interface IVRFlow {

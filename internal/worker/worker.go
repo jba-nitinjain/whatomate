@@ -124,6 +124,7 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 		PhoneNumber:    job.PhoneNumber,
 		RecipientName:  job.RecipientName,
 		TemplateParams: job.TemplateParams,
+		HeaderParams:   job.HeaderParams,
 	}
 
 	// Send template message
@@ -380,8 +381,31 @@ func (w *Worker) sendTemplateMessage(ctx context.Context, account *models.WhatsA
 	bodyParams := templateutil.ResolveParamsMap(template.BodyContent, recipient.TemplateParams)
 	buttonParams, _ := templateutil.ResolveURLButtonParams(template.Buttons, recipient.TemplateParams)
 
-	// Use the shared component builder (same as chat template sending)
-	components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(bodyParams, buttonParams, nil, template.Buttons, template.HeaderType, campaignHeaderMediaID, campaignHeaderMediaURL)
+	// Resolve the header text parameter (if any) into its own map. Prefer
+	// recipient.HeaderParams (new path, populated by AddRecipients) and fall
+	// back to a TemplateParams lookup for legacy recipient rows persisted
+	// before HeaderParams existed.
+	var headerParams map[string]string
+	if template.HeaderType == "TEXT" {
+		if hNames := templateutil.ExtParamNames(template.HeaderContent); len(hNames) == 1 {
+			name := hNames[0]
+			if raw, ok := recipient.HeaderParams[name]; ok {
+				headerParams = map[string]string{name: fmt.Sprintf("%v", raw)}
+			} else if raw, ok := recipient.TemplateParams[name]; ok {
+				headerParams = map[string]string{name: fmt.Sprintf("%v", raw)}
+			}
+		}
+	}
+
+	// Use the shared component builder (same as chat template sending).
+	components, err := whatsapp.BuildTemplateComponentsWithHeaderText(
+		bodyParams, buttonParams, nil, template.Buttons,
+		template.HeaderType, template.HeaderContent, headerParams,
+		campaignHeaderMediaID, campaignHeaderMediaURL,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to build template components: %w", err)
+	}
 	// Add auto-generated button components (Flow needs flow_token)
 	components = append(components, whatsapp.AutoButtonComponents(template.Buttons)...)
 
