@@ -254,6 +254,38 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		assert.Equal(t, "919876543210", sentMsg["to"])
 	})
 
+	t.Run("existing contact account assignment is not overwritten", func(t *testing.T) {
+		t.Parallel()
+		mockServer := newMockWhatsAppServer()
+		defer mockServer.close()
+
+		app := newMsgTestApp(t, mockServer)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		homeAccount := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+		sendAccount := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+		tpl := createTestTemplate(t, app, org.ID, sendAccount.Name)
+		contact := testutil.CreateTestContactWith(t, app.DB, org.ID,
+			testutil.WithContactAccount(homeAccount.Name), testutil.WithPhoneNumber("919876500001"))
+
+		req := testutil.NewJSONRequest(t, map[string]interface{}{
+			"phone_number":    contact.PhoneNumber,
+			"phone_number_id": sendAccount.PhoneID,
+			"template_name":   tpl.Name,
+			"template_params": map[string]string{"name": "Eve", "order_id": "ORD-9"},
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+
+		require.NoError(t, app.SendTemplateMessage(req))
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+		app.WaitForBackgroundTasks()
+
+		var reloaded models.Contact
+		require.NoError(t, app.DB.First(&reloaded, contact.ID).Error)
+		assert.Equal(t, homeAccount.Name, reloaded.WhatsAppAccount)
+	})
+
 	t.Run("marketing template uses mm lite delivery route when enabled", func(t *testing.T) {
 		t.Parallel()
 		mockServer := newMockWhatsAppServer()

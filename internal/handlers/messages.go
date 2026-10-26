@@ -1136,6 +1136,18 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		}
 	}
 
+	// A contact with no WhatsApp account (typically one just auto-created from
+	// phone_number) is bound to the sending account so the chat, replies and
+	// account-scoped flows land on the right number. An existing assignment is
+	// never overwritten here.
+	if contact.WhatsAppAccount == "" {
+		if err := a.DB.Model(contact).Update("whats_app_account", account.Name).Error; err != nil {
+			a.Log.Warn("Failed to bind contact to sending account", "error", err, "contact_id", contact.ID)
+		} else {
+			contact.WhatsAppAccount = account.Name
+		}
+	}
+
 	// Send using unified message sender
 	msgReq := OutgoingMessageRequest{
 		Account:                     account,
