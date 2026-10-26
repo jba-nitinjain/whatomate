@@ -236,6 +236,18 @@ func repeatChar(char string, n int) string {
 	return result
 }
 
+// dropInvalidMessagesUnreadIndexSQL removes an INVALID idx_messages_contact_unread
+// left behind by an interrupted CREATE INDEX CONCURRENTLY.
+const dropInvalidMessagesUnreadIndexSQL = `DO $$
+BEGIN
+	IF EXISTS (
+		SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+		WHERE c.relname = 'idx_messages_contact_unread' AND NOT i.indisvalid
+	) THEN
+		EXECUTE 'DROP INDEX idx_messages_contact_unread';
+	END IF;
+END $$`
+
 // getIndexes returns all index creation SQL statements
 func getIndexes() []string {
 	return []string{
@@ -249,8 +261,14 @@ func getIndexes() []string {
 		// Indexes
 		`CREATE INDEX IF NOT EXISTS idx_messages_contact_created ON messages(contact_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
-		// Partial index for per-contact unread counts in the contact list
-		`CREATE INDEX IF NOT EXISTS idx_messages_contact_unread ON messages(contact_id) WHERE direction = 'incoming' AND status <> 'read' AND deleted_at IS NULL`,
+		// Partial index for per-contact unread counts in the contact list.
+		// messages is the largest table, so build it CONCURRENTLY (each
+		// statement here runs on its own, outside a transaction) to avoid
+		// blocking writes during the upgrade. A previously interrupted
+		// concurrent build leaves an INVALID index that IF NOT EXISTS would
+		// skip forever, so drop such a leftover first.
+		dropInvalidMessagesUnreadIndexSQL,
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_messages_contact_unread ON messages(contact_id) WHERE direction = 'incoming' AND status <> 'read' AND deleted_at IS NULL`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_org_phone ON contacts(organization_id, phone_number)`,
 		`CREATE INDEX IF NOT EXISTS idx_contacts_assigned_read ON contacts(assigned_user_id, is_read)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_phone_status ON chatbot_sessions(organization_id, phone_number, status)`,
