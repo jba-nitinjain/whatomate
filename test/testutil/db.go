@@ -125,6 +125,10 @@ func runMigrations(db *gorm.DB) error {
 		&models.CannedResponse{},
 		// Dashboard
 		&models.Widget{},
+		// Lead Ads
+		&models.LeadSource{},
+		&models.LeadFormMapping{},
+		&models.Lead{},
 	)
 }
 
@@ -132,6 +136,10 @@ func runMigrations(db *gorm.DB) error {
 // Uses TRUNCATE CASCADE to handle foreign key constraints properly.
 func cleanupTables(db *gorm.DB) {
 	tables := []string{
+		// Lead Ads tables
+		"leads",
+		"lead_form_mappings",
+		"lead_sources",
 		// Dashboard tables
 		"widgets",
 		// Catalog tables

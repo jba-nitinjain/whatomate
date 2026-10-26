@@ -1,4 +1,4 @@
-package handlers
+package handlers_test
 
 import (
 	"crypto/hmac"
@@ -6,171 +6,154 @@ import (
 	"encoding/hex"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/nikyjain/whatomate/internal/config"
+	"github.com/nikyjain/whatomate/internal/handlers"
 	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/test/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
-	"github.com/zerodha/logf"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
-func setupTestApp(t *testing.T) (*App, *models.Organization, *models.LeadSource) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
+const leadTestEncKey = "01234567890123456789012345678901"
 
-	err = db.AutoMigrate(&models.Organization{}, &models.LeadSource{}, &models.Lead{}, &models.LeadFormMapping{})
-	require.NoError(t, err)
+func signLeadBody(secret string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
 
-	org := &models.Organization{
-		BaseModel: models.BaseModel{ID: uuid.New()},
-		Name:      "Test Org",
+func leadWebhookBody(pageID, leadgenID string) []byte {
+	return []byte(fmt.Sprintf(`{"object":"page","entry":[{"id":%q,"time":1729780000,"changes":[{"field":"leadgen","value":{"leadgen_id":%q,"page_id":%q,"form_id":"form_123","ad_id":"ad_456","created_time":1729780000}}]}]}`,
+		pageID, leadgenID, pageID))
+}
+
+func newLeadWebhookRequest(body []byte, signature string) *fastglue.Request {
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.SetMethod("POST")
+	ctx.Request.SetBody(body)
+	if signature != "" {
+		ctx.Request.Header.Set("X-Hub-Signature-256", signature)
 	}
-	require.NoError(t, db.Create(org).Error)
+	return &fastglue.Request{RequestCtx: ctx}
+}
 
+// createLeadSource stores a source the same way CreateLeadSource does (encrypted secrets).
+func createLeadSource(t *testing.T, app *handlers.App, orgID uuid.UUID, appSecret string) *models.LeadSource {
+	t.Helper()
 	source := &models.LeadSource{
 		BaseModel:          models.BaseModel{ID: uuid.New()},
-		OrganizationID:     org.ID,
+		OrganizationID:     orgID,
 		Name:               "Test Page",
-		PageID:             "123456789",
-		AppSecret:          "secret123",
+		PageID:             "page-" + uuid.NewString()[:12],
+		AppSecret:          appSecret,
 		PageAccessToken:    "token123",
-		WebhookVerifyToken: "verify_token_abc",
+		WebhookVerifyToken: uuid.NewString(),
 		IsActive:           true,
 	}
-	require.NoError(t, db.Create(source).Error)
+	require.NoError(t, source.EncryptSecrets(leadTestEncKey))
+	require.NoError(t, app.DB.Create(source).Error)
+	return source
+}
 
-	cfg := &config.Config{
-		WhatsApp: config.WhatsAppConfig{
-			WebhookVerifyToken: "global_token_xyz",
-		},
-		App: config.AppConfig{
-			EncryptionKey: "01234567890123456789012345678901",
-		},
-	}
+func newLeadTestApp(t *testing.T) *handlers.App {
+	app := newTestApp(t)
+	app.Config.App = config.AppConfig{EncryptionKey: leadTestEncKey}
+	return app
+}
 
-	app := &App{
-		DB:     db,
-		Config: cfg,
-		Log:    logf.New(logf.Opts{}),
-	}
+func countLeads(app *handlers.App, leadgenID string) int64 {
+	var n int64
+	app.DB.Model(&models.Lead{}).Where("leadgen_id = ?", leadgenID).Count(&n)
+	return n
+}
 
-	return app, org, source
+func TestLeadWebhookHandler_ValidSignatureQueuesLeadOnce(t *testing.T) {
+	app := newLeadTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	source := createLeadSource(t, app, org.ID, "secret123")
+	leadgenID := "lead-" + uuid.NewString()[:12]
+	body := leadWebhookBody(source.PageID, leadgenID)
+	sig := signLeadBody("secret123", body)
+
+	req := newLeadWebhookRequest(body, sig)
+	require.NoError(t, app.LeadWebhookHandler(req))
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var lead models.Lead
+	require.NoError(t, app.DB.Where("leadgen_id = ?", leadgenID).First(&lead).Error)
+	assert.Equal(t, org.ID, lead.OrganizationID)
+	assert.Equal(t, source.ID, lead.LeadSourceID)
+	assert.Equal(t, models.StatusLeadReceived, lead.Status)
+
+	// Meta redelivery must not create a second row.
+	require.NoError(t, app.LeadWebhookHandler(newLeadWebhookRequest(body, sig)))
+	assert.Equal(t, int64(1), countLeads(app, leadgenID))
+}
+
+func TestLeadWebhookHandler_RejectsBadSignature(t *testing.T) {
+	app := newLeadTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	source := createLeadSource(t, app, org.ID, "secret123")
+	leadgenID := "lead-" + uuid.NewString()[:12]
+	body := leadWebhookBody(source.PageID, leadgenID)
+
+	req := newLeadWebhookRequest(body, signLeadBody("wrong-secret", body))
+	_ = app.LeadWebhookHandler(req)
+	assert.Equal(t, fasthttp.StatusForbidden, testutil.GetResponseStatusCode(req))
+	assert.Zero(t, countLeads(app, leadgenID))
+}
+
+func TestLeadWebhookHandler_FailsClosedWithoutAppSecret(t *testing.T) {
+	app := newLeadTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	source := createLeadSource(t, app, org.ID, "")
+	leadgenID := "lead-" + uuid.NewString()[:12]
+	body := leadWebhookBody(source.PageID, leadgenID)
+
+	// An HMAC keyed with the empty string is computable by anyone; refuse it.
+	req := newLeadWebhookRequest(body, signLeadBody("", body))
+	_ = app.LeadWebhookHandler(req)
+	assert.Equal(t, fasthttp.StatusForbidden, testutil.GetResponseStatusCode(req))
+	assert.Zero(t, countLeads(app, leadgenID))
 }
 
 func TestLeadWebhookVerify(t *testing.T) {
-	app, _, source := setupTestApp(t)
+	app := newLeadTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	source := createLeadSource(t, app, org.ID, "secret123")
 
-	// 1. Verify with global token
-	ctx := &fasthttp.RequestCtx{}
-	ctx.QueryArgs().Set("hub.mode", "subscribe")
-	ctx.QueryArgs().Set("hub.verify_token", "global_token_xyz")
-	ctx.QueryArgs().Set("hub.challenge", "challenge_123")
-	req := fastglue.NewRequest(ctx)
+	ok := testutil.NewGETRequest(t)
+	testutil.SetQueryParam(ok, "hub.mode", "subscribe")
+	testutil.SetQueryParam(ok, "hub.verify_token", source.WebhookVerifyToken)
+	testutil.SetQueryParam(ok, "hub.challenge", "challenge_source")
+	require.NoError(t, app.LeadWebhookVerify(ok))
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(ok))
+	assert.Equal(t, "challenge_source", string(testutil.GetResponseBody(ok)))
 
-	err := app.LeadWebhookVerify(req)
-	assert.NoError(t, err)
-	assert.Equal(t, fasthttp.StatusOK, ctx.Response.StatusCode())
-	assert.Equal(t, "challenge_123", string(ctx.Response.Body()))
-
-	// 2. Verify with lead source token
-	ctx2 := &fasthttp.RequestCtx{}
-	ctx2.QueryArgs().Set("hub.mode", "subscribe")
-	ctx2.QueryArgs().Set("hub.verify_token", source.WebhookVerifyToken)
-	ctx2.QueryArgs().Set("hub.challenge", "challenge_source")
-	req2 := fastglue.NewRequest(ctx2)
-
-	err = app.LeadWebhookVerify(req2)
-	assert.NoError(t, err)
-	assert.Equal(t, fasthttp.StatusOK, ctx2.Response.StatusCode())
-	assert.Equal(t, "challenge_source", string(ctx2.Response.Body()))
-
-	// 3. Invalid token returns 403
-	ctx3 := &fasthttp.RequestCtx{}
-	ctx3.QueryArgs().Set("hub.mode", "subscribe")
-	ctx3.QueryArgs().Set("hub.verify_token", "wrong_token")
-	req3 := fastglue.NewRequest(ctx3)
-
-	_ = app.LeadWebhookVerify(req3)
-	assert.Equal(t, fasthttp.StatusForbidden, ctx3.Response.StatusCode())
+	bad := testutil.NewGETRequest(t)
+	testutil.SetQueryParam(bad, "hub.mode", "subscribe")
+	testutil.SetQueryParam(bad, "hub.verify_token", "wrong_token")
+	_ = app.LeadWebhookVerify(bad)
+	assert.Equal(t, fasthttp.StatusForbidden, testutil.GetResponseStatusCode(bad))
 }
 
-func TestLeadWebhookHandler(t *testing.T) {
-	app, org, source := setupTestApp(t)
+// The checks below run before any database or cache access, so they need no
+// external services and always run.
 
-	body := []byte(fmt.Sprintf(`{
-		"object": "page",
-		"entry": [{
-			"id": "%s",
-			"time": %d,
-			"changes": [{
-				"field": "leadgen",
-				"value": {
-					"leadgen_id": "lead_999",
-					"page_id": "%s",
-					"form_id": "form_123",
-					"ad_id": "ad_456",
-					"created_time": 1729780000
-				}
-			}]
-		}]
-	}`, source.PageID, time.Now().Unix(), source.PageID))
+func TestLeadWebhookHandler_RejectsMissingSignature(t *testing.T) {
+	app := &handlers.App{Log: testutil.NopLogger(), Config: &config.Config{}}
+	req := newLeadWebhookRequest(leadWebhookBody("123", "lead_1"), "")
+	_ = app.LeadWebhookHandler(req)
+	assert.Equal(t, fasthttp.StatusForbidden, testutil.GetResponseStatusCode(req))
+}
 
-	// Compute HMAC signature with AppSecret
-	mac := hmac.New(sha256.New, []byte(source.AppSecret))
-	mac.Write(body)
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
-	// 1. Success valid signature
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetBody(body)
-	ctx.Request.Header.Set("X-Hub-Signature-256", sig)
-	req := fastglue.NewRequest(ctx)
-
-	err := app.LeadWebhookHandler(req)
-	assert.NoError(t, err)
-	assert.Equal(t, fasthttp.StatusOK, ctx.Response.StatusCode())
-
-	// Check DB row inserted
-	var lead models.Lead
-	err = app.DB.Where("leadgen_id = ?", "lead_999").First(&lead).Error
-	require.NoError(t, err)
-	assert.Equal(t, org.ID, lead.OrganizationID)
-	assert.Equal(t, models.StatusLeadReceived, lead.Status)
-	assert.Equal(t, "form_123", lead.FormID)
-
-	// 2. Duplicate webhook POST should not duplicate row
-	ctxDup := &fasthttp.RequestCtx{}
-	ctxDup.Request.SetBody(body)
-	ctxDup.Request.Header.Set("X-Hub-Signature-256", sig)
-	reqDup := fastglue.NewRequest(ctxDup)
-
-	err = app.LeadWebhookHandler(reqDup)
-	assert.NoError(t, err)
-
-	var count int64
-	app.DB.Model(&models.Lead{}).Where("leadgen_id = ?", "lead_999").Count(&count)
-	assert.Equal(t, int64(1), count)
-
-	// 3. Bad signature returns 403
-	ctxBadSig := &fasthttp.RequestCtx{}
-	ctxBadSig.Request.SetBody(body)
-	ctxBadSig.Request.Header.Set("X-Hub-Signature-256", "sha256=invalid")
-	reqBadSig := fastglue.NewRequest(ctxBadSig)
-
-	_ = app.LeadWebhookHandler(reqBadSig)
-	assert.Equal(t, fasthttp.StatusForbidden, ctxBadSig.Response.StatusCode())
-
-	// 4. Non-page object returns 400
-	ctxNonPage := &fasthttp.RequestCtx{}
-	ctxNonPage.Request.SetBody([]byte(`{"object":"user"}`))
-	reqNonPage := fastglue.NewRequest(ctxNonPage)
-
-	_ = app.LeadWebhookHandler(reqNonPage)
-	assert.Equal(t, fasthttp.StatusBadRequest, ctxNonPage.Response.StatusCode())
+func TestLeadWebhookHandler_RejectsNonPageObject(t *testing.T) {
+	app := &handlers.App{Log: testutil.NopLogger(), Config: &config.Config{}}
+	req := newLeadWebhookRequest([]byte(`{"object":"user"}`), "sha256=00")
+	_ = app.LeadWebhookHandler(req)
+	assert.Equal(t, fasthttp.StatusBadRequest, testutil.GetResponseStatusCode(req))
 }

@@ -56,8 +56,8 @@ async function fetchSources() {
 }
 
 async function handleCreateSource() {
-  if (!createForm.value.name || !createForm.value.page_id || !createForm.value.page_access_token) {
-    toast.error('Page Name, Page ID, and Page Access Token are required')
+  if (!createForm.value.name || !createForm.value.page_id || !createForm.value.page_access_token || !createForm.value.app_secret) {
+    toast.error('Page Name, Page ID, Page Access Token and App Secret are required')
     return
   }
 
@@ -220,7 +220,7 @@ onMounted(() => {
             </div>
             <div class="space-y-1">
               <Label for="src-app-secret">{{ t('leadAds.appSecret') }}</Label>
-              <Input id="src-app-secret" type="password" v-model="createForm.app_secret" placeholder="App Secret for HMAC" />
+              <Input id="src-app-secret" type="password" v-model="createForm.app_secret" placeholder="App Secret for HMAC" required />
             </div>
           </div>
 

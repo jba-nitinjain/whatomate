@@ -24,11 +24,6 @@ var (
 
 const maxLoopIterations = 50
 
-// ProcessTemplate processes a template string with variables, conditionals, and loops
-func ProcessTemplate(template string, data map[string]interface{}) string {
-	return processTemplate(template, data)
-}
-
 // processTemplate processes a template string with variables, conditionals, and loops
 func processTemplate(template string, data map[string]interface{}) string {
 	if data == nil {
