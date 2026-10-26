@@ -74,3 +74,44 @@ func TestDecrypt_WrongKey(t *testing.T) {
 		t.Fatal("Decrypt with wrong key should fail")
 	}
 }
+
+func TestEncryptFields(t *testing.T) {
+	key := "field-key-for-testing"
+	token := "page-token"
+	secret := "app-secret"
+	empty := ""
+
+	if err := EncryptFields(key, &token, &secret, &empty, nil); err != nil {
+		t.Fatalf("EncryptFields failed: %v", err)
+	}
+	if !IsEncrypted(token) || !IsEncrypted(secret) {
+		t.Fatal("non-empty fields should be encrypted")
+	}
+	if empty != "" {
+		t.Fatal("empty field should stay empty")
+	}
+
+	// Already-encrypted values must not be double-encrypted.
+	before := token
+	if err := EncryptFields(key, &token); err != nil {
+		t.Fatalf("EncryptFields (second pass) failed: %v", err)
+	}
+	if token != before {
+		t.Fatal("already-encrypted field should be left unchanged")
+	}
+
+	DecryptFields(key, &token, &secret)
+	if token != "page-token" || secret != "app-secret" {
+		t.Fatalf("round trip mismatch: %q %q", token, secret)
+	}
+}
+
+func TestEncryptFields_EmptyKey(t *testing.T) {
+	v := "plain"
+	if err := EncryptFields("", &v); err != nil {
+		t.Fatalf("EncryptFields failed: %v", err)
+	}
+	if v != "plain" {
+		t.Fatal("empty key should leave value unchanged (dev mode)")
+	}
+}
