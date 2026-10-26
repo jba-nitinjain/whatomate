@@ -210,17 +210,18 @@ const (
 
 // Lead status constants
 const (
-	StatusLeadReceived           = "received"
-	StatusLeadFetched            = "fetched"
-	StatusLeadRetry              = "retry"
-	StatusLeadSent               = "sent"
-	StatusLeadStored             = "stored"
-	StatusLeadSkippedDuplicate   = "skipped_duplicate"
-	StatusLeadSkippedNoMapping   = "skipped_no_mapping"
+	StatusLeadReceived            = "received"
+	StatusLeadFetched             = "fetched"
+	StatusLeadRetry               = "retry"
+	StatusLeadSending             = "sending" // send in flight; never auto-reclaimed (at-most-once)
+	StatusLeadSent                = "sent"
+	StatusLeadStored              = "stored"
+	StatusLeadSkippedDuplicate    = "skipped_duplicate"
+	StatusLeadSkippedNoMapping    = "skipped_no_mapping"
 	StatusLeadSkippedInvalidPhone = "skipped_invalid_phone"
-	StatusLeadSkippedOptedOut    = "skipped_opted_out"
-	StatusLeadSkippedNoConsent   = "skipped_no_consent"
-	StatusLeadFailed             = "failed"
+	StatusLeadSkippedOptedOut     = "skipped_opted_out"
+	StatusLeadSkippedNoConsent    = "skipped_no_consent"
+	StatusLeadFailed              = "failed"
 )
 
 // ActionType represents custom action types

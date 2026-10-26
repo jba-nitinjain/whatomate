@@ -1,7 +1,6 @@
 package leadutil
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -80,13 +79,13 @@ func BuildTemplateData(lead *models.Lead, mapping *models.LeadFormMapping, pageN
 	}
 }
 
-// CleanParamValue trims, collapses whitespace, and limits length to 1024 chars
+// CleanParamValue trims, collapses whitespace, and limits length to 1024 characters (rune-safe)
 func CleanParamValue(val string) string {
 	s := strings.TrimSpace(val)
 	s = whitespaceRegex.ReplaceAllString(s, " ")
 	s = strings.TrimSpace(s)
-	if len(s) > 1024 {
-		s = s[:1024]
+	if r := []rune(s); len(r) > 1024 {
+		s = string(r[:1024])
 	}
 	return s
 }

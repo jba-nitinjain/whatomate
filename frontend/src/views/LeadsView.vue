@@ -71,6 +71,8 @@ function getStatusBadge(status: string) {
       return { label: 'Received', variant: 'outline', class: 'text-blue-600 border-blue-300' }
     case 'fetched':
       return { label: 'Fetched', variant: 'outline', class: 'text-indigo-600 border-indigo-300' }
+    case 'sending':
+      return { label: 'Sending', variant: 'outline', class: 'text-sky-600 border-sky-300' }
     case 'retry':
       return { label: 'Retry', variant: 'outline', class: 'text-amber-600 border-amber-300' }
     case 'failed':
@@ -149,7 +151,7 @@ async function handleSendNow(lead: Lead) {
     if (activeLead.value?.id === lead.id) {
       activeLead.value = updated
     }
-    toast.success('Template sent')
+    toast.success('Template send queued')
     await fetchLeads()
     await fetchStats()
   } catch (err) {
@@ -301,6 +303,7 @@ watch([filterSourceId, filterStatus, filterPhone, filterFormId], () => {
             <SelectItem value="stored">Stored</SelectItem>
             <SelectItem value="received">Received</SelectItem>
             <SelectItem value="fetched">Fetched</SelectItem>
+            <SelectItem value="sending">Sending</SelectItem>
             <SelectItem value="retry">Retry</SelectItem>
             <SelectItem value="failed">Failed</SelectItem>
             <SelectItem value="skipped_duplicate">Skipped (Duplicate)</SelectItem>
