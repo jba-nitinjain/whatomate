@@ -13,7 +13,9 @@ export class AccountsPage extends BasePage {
   constructor(page: Page) {
     super(page)
     this.heading = page.locator('h1').filter({ hasText: 'WhatsApp Accounts' })
-    this.addButton = page.getByRole('button', { name: /Add Account/i }).first()
+    // This fork's primary entry point is the resumable onboarding wizard
+    // ("Start Onboarding"); the legacy manual editor sits beside it.
+    this.addButton = page.getByRole('button', { name: /Start Onboarding|Add Account/i }).first()
     this.dialog = page.locator('[role="dialog"][data-state="open"]')
     this.alertDialog = page.locator('[role="alertdialog"]')
     this.tableBody = page.locator('tbody')

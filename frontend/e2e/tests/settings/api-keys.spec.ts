@@ -97,7 +97,9 @@ test.describe('API Keys Management', () => {
     await page.waitForURL(/\/settings\/api-keys\/[a-f0-9-]+$/)
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByText(keyName)).toBeVisible()
+    // The list renders a mobile card list and a desktop table, so scope to
+    // the detail page heading rather than any text match.
+    await expect(page.getByRole('heading', { name: keyName })).toBeVisible()
     await expect(page.locator('code').filter({ hasText: 'whm_' }).first()).toBeVisible()
   })
 
@@ -137,13 +139,15 @@ test.describe('API Keys Management', () => {
     await tablePage.expectRowNotExists('Cancelled Key')
   })
 
-  test('should show organization label in create dialog for a regular admin', async () => {
-    await apiKeysPage.openCreateDialog()
-    await expect(apiKeysPage.dialog).toContainText('Creating key for:')
+  test('should show organization label on the create page for a regular admin', async ({ page }) => {
+    // Org-scoped keys: a regular (non-super) admin creates keys for their own
+    // organization and sees "Creating key for: <org>" instead of a selector.
+    await gotoCreateApiKey(page)
+    await expect(page.getByText(/Creating key for:/)).toBeVisible()
   })
 
-  test('should show Organization column in the table', async () => {
-    await expect(apiKeysPage.table).toContainText('Organization')
+  test('should show Organization column in the table', async ({ page }) => {
+    await expect(page.locator('thead')).toContainText('Organization')
   })
 })
 

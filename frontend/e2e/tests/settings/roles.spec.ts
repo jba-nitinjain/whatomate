@@ -54,7 +54,8 @@ test.describe('Roles Management', () => {
 
   test('should show system roles with badges', async ({ page }) => {
     // System roles should have a "System" badge
-    await expect(page.locator('text=System').first()).toBeVisible()
+    // DataTable also renders a hidden mobile card list; match visible badges only.
+    await expect(page.locator('text=System').filter({ visible: true }).first()).toBeVisible()
   })
 
   test('should search roles', async ({ page }) => {

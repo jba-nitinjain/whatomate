@@ -478,7 +478,9 @@ export class TagsPage extends TableSettingsPage {
   }
 
   async expectTagBadgeVisible(name: string) {
-    await expect(this.page.locator('span').filter({ hasText: name })).toBeVisible()
+    // DataTable renders both a mobile card list (hidden on desktop) and the
+    // desktop table, so match only the visible badge.
+    await expect(this.page.locator('span').filter({ hasText: name, visible: true })).toBeVisible()
   }
 }
 
