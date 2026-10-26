@@ -111,6 +111,14 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 		return nil
 	}
 
+	// Check marketing opt-out
+	if contact.MarketingOptOut && campaign.Template != nil && strings.EqualFold(campaign.Template.Category, "MARKETING") {
+		w.Log.Info("Skipping marketing message for opted-out contact", "contact_id", contact.ID, "phone", job.PhoneNumber)
+		w.updateRecipientStatus(job.RecipientID, models.MessageStatusFailed, "", "Contact opted out of marketing messages")
+		w.incrementCampaignCount(job.CampaignID, "failed_count")
+		return nil
+	}
+
 	// Build recipient for sending
 	recipient := &models.BulkMessageRecipient{
 		PhoneNumber:    job.PhoneNumber,
@@ -119,7 +127,7 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 	}
 
 	// Send template message
-	waMessageID, err := w.sendTemplateMessage(ctx, &account, campaign.Template, recipient, campaign.HeaderMediaID, campaign.HeaderMediaURL)
+	waMessageID, err := w.sendTemplateMessage(ctx, &account, campaign.Template, recipient, campaign.HeaderMediaID, campaignHeaderMediaRef(&campaign))
 
 	// Create Message record
 	message := models.Message{
@@ -311,7 +319,7 @@ func (w *Worker) checkCampaignCompletion(ctx context.Context, campaignID, organi
 		}
 
 		now := time.Now()
-		w.DB.Model(&campaign).Updates(map[string]interface{}{
+		w.DB.Model(&campaign).Updates(map[string]any{
 			"status":       models.CampaignStatusCompleted,
 			"completed_at": now,
 		})
@@ -373,14 +381,17 @@ func (w *Worker) sendTemplateMessage(ctx context.Context, account *models.WhatsA
 	buttonParams, _ := templateutil.ResolveURLButtonParams(template.Buttons, recipient.TemplateParams)
 
 	// Use the shared component builder (same as chat template sending)
-	components := whatsapp.BuildTemplateComponents(bodyParams, buttonParams, template.Buttons, template.HeaderType, campaignHeaderMediaID, campaignHeaderMediaURL)
+	components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(bodyParams, buttonParams, nil, template.Buttons, template.HeaderType, campaignHeaderMediaID, campaignHeaderMediaURL)
+	// Add auto-generated button components (Flow needs flow_token)
+	components = append(components, whatsapp.AutoButtonComponents(template.Buttons)...)
 
+	rcpt := whatsapp.Recipient{Phone: recipient.PhoneNumber}
 	route := models.ResolveTemplateDeliveryRoute(account, template)
 	if route == models.TemplateDeliveryRouteMarketingMessagesLite {
-		return w.WhatsApp.SendMarketingTemplateMessage(ctx, waAccount, recipient.PhoneNumber, template.Name, template.Language, components)
+		return w.WhatsApp.SendMarketingTemplateMessage(ctx, waAccount, rcpt, template.Name, template.Language, components)
 	}
 
-	return w.WhatsApp.SendTemplateMessage(ctx, waAccount, recipient.PhoneNumber, template.Name, template.Language, components)
+	return w.WhatsApp.SendTemplateMessage(ctx, waAccount, rcpt, template.Name, template.Language, components)
 }
 
 // decryptAccountSecrets decrypts the encrypted secrets on a WhatsApp account.
@@ -398,4 +409,15 @@ func (w *Worker) Close() error {
 		return w.Consumer.Close()
 	}
 	return nil
+}
+
+// campaignHeaderMediaRef returns the value passed to the template component
+// builder alongside the campaign's header media ID: with an uploaded media ID it
+// is the document filename (Meta requires one for DOCUMENT headers), otherwise
+// it is the public media link.
+func campaignHeaderMediaRef(campaign *models.BulkMessageCampaign) string {
+	if campaign.HeaderMediaID != "" && strings.TrimSpace(campaign.HeaderMediaFilename) != "" {
+		return campaign.HeaderMediaFilename
+	}
+	return campaign.HeaderMediaURL
 }

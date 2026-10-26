@@ -101,7 +101,7 @@ func (a *App) runAccountConnectionCheck(account *models.WhatsAppAccount) (*accou
 	if err := a.validateAccountCredentials(account.PhoneID, account.BusinessID, account.AccessToken, account.APIVersion); err != nil {
 		return &accountConnectionCheck{
 			Success: false,
-			Error:   "Account credential validation failed. Check your access token and phone ID.",
+			Error:   fmt.Sprintf("Account credential validation failed: %s", err.Error()),
 		}, nil
 	}
 

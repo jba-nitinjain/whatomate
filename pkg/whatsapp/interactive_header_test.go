@@ -28,7 +28,7 @@ func TestClient_SendInteractiveReplyButtonsWithHeader(t *testing.T) {
 	client.HTTPClient = &http.Client{Transport: &testServerTransport{serverURL: server.URL}}
 
 	_, err := client.SendInteractiveReplyButtonsWithHeader(
-		testutil.TestContext(t), testAccount(server.URL), "1234567890",
+		testutil.TestContext(t), testAccount(server.URL), whatsapp.Recipient{Phone: "1234567890"},
 		"Join our event", []whatsapp.Button{{ID: "yes", Title: "Attending"}},
 		"image", "https://example.com/poster.jpg",
 	)
@@ -59,7 +59,7 @@ func TestClient_SendInteractiveReplyButtons_NoHeaderByDefault(t *testing.T) {
 	client.HTTPClient = &http.Client{Transport: &testServerTransport{serverURL: server.URL}}
 
 	_, err := client.SendInteractiveReplyButtons(
-		testutil.TestContext(t), testAccount(server.URL), "1234567890",
+		testutil.TestContext(t), testAccount(server.URL), whatsapp.Recipient{Phone: "1234567890"},
 		"Pick one", []whatsapp.Button{{ID: "a", Title: "A"}},
 	)
 	require.NoError(t, err)

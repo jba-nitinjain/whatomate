@@ -164,24 +164,13 @@ export const authService = {
 };
 
 export const usersService = {
-  list: (params?: { search?: string; page?: number; limit?: number }) =>
-    api.get("/users", { params }),
-  create: (data: {
-    email: string;
-    password: string;
-    full_name: string;
-    role_id?: string;
-  }) => api.post("/users", data),
-  update: (
-    id: string,
-    data: {
-      email?: string;
-      password?: string;
-      full_name?: string;
-      role_id?: string;
-      is_active?: boolean;
-    },
-  ) => api.put(`/users/${id}`, data),
+  list: (params?: { search?: string; page?: number; limit?: number; role_id?: string; online_only?: boolean }) =>
+    api.get('/users', { params }),
+  get: (id: string) => api.get(`/users/${id}`),
+  create: (data: { email: string; password: string; full_name: string; role_id?: string }) =>
+    api.post('/users', data),
+  update: (id: string, data: { email?: string; password?: string; full_name?: string; role_id?: string; is_active?: boolean }) =>
+    api.put(`/users/${id}`, data),
   delete: (id: string) => api.delete(`/users/${id}`),
   me: () => api.get("/me"),
   updateSettings: (data: {
@@ -198,9 +187,12 @@ export const usersService = {
 
 export const apiKeysService = {
   list: (params?: { search?: string; page?: number; limit?: number }) =>
-    api.get<{ api_keys: any[]; total?: number }>("/api-keys", { params }),
+    api.get<{ api_keys: any[]; total?: number }>('/api-keys', { params }),
+  get: (id: string) => api.get(`/api-keys/${id}`),
   create: (data: { name: string; expires_at?: string; organization_id?: string; is_super_admin_key?: boolean }) =>
-    api.post("/api-keys", data),
+    api.post('/api-keys', data),
+  update: (id: string, data: { is_active?: boolean }) =>
+    api.put(`/api-keys/${id}`, data),
   delete: (id: string) => api.delete(`/api-keys/${id}`),
 };
 
@@ -504,7 +496,8 @@ export const contactsService = {
   updateTags: (id: string, tags: string[]) =>
     api.put(`/contacts/${id}/tags`, { tags }),
   getSessionData: (id: string) => api.get(`/contacts/${id}/session-data`),
-};
+  markRead: (id: string) => api.post(`/contacts/${encodeURIComponent(id)}/mark-read`)
+}
 
 // Generic Import/Export Service
 export interface ExportColumn {
@@ -582,35 +575,31 @@ export const dataService = {
 };
 
 export const messagesService = {
-  list: (
-    contactId: string,
-    params?: {
-      page?: number;
-      limit?: number;
-      before_id?: string;
-      account?: string;
-    },
-  ) => api.get(`/contacts/${contactId}/messages`, { params }),
+  list: (contactId: string, params?: { page?: number; limit?: number; before_id?: string; account?: string }) =>
+    api.get(`/contacts/${contactId}/messages`, { params }),
   reprocess: (messageId: string) =>
     api.post(`/chat/messages/${messageId}/reprocess`),
   send: (
     contactId: string,
     data: {
-      type: string;
-      content: any;
-      reply_to_message_id?: string;
-      whatsapp_account?: string;
+      type: string
+      content: any
+      reply_to_message_id?: string
+      whatsapp_account?: string
+      // Interactive button / cta_url payload. Mirrors backend InteractiveContent.
+      interactive?: {
+        type: 'button' | 'cta_url' | 'list' | 'voice_call'
+        body: string
+        buttons?: Array<{ id: string; title: string }>
+        button_text?: string
+        url?: string
+        // voice_call only
+        display_text?: string
+        ttl_minutes?: number
+      }
     },
   ) => api.post(`/contacts/${contactId}/messages`, data),
-  sendTemplate: (
-    contactId: string,
-    data: {
-      template_name: string;
-      template_params?: Record<string, string>;
-      account_name?: string;
-    },
-    headerFile?: File,
-  ) => {
+  sendTemplate: (contactId: string, data: { template_name: string; template_params?: Record<string, string>; button_params?: Record<string, string>; account_name?: string }, headerFile?: File) => {
     if (headerFile) {
       const formData = new FormData();
       formData.append("contact_id", contactId);
@@ -620,6 +609,9 @@ export const messagesService = {
           "template_params",
           JSON.stringify(data.template_params),
         );
+      }
+      if (data.button_params) {
+        formData.append('button_params', JSON.stringify(data.button_params))
       }
       if (data.account_name) {
         formData.append("account_name", data.account_name);
@@ -677,15 +669,10 @@ export const flowsService = {
 };
 
 export const campaignsService = {
-  list: (params?: {
-    status?: string;
-    from?: string;
-    to?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) => api.get("/campaigns", { params }),
-  create: (data: any) => api.post("/campaigns", data),
+  list: (params?: { status?: string; from?: string; to?: string; search?: string; page?: number; limit?: number }) =>
+    api.get('/campaigns', { params }),
+  get: (id: string) => api.get(`/campaigns/${id}`),
+  create: (data: any) => api.post('/campaigns', data),
   update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
   delete: (id: string) => api.delete(`/campaigns/${id}`),
   start: (id: string) => api.post(`/campaigns/${id}/start`),
@@ -730,10 +717,10 @@ export const chatbotService = {
 
   // Keywords
   listKeywords: (params?: { search?: string; page?: number; limit?: number }) =>
-    api.get<{ rules: any[]; total?: number }>("/chatbot/keywords", { params }),
-  createKeyword: (data: any) => api.post("/chatbot/keywords", data),
-  updateKeyword: (id: string, data: any) =>
-    api.put(`/chatbot/keywords/${id}`, data),
+    api.get<{ rules: any[]; total?: number }>('/chatbot/keywords', { params }),
+  getKeyword: (id: string) => api.get(`/chatbot/keywords/${id}`),
+  createKeyword: (data: any) => api.post('/chatbot/keywords', data),
+  updateKeyword: (id: string, data: any) => api.put(`/chatbot/keywords/${id}`, data),
   deleteKeyword: (id: string) => api.delete(`/chatbot/keywords/${id}`),
 
   // Flows
@@ -752,17 +739,11 @@ export const chatbotService = {
   deleteFlow: (id: string) => api.delete(`/chatbot/flows/${id}`),
 
   // AI Contexts
-  listAIContexts: (params?: {
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) =>
-    api.get<{ contexts: any[]; total?: number }>("/chatbot/ai-contexts", {
-      params,
-    }),
-  createAIContext: (data: any) => api.post("/chatbot/ai-contexts", data),
-  updateAIContext: (id: string, data: any) =>
-    api.put(`/chatbot/ai-contexts/${id}`, data),
+  listAIContexts: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ contexts: any[]; total?: number }>('/chatbot/ai-contexts', { params }),
+  getAIContext: (id: string) => api.get(`/chatbot/ai-contexts/${id}`),
+  createAIContext: (data: any) => api.post('/chatbot/ai-contexts', data),
+  updateAIContext: (id: string, data: any) => api.put(`/chatbot/ai-contexts/${id}`, data),
   deleteAIContext: (id: string) => api.delete(`/chatbot/ai-contexts/${id}`),
 
   // Agent Transfers
@@ -794,46 +775,45 @@ export const chatbotService = {
     }),
 };
 
+export interface CannedResponseButton {
+  id: string
+  title: string
+  type?: 'reply' | 'url' | 'phone' | 'voice_call'
+  url?: string
+  phone_number?: string
+  ttl_minutes?: number
+}
+
 export interface CannedResponse {
-  id: string;
-  name: string;
-  shortcut: string;
-  content: string;
-  category: string;
-  is_active: boolean;
-  usage_count: number;
-  created_at: string;
-  updated_at: string;
+  id: string
+  name: string
+  shortcut: string
+  content: string
+  category: string
+  is_active: boolean
+  usage_count: number
+  buttons?: CannedResponseButton[]
+  created_at: string
+  updated_at: string
+}
+
+interface CannedResponseUpsertPayload {
+  name?: string
+  shortcut?: string
+  content?: string
+  category?: string
+  is_active?: boolean
+  buttons?: CannedResponseButton[]
 }
 
 export const cannedResponsesService = {
-  list: (params?: {
-    category?: string;
-    search?: string;
-    active_only?: string;
-    page?: number;
-    limit?: number;
-  }) =>
-    api.get<{ canned_responses: CannedResponse[]; total?: number }>(
-      "/canned-responses",
-      { params },
-    ),
-  create: (data: {
-    name: string;
-    shortcut?: string;
-    content: string;
-    category?: string;
-  }) => api.post("/canned-responses", data),
-  update: (
-    id: string,
-    data: {
-      name?: string;
-      shortcut?: string;
-      content?: string;
-      category?: string;
-      is_active?: boolean;
-    },
-  ) => api.put(`/canned-responses/${id}`, data),
+  list: (params?: { category?: string; search?: string; active_only?: string; page?: number; limit?: number }) =>
+    api.get<{ canned_responses: CannedResponse[]; total?: number }>('/canned-responses', { params }),
+  get: (id: string) => api.get<CannedResponse>(`/canned-responses/${id}`),
+  create: (data: CannedResponseUpsertPayload & { name: string; content: string }) =>
+    api.post('/canned-responses', data),
+  update: (id: string, data: CannedResponseUpsertPayload) =>
+    api.put(`/canned-responses/${id}`, data),
   delete: (id: string) => api.delete(`/canned-responses/${id}`),
   use: (id: string) => api.post(`/canned-responses/${id}/use`),
 };
@@ -1148,15 +1128,20 @@ export interface WebhookEvent {
 }
 
 export interface Team {
-  id: string;
-  name: string;
-  description: string;
-  assignment_strategy: "round_robin" | "load_balanced" | "manual";
-  per_agent_timeout_secs: number;
-  is_active: boolean;
-  member_count: number;
-  created_at: string;
-  updated_at: string;
+  id: string
+  name: string
+  description: string
+  assignment_strategy: 'round_robin' | 'load_balanced' | 'manual'
+  per_agent_timeout_secs: number
+  is_active: boolean
+  member_count: number
+  members?: TeamMember[]
+  created_by_id?: string
+  created_by_name?: string
+  updated_by_id?: string
+  updated_by_name?: string
+  created_at: string
+  updated_at: string
 }
 
 export interface TeamMember {
@@ -1209,6 +1194,40 @@ export const teamsService = {
   removeMember: (teamId: string, userId: string) =>
     api.delete(`/teams/${teamId}/members/${userId}`),
 };
+
+// Audit Logs
+export interface AuditLogChange {
+  field: string
+  old_value: any
+  new_value: any
+}
+
+export interface AuditLogEntry {
+  id: string
+  resource_type: string
+  resource_id: string
+  user_id: string
+  user_name: string
+  action: 'created' | 'updated' | 'deleted'
+  changes: AuditLogChange[]
+  created_at: string
+}
+
+export const auditLogsService = {
+  get: (id: string) =>
+    api.get<AuditLogEntry>(`/audit-logs/${id}`),
+  list: (params?: {
+    resource_type?: string
+    resource_id?: string
+    user_id?: string
+    action?: string
+    from?: string
+    to?: string
+    page?: number
+    limit?: number
+  }) =>
+    api.get<{ audit_logs: AuditLogEntry[]; total: number }>('/audit-logs', { params }),
+}
 
 export const webhooksService = {
   list: (params?: { search?: string; page?: number; limit?: number }) =>
@@ -1593,7 +1612,11 @@ export const callLogsService = {
   get: (id: string) => api.get<CallLog>(`/call-logs/${id}`),
   getRecordingURL: (id: string) =>
     api.get<{ url: string; duration: number }>(`/call-logs/${id}/recording`),
-};
+  hold: (id: string) =>
+    api.post<{ status: string }>(`/call-logs/${id}/hold`),
+  resume: (id: string) =>
+    api.post<{ status: string }>(`/call-logs/${id}/resume`),
+}
 
 export const callTransfersService = {
   list: (params?: { status?: string; page?: number; limit?: number }) =>

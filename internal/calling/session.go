@@ -23,25 +23,28 @@ import (
 
 // CallSession represents an active call with its WebRTC state
 type CallSession struct {
-	ID              string // WhatsApp call_id
-	OrganizationID  uuid.UUID
-	AccountName     string
-	CallerPhone     string
-	ContactID       uuid.UUID
-	CallLogID       uuid.UUID
-	Status          models.CallStatus
-	PeerConnection  *webrtc.PeerConnection
-	AudioTrack      *webrtc.TrackLocalStaticRTP
-	IVRGraph        *IVRFlowGraph
-	IVRCtx          *IVRContext
-	IVRFlow         *models.IVRFlow
-	IVRPlayer       *AudioPlayer // persists across goto_flow for RTP continuity
-	DTMFBuffer      chan byte
-	StartedAt       time.Time
+	ID             string // WhatsApp call_id
+	OrganizationID uuid.UUID
+	AccountName    string
+	CallerPhone    string
+	ContactID      uuid.UUID
+	CallLogID      uuid.UUID
+	Status         models.CallStatus
+	PeerConnection *webrtc.PeerConnection
+	AudioTrack     *webrtc.TrackLocalStaticRTP
+	IVRGraph       *IVRFlowGraph
+	IVRCtx         *IVRContext
+	IVRFlow        *models.IVRFlow
+	IVRPlayer      *AudioPlayer // persists across goto_flow for RTP continuity
+	DTMFBuffer     chan byte
+	StartedAt      time.Time
 
 	// Recording (one per direction for correct OGG/Opus playback)
 	CallerRecorder *CallRecorder // caller's audio stream
 	AgentRecorder  *CallRecorder // agent's audio stream
+
+	// Transfer HTTP callbacks (configured per-node in IVR flow editor)
+	TransferCallbacks *TransferCallbacks
 
 	// Transfer fields
 	TransferID        uuid.UUID
@@ -56,20 +59,27 @@ type CallSession struct {
 	BridgeStarted     chan struct{} // closed when bridge takes over caller track
 	TransferAccepted  chan struct{} // closed when an agent accepts the transfer (rotation signal)
 	TransferDone      chan string   // outcome sent when transfer ends; nil = terminal
-	LastRTPSeq        uint16       // last RTP seq from bridge, for post-transfer player
-	LastRTPTimestamp   uint32       // last RTP timestamp from bridge
+	LastRTPSeq        uint16        // last RTP seq from bridge, for post-transfer player
+	LastRTPTimestamp  uint32        // last RTP timestamp from bridge
 
 	// Ringback (outgoing calls)
 	RingbackPlayer *AudioPlayer
+
+	// Sticky agent for voice_call-button incoming calls. When set,
+	// HandleIncomingCall skips the IVR load and the post-media branch in
+	// webrtc.go kicks off a transfer to this agent directly (see
+	// initiateTransfer, which prefers this over the contact's
+	// assigned_user_id).
+	StickyAgentID *uuid.UUID
 
 	// Outgoing call fields
 	Direction      models.CallDirection
 	AgentID        uuid.UUID
 	TargetPhone    string
-	WAPeerConn     *webrtc.PeerConnection           // WhatsApp-side PC (outgoing only)
-	WAAudioTrack   *webrtc.TrackLocalStaticRTP       // server→WhatsApp audio track
-	WARemoteTrack  *webrtc.TrackRemote               // WhatsApp's remote audio track
-	SDPAnswerReady chan string                        // webhook delivers SDP answer here
+	WAPeerConn     *webrtc.PeerConnection      // WhatsApp-side PC (outgoing only)
+	WAAudioTrack   *webrtc.TrackLocalStaticRTP // server→WhatsApp audio track
+	WARemoteTrack  *webrtc.TrackRemote         // WhatsApp's remote audio track
+	SDPAnswerReady chan string                 // webhook delivers SDP answer here
 
 	mu sync.Mutex
 }
@@ -88,6 +98,20 @@ const (
 	IVRNodeHangup       IVRNodeType = "hangup"
 )
 
+// TransferHTTPCallback holds the configuration for a single transfer lifecycle HTTP callback.
+type TransferHTTPCallback struct {
+	URL          string            `json:"url"`
+	Method       string            `json:"method"`
+	Headers      map[string]string `json:"headers"`
+	BodyTemplate string            `json:"body_template"`
+}
+
+// TransferCallbacks holds optional HTTP callbacks for each transfer lifecycle event.
+type TransferCallbacks struct {
+	OnWaiting *TransferHTTPCallback
+	OnConnect *TransferHTTPCallback
+}
+
 // IVRNodePosition stores the (x,y) position for the visual editor.
 type IVRNodePosition struct {
 	X float64 `json:"x"`
@@ -96,11 +120,11 @@ type IVRNodePosition struct {
 
 // IVRNode represents a single node (applet) in an IVR flow graph.
 type IVRNode struct {
-	ID       string                 `json:"id"`
-	Type     IVRNodeType            `json:"type"`
-	Label    string                 `json:"label"`
-	Position IVRNodePosition        `json:"position"`
-	Config   map[string]interface{} `json:"config"`
+	ID       string          `json:"id"`
+	Type     IVRNodeType     `json:"type"`
+	Label    string          `json:"label"`
+	Position IVRNodePosition `json:"position"`
+	Config   map[string]any  `json:"config"`
 }
 
 // IVREdge connects two nodes in the flow graph.
@@ -214,7 +238,12 @@ func NewManager(cfg *config.CallingConfig, s3Client *storage.S3Client, db *gorm.
 // HandleIncomingCall processes a new incoming call and starts WebRTC negotiation.
 // The sdpOffer parameter is the consumer's SDP offer received from the webhook's
 // session.sdp field in the "connect" event.
-func (m *Manager) HandleIncomingCall(account *models.WhatsAppAccount, contact *models.Contact, callLog *models.CallLog, sdpOffer string) {
+//
+// stickyAgentID, if non-nil, comes from the voice_call button payload — the
+// caller pre-validated the agent's eligibility. We bypass the IVR for these
+// calls; after WebRTC media connects, webrtc.go kicks off a transfer to this
+// agent directly instead of running runIVRFlow.
+func (m *Manager) HandleIncomingCall(account *models.WhatsAppAccount, contact *models.Contact, callLog *models.CallLog, sdpOffer string, stickyAgentID *uuid.UUID) {
 	session := &CallSession{
 		ID:             callLog.WhatsAppCallID,
 		OrganizationID: account.OrganizationID,
@@ -226,10 +255,12 @@ func (m *Manager) HandleIncomingCall(account *models.WhatsAppAccount, contact *m
 		DTMFBuffer:     make(chan byte, 32),
 		StartedAt:      time.Now(),
 		BridgeStarted:  make(chan struct{}),
+		StickyAgentID:  stickyAgentID,
 	}
 
-	// Load IVR flow if assigned (cached)
-	if callLog.IVRFlowID != nil {
+	// Load IVR flow if assigned (cached). Skipped for sticky-routed calls —
+	// those bypass IVR entirely and go straight to a transfer.
+	if stickyAgentID == nil && callLog.IVRFlowID != nil {
 		session.IVRFlow = m.getIVRFlowCached(*callLog.IVRFlowID)
 	}
 
@@ -318,6 +349,18 @@ type orgCallingSettings struct {
 	MaskPhoneNumbers    bool
 	HoldMusicFile       string
 	RingbackFile        string
+}
+
+// transferRingFile returns the audio file the caller should hear while a
+// transfer is pending an agent's acceptance. Prefers RingbackFile (sounds
+// like "we're connecting you", closer to what a customer expects) and
+// falls back to HoldMusicFile when no ringback asset is configured for
+// the org. Empty string ⇒ silence.
+func (s orgCallingSettings) transferRingFile() string {
+	if s.RingbackFile != "" {
+		return s.RingbackFile
+	}
+	return s.HoldMusicFile
 }
 
 // getOrgCallingSettings returns cached org-level calling overrides,
@@ -571,13 +614,29 @@ func (m *Manager) finalizeRecording(orgID, callLogID uuid.UUID, callerRec, agent
 	var callerCount, agentCount int
 
 	if callerRec != nil {
-		callerPath, callerCount = callerRec.Stop()
+		var err error
+		callerPath, callerCount, err = callerRec.Stop()
 		defer func() { _ = os.Remove(callerPath) }()
+		if err != nil {
+			m.log.Error("Caller recording had write errors", "error", err, "call_log_id", callLogID)
+		}
 	}
 	if agentRec != nil {
-		agentPath, agentCount = agentRec.Stop()
+		var err error
+		agentPath, agentCount, err = agentRec.Stop()
 		defer func() { _ = os.Remove(agentPath) }()
+		if err != nil {
+			m.log.Error("Agent recording had write errors", "error", err, "call_log_id", callLogID)
+		}
 	}
+
+	m.log.Info("Recording finalized",
+		"call_log_id", callLogID,
+		"caller_packets", callerCount,
+		"agent_packets", agentCount,
+		"caller_path", callerPath,
+		"agent_path", agentPath,
+	)
 
 	maxCount := callerCount
 	if agentCount > maxCount {
@@ -588,7 +647,10 @@ func (m *Manager) finalizeRecording(orgID, callLogID uuid.UUID, callerRec, agent
 	}
 
 	// Duration from the longer stream (each packet = 20ms)
-	durationSecs := (maxCount * 20) / 1000
+	durationSecs := maxCount * 20 / 1000
+	if durationSecs == 0 && maxCount > 0 {
+		durationSecs = 1
+	}
 
 	// Merge the two direction files into one using FFmpeg.
 	// If only one direction was recorded, use it directly.
@@ -624,15 +686,22 @@ func (m *Manager) finalizeRecording(orgID, callLogID uuid.UUID, callerRec, agent
 
 	if err := m.s3.Upload(ctx, s3Key, f, "audio/ogg"); err != nil {
 		m.log.Error("Failed to upload recording to S3", "error", err, "call_log_id", callLogID)
+		if dbErr := m.db.Model(&models.CallLog{}).
+			Where("id = ?", callLogID).
+			Update("recording_error", err.Error()).Error; dbErr != nil {
+			m.log.Error("Failed to update call log with recording error", "error", dbErr, "call_log_id", callLogID)
+		}
 		return
 	}
 
-	m.db.Model(&models.CallLog{}).
+	if err := m.db.Model(&models.CallLog{}).
 		Where("id = ?", callLogID).
 		Updates(map[string]any{
-			"recording_s3_key":    s3Key,
+			"recording_s3_key":   s3Key,
 			"recording_duration": durationSecs,
-		})
+		}).Error; err != nil {
+		m.log.Error("Failed to update call log with recording metadata", "error", err, "s3_key", s3Key, "call_log_id", callLogID)
+	}
 
 	m.log.Info("Recording uploaded",
 		"call_log_id", callLogID,
@@ -652,13 +721,17 @@ func mergeRecordings(file1, file2 string) (string, error) {
 	outPath := out.Name()
 	_ = out.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
+	// file1 = caller, file2 = agent. Agent browser mic is typically quieter
+	// than WhatsApp's caller audio. Boost agent volume and use loudnorm to
+	// level both streams before mixing.
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-i", file1,
 		"-i", file2,
-		"-filter_complex", "amix=inputs=2:duration=longest",
+		"-filter_complex",
+		"[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[a1];[1:a]volume=3,loudnorm=I=-16:TP=-1.5:LRA=11[a2];[a1][a2]amix=inputs=2:duration=longest:normalize=0",
 		"-c:a", "libopus",
 		"-y", outPath,
 	)

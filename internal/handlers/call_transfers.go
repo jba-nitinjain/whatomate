@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"github.com/google/uuid"
-	"github.com/nikyjain/whatomate/internal/utils"
 	"github.com/nikyjain/whatomate/internal/models"
+	"github.com/nikyjain/whatomate/internal/utils"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 )
@@ -224,6 +224,58 @@ func (a *App) HangupCallTransfer(r *fastglue.Request) error {
 	return r.SendEnvelope(map[string]string{
 		"status": "completed",
 	})
+}
+
+// HoldCall puts an active call on hold and plays hold music to the caller.
+func (a *App) HoldCall(r *fastglue.Request) error {
+	_, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+	if err := a.requirePermission(r, userID, models.ResourceCallTransfers, models.ActionWrite); err != nil {
+		return nil
+	}
+
+	callLogID, err := parsePathUUID(r, "id", "call log")
+	if err != nil {
+		return nil
+	}
+
+	if a.CallManager == nil {
+		return r.SendErrorEnvelope(fasthttp.StatusServiceUnavailable, "Calling is not enabled", nil, "")
+	}
+
+	if err := a.CallManager.HoldCall(callLogID); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
+
+	return r.SendEnvelope(map[string]string{"status": "on_hold"})
+}
+
+// ResumeCall takes an active call off hold and restores the audio bridge.
+func (a *App) ResumeCall(r *fastglue.Request) error {
+	_, userID, err := a.getOrgAndUserID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+	if err := a.requirePermission(r, userID, models.ResourceCallTransfers, models.ActionWrite); err != nil {
+		return nil
+	}
+
+	callLogID, err := parsePathUUID(r, "id", "call log")
+	if err != nil {
+		return nil
+	}
+
+	if a.CallManager == nil {
+		return r.SendErrorEnvelope(fasthttp.StatusServiceUnavailable, "Calling is not enabled", nil, "")
+	}
+
+	if err := a.CallManager.ResumeCall(callLogID); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
+
+	return r.SendEnvelope(map[string]string{"status": "connected"})
 }
 
 // InitiateAgentTransfer allows a connected agent to transfer their active call to another team/agent

@@ -129,6 +129,15 @@ func runMigrations(db *gorm.DB) error {
 		&models.LeadSource{},
 		&models.LeadFormMapping{},
 		&models.Lead{},
+		// Conversation Notes
+		&models.ConversationNote{},
+		// Calling / IVR
+		&models.CallLog{},
+		&models.IVRFlow{},
+		&models.CallTransfer{},
+		&models.CallPermission{},
+		// Audit
+		&models.AuditLog{},
 	)
 }
 

@@ -123,6 +123,98 @@ func (a *App) ListAPIKeys(r *fastglue.Request) error {
 	})
 }
 
+// apiKeyToResponse converts a stored API key into its API representation.
+func apiKeyToResponse(key models.APIKey) APIKeyResponse {
+	orgName := ""
+	if key.Organization != nil {
+		orgName = key.Organization.Name
+	}
+	return APIKeyResponse{
+		ID:               key.ID,
+		Name:             key.Name,
+		KeyPrefix:        key.KeyPrefix,
+		LastUsedAt:       key.LastUsedAt,
+		ExpiresAt:        key.ExpiresAt,
+		IsActive:         key.IsActive,
+		CreatedAt:        key.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		OrganizationName: orgName,
+		IsSuperAdminKey:  key.IsSuperAdminKey,
+	}
+}
+
+// loadScopedAPIKey loads an API key by path ID applying our scoping rules:
+// super admins may access any key (org-scoped or platform-wide); everyone else
+// only keys belonging to their current organization and needs the given
+// api_keys permission. Returns ok=false after sending an error response.
+func (a *App) loadScopedAPIKey(r *fastglue.Request, action string) (models.APIKey, bool) {
+	var apiKey models.APIKey
+	userID, ok := r.RequestCtx.UserValue("user_id").(uuid.UUID)
+	if !ok {
+		_ = r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return apiKey, false
+	}
+	isSuperAdmin := a.IsSuperAdmin(userID)
+	if !isSuperAdmin {
+		if err := a.requirePermission(r, userID, models.ResourceAPIKeys, action); err != nil {
+			return apiKey, false
+		}
+	}
+
+	id, err := parsePathUUID(r, "id", "API key")
+	if err != nil {
+		return apiKey, false
+	}
+
+	query := a.DB.Preload("Organization").Where("id = ?", id)
+	if !isSuperAdmin {
+		orgID, err := a.getOrgID(r)
+		if err != nil {
+			_ = r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+			return apiKey, false
+		}
+		query = query.Where("organization_id = ?", orgID)
+	}
+	if err := query.First(&apiKey).Error; err != nil {
+		_ = r.SendErrorEnvelope(fasthttp.StatusNotFound, "API key not found", nil, "")
+		return apiKey, false
+	}
+	return apiKey, true
+}
+
+// GetAPIKey returns a single API key by ID.
+func (a *App) GetAPIKey(r *fastglue.Request) error {
+	apiKey, ok := a.loadScopedAPIKey(r, models.ActionRead)
+	if !ok {
+		return nil
+	}
+	return r.SendEnvelope(apiKeyToResponse(apiKey))
+}
+
+// UpdateAPIKey updates an API key (currently only the is_active toggle).
+func (a *App) UpdateAPIKey(r *fastglue.Request) error {
+	apiKey, ok := a.loadScopedAPIKey(r, models.ActionWrite)
+	if !ok {
+		return nil
+	}
+
+	var req struct {
+		IsActive *bool `json:"is_active"`
+	}
+	if err := a.decodeRequest(r, &req); err != nil {
+		return nil
+	}
+
+	if req.IsActive != nil {
+		apiKey.IsActive = *req.IsActive
+		if err := a.DB.Model(&models.APIKey{}).Where("id = ?", apiKey.ID).Update("is_active", apiKey.IsActive).Error; err != nil {
+			a.Log.Error("Failed to update API key", "error", err)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update API key", nil, "")
+		}
+	}
+
+	return r.SendEnvelope(apiKeyToResponse(apiKey))
+}
+
 // CreateAPIKey creates a new API key.
 // Regular users always get a key scoped to their own organization; any
 // organization_id/is_super_admin_key fields they send are ignored.
@@ -224,29 +316,17 @@ func (a *App) CreateAPIKey(r *fastglue.Request) error {
 	})
 }
 
-// DeleteAPIKey revokes an API key
+// DeleteAPIKey revokes an API key. Super admins may revoke any key (including
+// platform-wide super-admin keys); everyone else only keys of their organization.
 func (a *App) DeleteAPIKey(r *fastglue.Request) error {
-	orgID, userID, err := a.getOrgAndUserID(r)
-	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
-	}
-
-	if err := a.requirePermission(r, userID, models.ResourceAPIKeys, models.ActionDelete); err != nil {
+	apiKey, ok := a.loadScopedAPIKey(r, models.ActionDelete)
+	if !ok {
 		return nil
 	}
 
-	id, err := parsePathUUID(r, "id", "API key")
-	if err != nil {
-		return nil
-	}
-
-	result := a.DB.Where("id = ? AND organization_id = ?", id, orgID).Delete(&models.APIKey{})
-	if result.Error != nil {
-		a.Log.Error("Failed to delete API key", "error", result.Error)
+	if err := a.DB.Where("id = ?", apiKey.ID).Delete(&models.APIKey{}).Error; err != nil {
+		a.Log.Error("Failed to delete API key", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete API key", nil, "")
-	}
-	if result.RowsAffected == 0 {
-		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "API key not found", nil, "")
 	}
 
 	return r.SendEnvelope(map[string]string{"message": "API key deleted successfully"})

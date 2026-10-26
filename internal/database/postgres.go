@@ -49,7 +49,7 @@ func NewPostgres(cfg *config.DatabaseConfig, debug bool) (*gorm.DB, error) {
 // MigrationModel holds model info for migration progress
 type MigrationModel struct {
 	Name  string
-	Model interface{}
+	Model any
 }
 
 // GetMigrationModels returns all models to migrate with their names
@@ -121,6 +121,7 @@ func GetMigrationModels() []MigrationModel {
 		{"LeadSource", &models.LeadSource{}},
 		{"LeadFormMapping", &models.LeadFormMapping{}},
 		{"Lead", &models.Lead{}},
+		{"AuditLog", &models.AuditLog{}},
 	}
 }
 
@@ -475,6 +476,11 @@ func SeedSystemRolesForAllOrgs(db *gorm.DB) error {
 		return fmt.Errorf("failed to fix role permissions: %w", err)
 	}
 
+	// Grant permissions introduced after an org was created to its admin role
+	if err := SyncAdminRolePermissions(db); err != nil {
+		return fmt.Errorf("failed to sync admin role permissions: %w", err)
+	}
+
 	// Migrate existing users from old role column to new role_id
 	if err := MigrateExistingUserRoles(db); err != nil {
 		return fmt.Errorf("failed to migrate user roles: %w", err)
@@ -740,7 +746,7 @@ func SeedDefaultWidgetsForOrg(db *gorm.DB, orgID, userID uuid.UUID) error {
 		{"Chatbot Sessions", "Active chatbot conversation sessions", "sessions", "number", "purple", nil, 3, 6, 0, 3, 3},
 		{"Total Campaigns", "Number of bulk message campaigns", "campaigns", "number", "orange", nil, 4, 9, 0, 3, 3},
 		{"Recent Messages", "Latest conversations from your contacts", "messages", "table", "", nil, 5, 0, 3, 6, 8},
-		{"Quick Actions", "Common tasks and shortcuts", "shortcuts", "shortcuts", "", models.JSONB{"shortcuts": []interface{}{"chat", "campaigns", "templates", "chatbot"}}, 6, 6, 3, 6, 8},
+		{"Quick Actions", "Common tasks and shortcuts", "shortcuts", "shortcuts", "", models.JSONB{"shortcuts": []any{"chat", "campaigns", "templates", "chatbot"}}, 6, 6, 3, 6, 8},
 	}
 
 	for _, wd := range defaultWidgetsData {

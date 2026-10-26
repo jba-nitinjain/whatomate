@@ -238,7 +238,7 @@ func (a *App) requirePermission(r *fastglue.Request, userID uuid.UUID, resource,
 
 // decodeRequest decodes a JSON request body into the provided struct.
 // Returns nil on success, otherwise sends a 400 error envelope and returns errEnvelopeSent.
-func (a *App) decodeRequest(r *fastglue.Request, v interface{}) error {
+func (a *App) decodeRequest(r *fastglue.Request, v any) error {
 	if err := r.Decode(v, "json"); err != nil {
 		_ = r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
 		return errEnvelopeSent

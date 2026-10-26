@@ -48,7 +48,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
 		tpl := createTestTemplate(t, app, org.ID, account.Name)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 			"template_params": map[string]string{
@@ -73,7 +73,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		assert.Equal(t, account.Name, resp.Data.WhatsAppAccount)
 
 		// Verify rendered body content
-		contentMap, ok := resp.Data.Content.(map[string]interface{})
+		contentMap, ok := resp.Data.Content.(map[string]any)
 		require.True(t, ok)
 		assert.Equal(t, "Hello Alice! Your order ORD-42 has been confirmed.", contentMap["body"])
 
@@ -117,7 +117,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -132,7 +132,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
 
-		contentMap, ok := resp.Data.Content.(map[string]interface{})
+		contentMap, ok := resp.Data.Content.(map[string]any)
 		require.True(t, ok)
 		assert.Equal(t, "Welcome to our service!", contentMap["body"])
 	})
@@ -150,7 +150,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
 		tpl := createTestTemplate(t, app, org.ID, account.Name)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":  contact.ID.String(),
 			"template_id": tpl.ID.String(),
 			"template_params": map[string]string{
@@ -170,7 +170,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
 		assert.Equal(t, models.MessageTypeTemplate, resp.Data.MessageType)
 
-		contentMap, ok := resp.Data.Content.(map[string]interface{})
+		contentMap, ok := resp.Data.Content.(map[string]any)
 		require.True(t, ok)
 		assert.Equal(t, "Hello Bob! Your order ORD-99 has been confirmed.", contentMap["body"])
 	})
@@ -188,7 +188,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
 		tpl := createTestTemplate(t, app, org.ID, account.Name)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 			"account_name":  account.Name,
@@ -311,7 +311,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"template_name": "some_template",
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -329,7 +329,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id": contact.ID.String(),
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -347,7 +347,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": "nonexistent_template",
 		})
@@ -377,7 +377,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -400,7 +400,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		account := createTestAccount(t, app, org.ID)
 		tpl := createTestTemplate(t, app, org.ID, account.Name)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    uuid.New().String(),
 			"template_name": tpl.Name,
 		})
@@ -425,7 +425,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		tpl := createTestTemplate(t, app, org.ID, account.Name)
 
 		// Send without required params — template has {{name}} and {{order_id}}
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 			// no template_params
@@ -445,7 +445,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":  contact.ID.String(),
 			"template_id": "not-a-uuid",
 		})
@@ -474,7 +474,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    "not-a-uuid",
 			"template_name": tpl.Name,
 		})
@@ -506,7 +506,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -533,7 +533,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		// Contact belongs to org2
 		contact := testutil.CreateTestContact(t, app.DB, org2.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -563,7 +563,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 			"account_name":  "nonexistent-account",
@@ -598,7 +598,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -608,9 +608,9 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the response has all MessageResponse fields
-		var raw map[string]interface{}
+		var raw map[string]any
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &raw))
-		data := raw["data"].(map[string]interface{})
+		data := raw["data"].(map[string]any)
 
 		assert.NotEmpty(t, data["id"])
 		assert.NotEmpty(t, data["contact_id"])
@@ -645,13 +645,13 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 			Status:          string(models.TemplateStatusApproved),
 			BodyContent:     "Would you like to proceed?",
 			Buttons: models.JSONBArray{
-				map[string]interface{}{"type": "QUICK_REPLY", "text": "Yes"},
-				map[string]interface{}{"type": "QUICK_REPLY", "text": "No"},
+				map[string]any{"type": "QUICK_REPLY", "text": "Yes"},
+				map[string]any{"type": "QUICK_REPLY", "text": "No"},
 			},
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -662,23 +662,23 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
 
 		// Verify response includes interactive_data with buttons
-		var raw map[string]interface{}
+		var raw map[string]any
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &raw))
-		data := raw["data"].(map[string]interface{})
+		data := raw["data"].(map[string]any)
 
-		interactiveData, ok := data["interactive_data"].(map[string]interface{})
+		interactiveData, ok := data["interactive_data"].(map[string]any)
 		require.True(t, ok, "interactive_data should be present for template with buttons")
 		assert.Equal(t, "button", interactiveData["type"])
 
-		buttons, ok := interactiveData["buttons"].([]interface{})
+		buttons, ok := interactiveData["buttons"].([]any)
 		require.True(t, ok, "buttons should be an array")
 		assert.Len(t, buttons, 2)
 
-		btn0 := buttons[0].(map[string]interface{})
+		btn0 := buttons[0].(map[string]any)
 		assert.Equal(t, "QUICK_REPLY", btn0["type"])
 		assert.Equal(t, "Yes", btn0["text"])
 
-		btn1 := buttons[1].(map[string]interface{})
+		btn1 := buttons[1].(map[string]any)
 		assert.Equal(t, "No", btn1["text"])
 
 		// Verify persisted in DB
@@ -835,7 +835,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -845,9 +845,9 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
 
-		var raw map[string]interface{}
+		var raw map[string]any
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &raw))
-		data := raw["data"].(map[string]interface{})
+		data := raw["data"].(map[string]any)
 
 		// interactive_data should be absent (omitempty) or nil
 		_, hasInteractive := data["interactive_data"]

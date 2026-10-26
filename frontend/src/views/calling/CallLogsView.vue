@@ -12,6 +12,7 @@ import { Phone, PhoneIncoming, PhoneOutgoing, PhoneOff, PhoneMissed, Clock, Refr
 import DataTable from '@/components/shared/DataTable.vue'
 import type { Column } from '@/components/shared/types'
 import SearchInput from '@/components/shared/SearchInput.vue'
+import { ErrorState } from '@/components/shared'
 import IVRPathTree from '@/components/calling/IVRPathTree.vue'
 import { useViewRefresh } from '@/composables/useViewRefresh'
 
@@ -29,6 +30,7 @@ let searchTimeout: number | null = null
 const pageSize = 20
 const accounts = ref<{ name: string }[]>([])
 const ivrFlows = ref<IVRFlow[]>([])
+const error = ref<string | null>(null)
 
 // Detail dialog
 const showDetail = ref(false)
@@ -61,16 +63,21 @@ const columns = computed<Column<CallLog>[]>(() => [
   { key: 'started_at', label: t('calling.time') },
 ])
 
-function fetchLogs() {
-  store.fetchCallLogs({
-    status: statusFilter.value !== 'all' ? statusFilter.value : undefined,
-    account: accountFilter.value !== 'all' ? accountFilter.value : undefined,
-    direction: directionFilter.value !== 'all' ? directionFilter.value : undefined,
-    ivr_flow_id: ivrFlowFilter.value !== 'all' ? ivrFlowFilter.value : undefined,
-    phone: phoneSearch.value || undefined,
-    page: currentPage.value,
-    limit: pageSize
-  })
+async function fetchLogs() {
+  error.value = null
+  try {
+    await store.fetchCallLogs({
+      status: statusFilter.value !== 'all' ? statusFilter.value : undefined,
+      account: accountFilter.value !== 'all' ? accountFilter.value : undefined,
+      direction: directionFilter.value !== 'all' ? directionFilter.value : undefined,
+      ivr_flow_id: ivrFlowFilter.value !== 'all' ? ivrFlowFilter.value : undefined,
+      phone: phoneSearch.value || undefined,
+      page: currentPage.value,
+      limit: pageSize
+    })
+  } catch {
+    error.value = t('calling.errorLoadingCallLogs')
+  }
 }
 
 const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchLogs, { intervalMs: 60000 })
@@ -225,8 +232,17 @@ watch(phoneSearch, () => {
       </Button>
     </div>
 
+    <!-- Error State -->
+    <ErrorState
+      v-if="error && !store.callLogsLoading"
+      :title="$t('common.loadErrorTitle')"
+      :description="error"
+      :retry-label="$t('common.retry')"
+      @retry="fetchLogs"
+    />
+
     <!-- Filters -->
-    <Card>
+    <Card v-if="!error">
       <CardContent class="pt-6">
         <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <SearchInput v-model="phoneSearch" :placeholder="t('calling.searchByPhone')" class="w-full" />
@@ -280,7 +296,7 @@ watch(phoneSearch, () => {
     </Card>
 
     <!-- Table -->
-    <Card>
+    <Card v-if="!error">
       <CardContent class="pt-6">
         <DataTable
           :items="store.callLogs"

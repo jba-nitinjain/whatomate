@@ -191,7 +191,7 @@ func TestApp_CreateCampaign_Success(t *testing.T) {
 	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("create-account"))
 	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":             "Test Campaign",
 		"whatsapp_account": account.Name,
 		"template_id":      template.ID.String(),
@@ -222,7 +222,7 @@ func TestApp_CreateCampaign_WithScheduledAt(t *testing.T) {
 
 	scheduledAt := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":             "Scheduled Campaign",
 		"whatsapp_account": account.Name,
 		"template_id":      template.ID.String(),
@@ -249,7 +249,7 @@ func TestApp_CreateCampaign_InvalidTemplateID(t *testing.T) {
 	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("invalid-template")), testutil.WithPassword("password"))
 	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("invalid-template-account"))
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":             "Test Campaign",
 		"whatsapp_account": account.Name,
 		"template_id":      "not-a-valid-uuid",
@@ -268,7 +268,7 @@ func TestApp_CreateCampaign_TemplateNotFound(t *testing.T) {
 	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("template-not-found")), testutil.WithPassword("password"))
 	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("no-template-account"))
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":             "Test Campaign",
 		"whatsapp_account": account.Name,
 		"template_id":      uuid.New().String(),
@@ -288,7 +288,7 @@ func TestApp_CreateCampaign_AccountNotFound(t *testing.T) {
 	account := testutil.CreateTestWhatsAppAccountWith(t, app.DB, org.ID, testutil.WithAccountName("temp-account-for-template"))
 	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":             "Test Campaign",
 		"whatsapp_account": "nonexistent-account",
 		"template_id":      template.ID.String(),
@@ -385,7 +385,7 @@ func TestApp_UpdateCampaign_Success(t *testing.T) {
 	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
 	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusDraft)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":             "Updated Campaign Name",
 		"whatsapp_account": account.Name,
 		"template_id":      template.ID.String(),
@@ -414,7 +414,7 @@ func TestApp_UpdateCampaign_NotDraft(t *testing.T) {
 	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
 	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusProcessing)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name": "Updated Name",
 	})
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -431,7 +431,7 @@ func TestApp_UpdateCampaign_NotFound(t *testing.T) {
 	org := testutil.CreateTestOrganization(t, app.DB)
 	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("update-not-found")), testutil.WithPassword("password"))
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name": "Updated Name",
 	})
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1031,8 +1031,8 @@ func TestApp_ImportRecipients_Success(t *testing.T) {
 	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
 	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusDraft)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
-		"recipients": []map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
+		"recipients": []map[string]any{
 			{"phone_number": "+1234567890", "recipient_name": "John Doe"},
 			{"phone_number": "+0987654321", "recipient_name": "Jane Doe"},
 		},
@@ -1066,12 +1066,12 @@ func TestApp_ImportRecipients_WithTemplateParams(t *testing.T) {
 	template := testutil.CreateTestTemplate(t, app.DB, org.ID, account.Name)
 	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusDraft)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
-		"recipients": []map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
+		"recipients": []map[string]any{
 			{
 				"phone_number":    "+1234567890",
 				"recipient_name":  "John Doe",
-				"template_params": map[string]interface{}{"1": "John", "2": "Welcome"},
+				"template_params": map[string]any{"1": "John", "2": "Welcome"},
 			},
 		},
 	})

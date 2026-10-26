@@ -210,7 +210,7 @@ func CreateTestContact(t *testing.T, db *gorm.DB, orgID uuid.UUID) *models.Conta
 	contact := &models.Contact{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		OrganizationID: orgID,
-		PhoneNumber:    "+1234567890" + uniqueID[:4],
+		PhoneNumber:    "+1234567890" + uniqueID,
 		ProfileName:    "Test Contact " + uniqueID,
 		IsActive:       true,
 	}
@@ -243,7 +243,7 @@ func CreateTestContactWith(t *testing.T, db *gorm.DB, orgID uuid.UUID, opts ...C
 	contact := &models.Contact{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		OrganizationID: orgID,
-		PhoneNumber:    "+1234567890" + uniqueID[:4],
+		PhoneNumber:    "+1234567890" + uniqueID,
 		ProfileName:    "Test Contact " + uniqueID,
 		IsActive:       true,
 	}

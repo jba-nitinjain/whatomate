@@ -1,6 +1,18 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { contactsService, messagesService } from '@/services/api'
+
+// Phones are stored without leading + or whitespace (see CreateContact in
+// internal/handlers/contacts.go). Strip them from a digit-only query so a user
+// typing "+91 98765 43210" still matches a stored "919876543210" via the
+// server's substring LIKE.
+function normalizeContactSearch(raw: string): string {
+  const trimmed = raw.trim().replace(/^\+/, '')
+  if (trimmed && /^[\d\s+()-]+$/.test(trimmed)) {
+    return trimmed.replace(/[\s+()-]/g, '')
+  }
+  return trimmed
+}
 
 export interface Contact {
   id: string
@@ -18,6 +30,7 @@ export interface Contact {
   unread_count: number
   assigned_user_id?: string
   whatsapp_account?: string
+  marketing_opt_out?: boolean
   created_at: string
   updated_at: string
 }
@@ -91,18 +104,11 @@ export const useContactsStore = defineStore('contacts', () => {
   const isLoadingMoreContacts = ref(false)
   const hasMoreContacts = computed(() => contacts.value.length < contactsTotal.value)
 
+  // Search is driven server-side via fetchContacts({ search }); only the
+  // unread toggle is re-applied locally so the list updates instantly.
   const filteredContacts = computed(() => {
-    let filtered = contacts.value
-    if (showUnreadOnly.value) {
-      filtered = filtered.filter(contact => contact.unread_count > 0)
-    }
-    if (!searchQuery.value) return filtered
-    const query = searchQuery.value.toLowerCase()
-    return filtered.filter(c =>
-      c.name.toLowerCase().includes(query) ||
-      c.phone_number.includes(query) ||
-      (c.profile_name?.toLowerCase().includes(query))
-    )
+    if (!showUnreadOnly.value) return contacts.value
+    return contacts.value.filter(contact => contact.unread_count > 0)
   })
 
   const sortedContacts = computed(() => {
@@ -143,11 +149,13 @@ export const useContactsStore = defineStore('contacts', () => {
     try {
       const nextPage = contactsPage.value + 1
       const tagsParam = selectedTags.value.length > 0 ? selectedTags.value.join(',') : undefined
+      const search = normalizeContactSearch(searchQuery.value) || undefined
       const response = await contactsService.list({
         page: nextPage,
         limit: contactsLimit.value,
         tags: tagsParam,
-        unread_only: showUnreadOnly.value || undefined
+        unread_only: showUnreadOnly.value || undefined,
+        search
       })
       const data = response.data.data || response.data
       const newContacts = data.contacts || []
@@ -220,9 +228,22 @@ export const useContactsStore = defineStore('contacts', () => {
     }
   }
 
-  async function sendMessage(contactId: string, type: string, content: any, replyToMessageId?: string, whatsappAccount?: string) {
+  async function sendMessage(
+    contactId: string,
+    type: string,
+    content: any,
+    replyToMessageId?: string,
+    whatsappAccount?: string,
+    extra?: { interactive?: Parameters<typeof messagesService.send>[1]['interactive'] },
+  ) {
     try {
-      const response = await messagesService.send(contactId, { type, content, reply_to_message_id: replyToMessageId, whatsapp_account: whatsappAccount })
+      const response = await messagesService.send(contactId, {
+        type,
+        content,
+        reply_to_message_id: replyToMessageId,
+        whatsapp_account: whatsappAccount,
+        ...(extra?.interactive ? { interactive: extra.interactive } : {}),
+      })
       // API returns { status: "success", data: { ... } }
       const newMessage = response.data.data || response.data
       // Use addMessage which has duplicate checking (WebSocket may also broadcast this)
@@ -240,12 +261,14 @@ export const useContactsStore = defineStore('contacts', () => {
     templateName: string,
     templateParams?: Record<string, string>,
     accountName?: string,
-    headerFile?: File
+    headerFile?: File,
+    buttonParams?: Record<string, string>
   ) {
     try {
       const response = await messagesService.sendTemplate(contactId, {
         template_name: templateName,
         template_params: templateParams,
+        button_params: buttonParams,
         account_name: accountName
       }, headerFile)
       const data = response.data.data || response.data
@@ -401,6 +424,16 @@ export const useContactsStore = defineStore('contacts', () => {
       currentContact.value = { ...currentContact.value, tags }
     }
   }
+
+  // Debounce server-side search so each keystroke doesn't fire a request.
+  let searchDebounceHandle: ReturnType<typeof setTimeout> | null = null
+  watch(searchQuery, (query) => {
+    if (searchDebounceHandle) clearTimeout(searchDebounceHandle)
+    searchDebounceHandle = setTimeout(() => {
+      const search = normalizeContactSearch(query) || undefined
+      fetchContacts({ search })
+    }, 300)
+  })
 
   return {
     contacts,

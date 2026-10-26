@@ -37,11 +37,13 @@ type BulkMessageCampaign struct {
 	// recipient into when they tap through (e.g. an RSVP follow-up's chosen
 	// flow). Unset for campaign types with no follow-up flow of their own.
 	FlowID *uuid.UUID `gorm:"type:uuid" json:"flow_id,omitempty"`
+	UpdatedByID          *uuid.UUID     `gorm:"type:uuid" json:"updated_by_id,omitempty"`
 
 	// Relations
 	Organization *Organization          `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
 	Template     *Template              `gorm:"foreignKey:TemplateID" json:"template,omitempty"`
 	Creator      *User                  `gorm:"foreignKey:CreatedBy" json:"creator,omitempty"`
+	UpdatedBy    *User                  `gorm:"foreignKey:UpdatedByID" json:"updated_by,omitempty"`
 	Recipients   []BulkMessageRecipient `gorm:"foreignKey:CampaignID" json:"recipients,omitempty"`
 }
 

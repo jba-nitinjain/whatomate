@@ -102,14 +102,14 @@ func TestClient_SendInteractiveButtons(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var capturedBody map[string]interface{}
+			var capturedBody map[string]any
 			var serverCalled bool
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				serverCalled = true
 				_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 				w.WriteHeader(http.StatusOK)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]any{
 					"messages": []map[string]string{{"id": "wamid.test"}},
 				})
 			}))
@@ -129,7 +129,7 @@ func TestClient_SendInteractiveButtons(t *testing.T) {
 			}
 			ctx := testutil.TestContext(t)
 
-			_, err := client.SendInteractiveButtons(ctx, account, tt.phone, tt.bodyText, tt.buttons)
+			_, err := client.SendInteractiveButtons(ctx, account, whatsapp.Recipient{Phone: tt.phone}, tt.bodyText, tt.buttons)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -143,7 +143,7 @@ func TestClient_SendInteractiveButtons(t *testing.T) {
 			require.True(t, serverCalled, "server should have been called")
 
 			// Verify interactive type
-			interactive := capturedBody["interactive"].(map[string]interface{})
+			interactive := capturedBody["interactive"].(map[string]any)
 			assert.Equal(t, tt.wantInteractive, interactive["type"])
 		})
 	}
@@ -152,12 +152,12 @@ func TestClient_SendInteractiveButtons(t *testing.T) {
 func TestClient_SendInteractiveButtons_ButtonTruncation(t *testing.T) {
 	t.Parallel()
 
-	var capturedBody map[string]interface{}
+	var capturedBody map[string]any
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]string{{"id": "wamid.test"}},
 		})
 	}))
@@ -182,15 +182,15 @@ func TestClient_SendInteractiveButtons_ButtonTruncation(t *testing.T) {
 		{ID: "1", Title: longTitle},
 	}
 
-	_, err := client.SendInteractiveButtons(ctx, account, "1234567890", "Choose:", buttons)
+	_, err := client.SendInteractiveButtons(ctx, account, whatsapp.Recipient{Phone: "1234567890"}, "Choose:", buttons)
 	require.NoError(t, err)
 
 	// Verify button title was truncated
-	interactive := capturedBody["interactive"].(map[string]interface{})
-	action := interactive["action"].(map[string]interface{})
-	buttonsList := action["buttons"].([]interface{})
-	button := buttonsList[0].(map[string]interface{})
-	reply := button["reply"].(map[string]interface{})
+	interactive := capturedBody["interactive"].(map[string]any)
+	action := interactive["action"].(map[string]any)
+	buttonsList := action["buttons"].([]any)
+	button := buttonsList[0].(map[string]any)
+	reply := button["reply"].(map[string]any)
 
 	// Should be truncated to 20 chars
 	assert.Len(t, reply["title"], 20)
@@ -245,12 +245,12 @@ func TestClient_SendTemplateMessage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var capturedBody map[string]interface{}
+			var capturedBody map[string]any
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 				w.WriteHeader(http.StatusOK)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]any{
 					"messages": []map[string]string{{"id": "wamid.template123"}},
 				})
 			}))
@@ -271,7 +271,7 @@ func TestClient_SendTemplateMessage(t *testing.T) {
 			ctx := testutil.TestContext(t)
 
 			components := whatsapp.BodyParamsToComponents(tt.bodyParams)
-			msgID, err := client.SendTemplateMessage(ctx, account, tt.phone, tt.templateName, tt.language, components)
+			msgID, err := client.SendTemplateMessage(ctx, account, whatsapp.Recipient{Phone: tt.phone}, tt.templateName, tt.language, components)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -285,26 +285,26 @@ func TestClient_SendTemplateMessage(t *testing.T) {
 			assert.Equal(t, "template", capturedBody["type"])
 			assert.Equal(t, tt.phone, capturedBody["to"])
 
-			template := capturedBody["template"].(map[string]interface{})
+			template := capturedBody["template"].(map[string]any)
 			assert.Equal(t, tt.templateName, template["name"])
 
-			language := template["language"].(map[string]interface{})
+			language := template["language"].(map[string]any)
 			assert.Equal(t, tt.language, language["code"])
 
 			// If params were provided, verify components
 			if len(tt.bodyParams) > 0 {
-				components := template["components"].([]interface{})
+				components := template["components"].([]any)
 				assert.Len(t, components, 1)
 
-				bodyComponent := components[0].(map[string]interface{})
+				bodyComponent := components[0].(map[string]any)
 				assert.Equal(t, "body", bodyComponent["type"])
 
-				params := bodyComponent["parameters"].([]interface{})
+				params := bodyComponent["parameters"].([]any)
 				assert.Len(t, params, len(tt.bodyParams))
 
 				// Verify each param has type "text" and a text value
 				for _, p := range params {
-					param := p.(map[string]interface{})
+					param := p.(map[string]any)
 					assert.Equal(t, "text", param["type"])
 					assert.NotEmpty(t, param["text"])
 				}
@@ -357,12 +357,12 @@ func TestClient_SendCTAURLButton(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var capturedBody map[string]interface{}
+			var capturedBody map[string]any
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 				w.WriteHeader(http.StatusOK)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]any{
 					"messages": []map[string]string{{"id": "wamid.cta123"}},
 				})
 			}))
@@ -382,7 +382,7 @@ func TestClient_SendCTAURLButton(t *testing.T) {
 			}
 			ctx := testutil.TestContext(t)
 
-			msgID, err := client.SendCTAURLButton(ctx, account, tt.phone, tt.bodyText, tt.buttonText, tt.url)
+			msgID, err := client.SendCTAURLButton(ctx, account, whatsapp.Recipient{Phone: tt.phone}, tt.bodyText, tt.buttonText, tt.url)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -396,12 +396,159 @@ func TestClient_SendCTAURLButton(t *testing.T) {
 			assert.Equal(t, "wamid.cta123", msgID)
 
 			// Verify request body
-			interactive := capturedBody["interactive"].(map[string]interface{})
+			interactive := capturedBody["interactive"].(map[string]any)
 			assert.Equal(t, "cta_url", interactive["type"])
 
-			action := interactive["action"].(map[string]interface{})
-			params := action["parameters"].(map[string]interface{})
+			action := interactive["action"].(map[string]any)
+			params := action["parameters"].(map[string]any)
 			assert.Equal(t, tt.url, params["url"])
+		})
+	}
+}
+
+func TestClient_SendVoiceCallButton(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		bodyText        string
+		displayText     string
+		ttlMinutes      int
+		payload         string
+		wantErr         bool
+		wantErrContains string
+		// Expected JSON shape under interactive.action.parameters
+		wantDisplayText string // empty means assert truncation explicitly
+		wantTTL         any    // nil => key must be absent
+		wantPayload     any    // nil => key must be absent
+	}{
+		{
+			name:            "valid voice_call button with ttl and payload",
+			bodyText:        "Call us now",
+			displayText:     "Call Agent",
+			ttlMinutes:      15,
+			payload:         "agent:abc-123",
+			wantDisplayText: "Call Agent",
+			wantTTL:         float64(15),
+			wantPayload:     "agent:abc-123",
+		},
+		{
+			name:            "omits ttl_minutes when zero",
+			bodyText:        "Call us",
+			displayText:     "Call",
+			ttlMinutes:      0,
+			payload:         "agent:abc",
+			wantDisplayText: "Call",
+			wantTTL:         nil,
+			wantPayload:     "agent:abc",
+		},
+		{
+			name:            "omits payload when empty",
+			bodyText:        "Call us",
+			displayText:     "Call",
+			ttlMinutes:      5,
+			payload:         "",
+			wantDisplayText: "Call",
+			wantTTL:         float64(5),
+			wantPayload:     nil,
+		},
+		{
+			name:            "truncates display_text to 20 chars",
+			bodyText:        "Call us",
+			displayText:     "This display text is much longer than allowed",
+			ttlMinutes:      10,
+			payload:         "x",
+			wantDisplayText: "This display text is",
+			wantTTL:         float64(10),
+			wantPayload:     "x",
+		},
+		{
+			name:            "empty body returns error",
+			bodyText:        "",
+			displayText:     "Call",
+			ttlMinutes:      15,
+			payload:         "x",
+			wantErr:         true,
+			wantErrContains: "body text is required",
+		},
+		{
+			name:            "empty display_text returns error",
+			bodyText:        "Call us",
+			displayText:     "",
+			ttlMinutes:      15,
+			payload:         "x",
+			wantErr:         true,
+			wantErrContains: "display text is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedBody map[string]any
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"messages": []map[string]string{{"id": "wamid.vc123"}},
+				})
+			}))
+			defer server.Close()
+
+			log := testutil.NopLogger()
+			client := whatsapp.NewWithTimeout(log, 5*time.Second)
+			client.HTTPClient = &http.Client{
+				Transport: &testServerTransport{serverURL: server.URL},
+			}
+
+			account := &whatsapp.Account{
+				PhoneID:     "123456789",
+				BusinessID:  "987654321",
+				APIVersion:  "v21.0",
+				AccessToken: "test-token",
+			}
+			ctx := testutil.TestContext(t)
+
+			msgID, err := client.SendVoiceCallButton(ctx, account, whatsapp.Recipient{Phone: "1234567890"}, tt.bodyText, tt.displayText, tt.ttlMinutes, tt.payload)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.wantErrContains != "" {
+					assert.Contains(t, err.Error(), tt.wantErrContains)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, "wamid.vc123", msgID)
+
+			interactive := capturedBody["interactive"].(map[string]any)
+			assert.Equal(t, "voice_call", interactive["type"])
+
+			body := interactive["body"].(map[string]any)
+			assert.Equal(t, tt.bodyText, body["text"])
+
+			action := interactive["action"].(map[string]any)
+			assert.Equal(t, "voice_call", action["name"])
+
+			params := action["parameters"].(map[string]any)
+			assert.Equal(t, tt.wantDisplayText, params["display_text"])
+
+			if tt.wantTTL == nil {
+				_, present := params["ttl_minutes"]
+				assert.False(t, present, "ttl_minutes must be omitted when zero")
+			} else {
+				assert.Equal(t, tt.wantTTL, params["ttl_minutes"])
+			}
+
+			if tt.wantPayload == nil {
+				_, present := params["payload"]
+				assert.False(t, present, "payload must be omitted when empty")
+			} else {
+				assert.Equal(t, tt.wantPayload, params["payload"])
+			}
 		})
 	}
 }
@@ -409,12 +556,12 @@ func TestClient_SendCTAURLButton(t *testing.T) {
 func TestClient_SendTemplateMessage_WithComponents(t *testing.T) {
 	t.Parallel()
 
-	var capturedBody map[string]interface{}
+	var capturedBody map[string]any
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"messages": []map[string]string{{"id": "wamid.comp123"}},
 		})
 	}))
@@ -435,38 +582,39 @@ func TestClient_SendTemplateMessage_WithComponents(t *testing.T) {
 	ctx := testutil.TestContext(t)
 
 	// Test with header and body components
-	components := []map[string]interface{}{
+	components := []map[string]any{
 		{
 			"type": "header",
-			"parameters": []map[string]interface{}{
+			"parameters": []map[string]any{
 				{"type": "image", "image": map[string]string{"link": "https://example.com/image.jpg"}},
 			},
 		},
 		{
 			"type": "body",
-			"parameters": []map[string]interface{}{
+			"parameters": []map[string]any{
 				{"type": "text", "text": "John Doe"},
 				{"type": "text", "text": "Order #12345"},
 			},
 		},
 	}
 
-	msgID, err := client.SendTemplateMessage(ctx, account, "1234567890", "order_template", "en", components)
+	msgID, err := client.SendTemplateMessage(ctx, account, whatsapp.Recipient{Phone: "1234567890"}, "order_template", "en", components)
 
 	require.NoError(t, err)
 	assert.Equal(t, "wamid.comp123", msgID)
 
 	// Verify components were passed correctly
-	template := capturedBody["template"].(map[string]interface{})
-	sentComponents := template["components"].([]interface{})
+	template := capturedBody["template"].(map[string]any)
+	sentComponents := template["components"].([]any)
 	assert.Len(t, sentComponents, 2)
 }
 
 func TestBuildTemplateComponents_HeaderMediaLink(t *testing.T) {
 	t.Parallel()
 
-	components := whatsapp.BuildTemplateComponents(
+	components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(
 		map[string]string{"1": "Alice"},
+		nil,
 		nil,
 		nil,
 		"IMAGE",
@@ -487,7 +635,8 @@ func TestBuildTemplateComponents_HeaderMediaLink(t *testing.T) {
 func TestBuildTemplateComponents_DocumentLinkIncludesFilename(t *testing.T) {
 	t.Parallel()
 
-	components := whatsapp.BuildTemplateComponents(
+	components := whatsapp.BuildTemplateComponentsWithQuickReplyPayloads(
+		nil,
 		nil,
 		nil,
 		nil,
@@ -556,4 +705,184 @@ func TestBuildTemplateComponents_QuickReplyPayload(t *testing.T) {
 	require.Len(t, params, 1)
 	assert.Equal(t, "payload", params[0]["type"])
 	assert.Equal(t, "invoice_code=INV-1001&action=confirm", params[0]["payload"])
+}
+
+func TestButtonURLParamsToComponents(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil params returns nil", func(t *testing.T) {
+		result := whatsapp.ButtonURLParamsToComponents(nil)
+		assert.Nil(t, result)
+	})
+
+	t.Run("empty params returns nil", func(t *testing.T) {
+		result := whatsapp.ButtonURLParamsToComponents(map[string]string{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("single URL button param", func(t *testing.T) {
+		params := map[string]string{"0": "12345"}
+		result := whatsapp.ButtonURLParamsToComponents(params)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "button", result[0]["type"])
+		assert.Equal(t, "url", result[0]["sub_type"])
+		assert.Equal(t, "0", result[0]["index"])
+
+		parameters := result[0]["parameters"].([]map[string]any)
+		require.Len(t, parameters, 1)
+		assert.Equal(t, "text", parameters[0]["type"])
+		assert.Equal(t, "12345", parameters[0]["text"])
+	})
+
+	t.Run("multiple URL button params sorted by index", func(t *testing.T) {
+		params := map[string]string{"1": "xyz", "0": "abc"}
+		result := whatsapp.ButtonURLParamsToComponents(params)
+
+		require.Len(t, result, 2)
+		assert.Equal(t, "0", result[0]["index"])
+		assert.Equal(t, "1", result[1]["index"])
+	})
+
+	t.Run("COPY_CODE button from template metadata", func(t *testing.T) {
+		params := map[string]string{"0": "WELCOME10"}
+		templateButtons := []any{
+			map[string]any{"type": "COPY_CODE", "text": "Copy Code"},
+		}
+		result := whatsapp.ButtonURLParamsToComponents(params, templateButtons)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "button", result[0]["type"])
+		assert.Equal(t, "copy_code", result[0]["sub_type"])
+		assert.Equal(t, "0", result[0]["index"])
+
+		parameters := result[0]["parameters"].([]map[string]any)
+		require.Len(t, parameters, 1)
+		assert.Equal(t, "coupon_code", parameters[0]["type"])
+		assert.Equal(t, "WELCOME10", parameters[0]["coupon_code"])
+	})
+
+	t.Run("mixed URL and COPY_CODE buttons", func(t *testing.T) {
+		params := map[string]string{"0": "track123", "1": "SAVE20"}
+		templateButtons := []any{
+			map[string]any{"type": "URL", "text": "Track", "url": "https://example.com/{{1}}"},
+			map[string]any{"type": "COPY_CODE", "text": "Copy Code"},
+		}
+		result := whatsapp.ButtonURLParamsToComponents(params, templateButtons)
+
+		require.Len(t, result, 2)
+
+		// First: URL button
+		assert.Equal(t, "url", result[0]["sub_type"])
+		urlParams := result[0]["parameters"].([]map[string]any)
+		assert.Equal(t, "track123", urlParams[0]["text"])
+
+		// Second: COPY_CODE button
+		assert.Equal(t, "copy_code", result[1]["sub_type"])
+		codeParams := result[1]["parameters"].([]map[string]any)
+		assert.Equal(t, "SAVE20", codeParams[0]["coupon_code"])
+	})
+
+	t.Run("case insensitive button type matching", func(t *testing.T) {
+		params := map[string]string{"0": "CODE1"}
+		templateButtons := []any{
+			map[string]any{"type": "copy_code", "text": "Copy"},
+		}
+		result := whatsapp.ButtonURLParamsToComponents(params, templateButtons)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "copy_code", result[0]["sub_type"])
+	})
+
+	t.Run("no template buttons defaults to URL", func(t *testing.T) {
+		params := map[string]string{"0": "value"}
+		result := whatsapp.ButtonURLParamsToComponents(params)
+
+		require.Len(t, result, 1)
+		assert.Equal(t, "url", result[0]["sub_type"])
+	})
+}
+
+// Regression for issue #354. Lexical sort would order positional keys as
+// "1","10","11",..,"2",..,"9", which silently shipped recipients the value
+// from {{10}}+ in the {{2}}..{{9}} slots.
+func TestBodyParamsToComponents_PositionalNumericOrder(t *testing.T) {
+	bodyParams := map[string]string{
+		"1":  "v1",
+		"2":  "v2",
+		"3":  "v3",
+		"9":  "v9",
+		"10": "v10",
+		"11": "v11",
+		"14": "v14",
+	}
+
+	components := whatsapp.BodyParamsToComponents(bodyParams)
+	require.Len(t, components, 1)
+
+	params := components[0]["parameters"].([]map[string]any)
+	got := make([]string, len(params))
+	for i, p := range params {
+		got[i] = p["text"].(string)
+		// Positional templates must NOT carry parameter_name (Meta rejects it).
+		_, hasName := p["parameter_name"]
+		assert.False(t, hasName, "positional params must not include parameter_name")
+	}
+	assert.Equal(t, []string{"v1", "v2", "v3", "v9", "v10", "v11", "v14"}, got)
+}
+
+func TestBodyParamsToComponents_NamedParamsRetainLexicalOrder(t *testing.T) {
+	bodyParams := map[string]string{
+		"order_id": "o1",
+		"name":     "alice",
+	}
+
+	components := whatsapp.BodyParamsToComponents(bodyParams)
+	require.Len(t, components, 1)
+	params := components[0]["parameters"].([]map[string]any)
+
+	// Named templates must include parameter_name and stay lexically sorted.
+	require.Len(t, params, 2)
+	assert.Equal(t, "name", params[0]["parameter_name"])
+	assert.Equal(t, "alice", params[0]["text"])
+	assert.Equal(t, "order_id", params[1]["parameter_name"])
+	assert.Equal(t, "o1", params[1]["text"])
+}
+
+// Document headers must include filename — Meta returns 132012 "Header
+// Format Mismatch" without it. Issue #351.
+func TestBuildTemplateComponents_DocumentHeaderIncludesFilename(t *testing.T) {
+	components := whatsapp.BuildTemplateComponents(nil, "DOCUMENT", "media-id-123", "invoice.pdf")
+	require.Len(t, components, 1)
+	assert.Equal(t, "header", components[0]["type"])
+
+	params := components[0]["parameters"].([]map[string]any)
+	require.Len(t, params, 1)
+	assert.Equal(t, "document", params[0]["type"])
+
+	doc := params[0]["document"].(map[string]any)
+	assert.Equal(t, "media-id-123", doc["id"])
+	assert.Equal(t, "invoice.pdf", doc["filename"])
+}
+
+func TestBuildTemplateComponents_ImageHeaderOmitsFilename(t *testing.T) {
+	components := whatsapp.BuildTemplateComponents(nil, "IMAGE", "media-id-456", "photo.jpg")
+	require.Len(t, components, 1)
+	params := components[0]["parameters"].([]map[string]any)
+	img := params[0]["image"].(map[string]any)
+	assert.Equal(t, "media-id-456", img["id"])
+	_, hasFilename := img["filename"]
+	assert.False(t, hasFilename, "image headers must not include filename")
+}
+
+func TestBuildTemplateComponents_DocumentHeaderEmptyFilename(t *testing.T) {
+	// If no filename was supplied, don't include the key — better than sending
+	// an empty string Meta might reject.
+	components := whatsapp.BuildTemplateComponents(nil, "DOCUMENT", "media-id-789", "")
+	require.Len(t, components, 1)
+	params := components[0]["parameters"].([]map[string]any)
+	doc := params[0]["document"].(map[string]any)
+	assert.Equal(t, "media-id-789", doc["id"])
+	_, hasFilename := doc["filename"]
+	assert.False(t, hasFilename, "empty filename should not be set")
 }

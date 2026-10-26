@@ -1284,7 +1284,7 @@ async function loadMediaPreview(campaignId: string) {
   mediaLoadingState.value[campaignId] = 'loading'
   try {
     const response = await campaignsService.getMedia(campaignId)
-    const blob = new Blob([response.data], { type: response.headers['content-type'] })
+    const blob = new Blob([response.data], { type: String(response.headers['content-type'] ?? '') })
     mediaBlobUrls.value[campaignId] = URL.createObjectURL(blob)
     mediaLoadingState.value[campaignId] = 'loaded'
   } catch (error) {
@@ -2145,7 +2145,7 @@ async function addRecipientListToCampaign(
                 <template #cell-name="{ item: campaign }">
                   <div>
                     <div class="flex items-center gap-1.5">
-                      <span class="font-medium">{{ campaign.name }}</span>
+                      <RouterLink :to="`/campaigns/${campaign.id}`" class="font-medium text-inherit no-underline hover:opacity-80">{{ campaign.name }}</RouterLink>
                       <ImageIcon v-if="campaignHasMedia(campaign)" class="h-3.5 w-3.5 text-muted-foreground cursor-pointer hover:text-foreground" :title="campaign.header_media_filename" @click.stop="openMediaPreview(campaign)" />
                     </div>
                     <p class="text-xs text-muted-foreground">{{ campaign.template_name || $t('campaigns.noTemplate') }}</p>

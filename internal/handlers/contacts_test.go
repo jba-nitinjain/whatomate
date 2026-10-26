@@ -562,7 +562,7 @@ func TestApp_AssignContact(t *testing.T) {
 		// Create another user to assign to
 		assignee := testutil.CreateTestUser(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"user_id": assignee.ID.String(),
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -601,7 +601,7 @@ func TestApp_AssignContact(t *testing.T) {
 		// Pre-assign the contact
 		require.NoError(t, app.DB.Model(&contact).Update("assigned_user_id", assignee.ID).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"user_id": nil,
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -639,7 +639,7 @@ func TestApp_AssignContact(t *testing.T) {
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 		assignee := testutil.CreateTestUser(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"user_id": assignee.ID.String(),
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -657,7 +657,7 @@ func TestApp_AssignContact(t *testing.T) {
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 		assignee := testutil.CreateTestUser(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"user_id": assignee.ID.String(),
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -674,7 +674,7 @@ func TestApp_AssignContact(t *testing.T) {
 		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"user_id": uuid.New().String(),
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -692,7 +692,7 @@ func TestApp_AssignContact(t *testing.T) {
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"user_id": uuid.New().String(),
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -714,7 +714,7 @@ func TestApp_AssignContact(t *testing.T) {
 		// Contact belongs to org2
 		contact := testutil.CreateTestContact(t, app.DB, org2.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"user_id": assignee.ID.String(),
 		})
 		testutil.SetAuthContext(req, org1.ID, user1.ID)
@@ -1070,7 +1070,7 @@ func TestApp_SendMessage(t *testing.T) {
 		account := createTestAccount(t, app, org.ID)
 		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"type": "text",
 			"content": map[string]string{
 				"body": "Hello from agent!",
@@ -1124,7 +1124,7 @@ func TestApp_SendMessage(t *testing.T) {
 		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"type": "text",
 			"content": map[string]string{
 				"body": "Hello!",
@@ -1145,7 +1145,7 @@ func TestApp_SendMessage(t *testing.T) {
 		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"type": "text",
 			"content": map[string]string{
 				"body": "Hello!",
@@ -1173,7 +1173,7 @@ func TestApp_SendMessage(t *testing.T) {
 		// Contact belongs to org2
 		contact := testutil.CreateTestContact(t, app.DB, org2.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"type": "text",
 			"content": map[string]string{
 				"body": "Hello!",
@@ -1199,7 +1199,7 @@ func TestApp_SendMessage(t *testing.T) {
 		// Contact with no WhatsApp account set and no accounts in org
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"type": "text",
 			"content": map[string]string{
 				"body": "Hello!",
@@ -1239,7 +1239,7 @@ func TestApp_SendMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(origMsg).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"type": "text",
 			"content": map[string]string{
 				"body": "This is a reply",
@@ -1290,7 +1290,7 @@ func TestApp_SendReaction(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(msg).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"emoji": "\U0001F44D",
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1338,8 +1338,8 @@ func TestApp_SendReaction(t *testing.T) {
 			Content:           "Hello",
 			Status:            models.MessageStatusDelivered,
 			Metadata: models.JSONB{
-				"reactions": []interface{}{
-					map[string]interface{}{
+				"reactions": []any{
+					map[string]any{
 						"emoji":     "\U0001F44D",
 						"from_user": user.ID.String(),
 					},
@@ -1349,7 +1349,7 @@ func TestApp_SendReaction(t *testing.T) {
 		require.NoError(t, app.DB.Create(msg).Error)
 
 		// Send empty emoji to remove reaction
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"emoji": "",
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1362,7 +1362,7 @@ func TestApp_SendReaction(t *testing.T) {
 
 		var resp struct {
 			Data struct {
-				Reactions []interface{} `json:"reactions"`
+				Reactions []any `json:"reactions"`
 			} `json:"data"`
 		}
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
@@ -1377,7 +1377,7 @@ func TestApp_SendReaction(t *testing.T) {
 		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"emoji": "\U0001F44D",
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1397,7 +1397,7 @@ func TestApp_SendReaction(t *testing.T) {
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"emoji": "\U0001F44D",
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1416,7 +1416,7 @@ func TestApp_SendReaction(t *testing.T) {
 		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"emoji": "\U0001F44D",
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1436,7 +1436,7 @@ func TestApp_SendReaction(t *testing.T) {
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"emoji": "\U0001F44D",
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1472,7 +1472,7 @@ func TestApp_SendReaction(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(msg).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"emoji": "\U0001F44D",
 		})
 		testutil.SetAuthContext(req, org1.ID, user1.ID)
@@ -1777,7 +1777,7 @@ func TestApp_AssignContact_ReassignToAnotherUser(t *testing.T) {
 	require.NoError(t, app.DB.Model(&contact).Update("assigned_user_id", assignee1.ID).Error)
 
 	// Reassign to assignee2
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"user_id": assignee2.ID.String(),
 	})
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1816,7 +1816,7 @@ func TestApp_AssignContact_AssignUserFromDifferentOrg(t *testing.T) {
 	// Create a user in a different org
 	otherOrgUser := testutil.CreateTestUser(t, app.DB, org2.ID)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"user_id": otherOrgUser.ID.String(),
 	})
 	testutil.SetAuthContext(req, org1.ID, user.ID)

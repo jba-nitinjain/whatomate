@@ -96,21 +96,21 @@ func newMockTemplateServer(t *testing.T) *httptest.Server {
 		case http.MethodPost:
 			// SubmitTemplate response
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": "meta-tmpl-" + uuid.New().String()[:8],
 			})
 		case http.MethodGet:
 			// FetchTemplates response
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"data": []map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{
 					{
 						"id":       "meta-synced-1",
 						"name":     "synced_template_one",
 						"language": "en",
 						"category": "MARKETING",
 						"status":   "APPROVED",
-						"components": []map[string]interface{}{
+						"components": []map[string]any{
 							{"type": "BODY", "text": "Synced body content"},
 						},
 					},
@@ -120,7 +120,7 @@ func newMockTemplateServer(t *testing.T) *httptest.Server {
 						"language": "en",
 						"category": "UTILITY",
 						"status":   "PENDING",
-						"components": []map[string]interface{}{
+						"components": []map[string]any{
 							{"type": "BODY", "text": "Another synced body"},
 						},
 					},
@@ -128,7 +128,7 @@ func newMockTemplateServer(t *testing.T) *httptest.Server {
 			})
 		case http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -411,7 +411,7 @@ func TestApp_CreateTemplate_Success(t *testing.T) {
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"whatsapp_account": account.Name,
 		"name":             "My New Template",
 		"language":         "en",
@@ -454,7 +454,7 @@ func TestApp_CreateTemplate_MissingRequiredFields(t *testing.T) {
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 
 	// Missing name, language, category, body_content
-	body := map[string]interface{}{
+	body := map[string]any{
 		"whatsapp_account": "some-account",
 	}
 
@@ -474,7 +474,7 @@ func TestApp_CreateTemplate_MissingBodyContent(t *testing.T) {
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"whatsapp_account": account.Name,
 		"name":             "test_template",
 		"language":         "en",
@@ -497,7 +497,7 @@ func TestApp_CreateTemplate_AccountNotFound(t *testing.T) {
 	org := testutil.CreateTestOrganization(t, app.DB)
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"whatsapp_account": "nonexistent-account",
 		"name":             "test_template",
 		"language":         "en",
@@ -525,7 +525,7 @@ func TestApp_CreateTemplate_DuplicateName(t *testing.T) {
 	createTestTemplateInDB(t, app, org.ID, account.Name, "duplicate_name", "DRAFT")
 
 	// Try to create another with the same name
-	body := map[string]interface{}{
+	body := map[string]any{
 		"whatsapp_account": account.Name,
 		"name":             "duplicate_name",
 		"language":         "en",
@@ -550,7 +550,7 @@ func TestApp_CreateTemplate_AccountFromAnotherOrg(t *testing.T) {
 	user1 := testutil.CreateTestUser(t, app.DB, org1.ID)
 	account2 := testutil.CreateTestWhatsAppAccount(t, app.DB, org2.ID)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"whatsapp_account": account2.Name,
 		"name":             "test_template",
 		"language":         "en",
@@ -593,7 +593,7 @@ func TestApp_CreateTemplate_NameNormalization(t *testing.T) {
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"whatsapp_account": account.Name,
 		"name":             "My Template-Name With Spaces!",
 		"language":         "en",
@@ -711,7 +711,7 @@ func TestApp_UpdateTemplate_Success(t *testing.T) {
 
 	tmpl := createTestTemplateInDB(t, app, org.ID, account.Name, "update_me", "DRAFT")
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"display_name": "Updated Display Name",
 		"body_content": "Updated body {{1}}",
 		"category":     "utility",
@@ -747,7 +747,7 @@ func TestApp_UpdateTemplate_ApprovedToDraft(t *testing.T) {
 	// Create an approved template
 	tmpl := createTestTemplateInDB(t, app, org.ID, account.Name, "approved_tmpl", "APPROVED")
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"body_content": "Updated body content",
 	}
 
@@ -778,7 +778,7 @@ func TestApp_UpdateTemplate_RejectedToDraft(t *testing.T) {
 	// Create a rejected template
 	tmpl := createTestTemplateInDB(t, app, org.ID, account.Name, "rejected_tmpl", "REJECTED")
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"body_content": "Fixed body content",
 	}
 
@@ -805,7 +805,7 @@ func TestApp_UpdateTemplate_NotFound(t *testing.T) {
 	org := testutil.CreateTestOrganization(t, app.DB)
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"body_content": "Updated content",
 	}
 
@@ -825,7 +825,7 @@ func TestApp_UpdateTemplate_InvalidID(t *testing.T) {
 	org := testutil.CreateTestOrganization(t, app.DB)
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"body_content": "Updated content",
 	}
 
@@ -849,7 +849,7 @@ func TestApp_UpdateTemplate_CrossOrgIsolation(t *testing.T) {
 
 	tmpl := createTestTemplateInDB(t, app, org2.ID, account2.Name, "org2_tmpl", "DRAFT")
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"body_content": "Trying to update other org's template",
 	}
 
@@ -872,7 +872,7 @@ func TestApp_UpdateTemplate_RejectedTemplateEditable(t *testing.T) {
 
 	tmpl := createTestTemplateInDB(t, app, org.ID, account.Name, "rejected_tmpl", "REJECTED")
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"body_content": "Fixed content after rejection",
 	}
 
@@ -999,7 +999,7 @@ func TestApp_SubmitTemplate_Success(t *testing.T) {
 
 	// Add sample values so the WhatsApp API submission includes required examples
 	tmpl.SampleValues = models.JSONBArray{
-		map[string]interface{}{"component": "body", "index": 1, "value": "John"},
+		map[string]any{"component": "body", "index": 1, "value": "John"},
 	}
 	require.NoError(t, app.DB.Save(tmpl).Error)
 
@@ -1103,7 +1103,7 @@ func TestApp_SyncTemplates_Success(t *testing.T) {
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"whatsapp_account": account.Name,
 	})
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1135,7 +1135,7 @@ func TestApp_SyncTemplates_MissingAccount(t *testing.T) {
 	org := testutil.CreateTestOrganization(t, app.DB)
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{})
+	req := testutil.NewJSONRequest(t, map[string]any{})
 	testutil.SetAuthContext(req, org.ID, user.ID)
 
 	err := app.SyncTemplates(req)
@@ -1150,7 +1150,7 @@ func TestApp_SyncTemplates_AccountNotFound(t *testing.T) {
 	org := testutil.CreateTestOrganization(t, app.DB)
 	user := testutil.CreateTestUser(t, app.DB, org.ID)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"whatsapp_account": "nonexistent-account",
 	})
 	testutil.SetAuthContext(req, org.ID, user.ID)

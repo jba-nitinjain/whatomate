@@ -682,9 +682,9 @@ func (a *App) sendRSVPTemplateWithParams(event *models.RSVPEvent, templateID *uu
 	var messageID string
 	var err error
 	if models.ResolveTemplateDeliveryRoute(&account, &template) == models.TemplateDeliveryRouteMarketingMessagesLite {
-		messageID, err = a.WhatsApp.SendMarketingTemplateMessage(context.Background(), waAccount, contact.PhoneNumber, template.Name, template.Language, components)
+		messageID, err = a.WhatsApp.SendMarketingTemplateMessage(context.Background(), waAccount, contactRecipient(contact), template.Name, template.Language, components)
 	} else {
-		messageID, err = a.WhatsApp.SendTemplateMessage(context.Background(), waAccount, contact.PhoneNumber, template.Name, template.Language, components)
+		messageID, err = a.WhatsApp.SendTemplateMessage(context.Background(), waAccount, contactRecipient(contact), template.Name, template.Language, components)
 	}
 	if err != nil {
 		a.Log.Error("RSVP invite send failed", "error", err)

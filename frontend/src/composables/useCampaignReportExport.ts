@@ -20,7 +20,7 @@ export function useCampaignReportExport(t: Translator) {
       const response = await campaignsService.exportReport(campaign.id)
       const blob = response.data instanceof Blob
         ? response.data
-        : new Blob([response.data], { type: response.headers['content-type'] })
+        : new Blob([response.data], { type: String(response.headers['content-type'] ?? '') })
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url

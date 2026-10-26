@@ -133,6 +133,13 @@ func runServer(args []string) {
 		lo.Warn("Debug mode is enabled in production! This may expose sensitive information.")
 	}
 
+	// Require explicit CORS origins in production
+	// Upstream makes this fatal; we only warn so existing production deployments
+	// that never set allowed_origins keep booting after an upgrade.
+	if cfg.App.Environment == "production" && cfg.Server.AllowedOrigins == "" {
+		lo.Warn("server.allowed_origins is not set in production; set it (e.g. \"https://app.example.com\") to restrict CORS")
+	}
+
 	// Set log level based on environment
 	if cfg.App.Environment == "production" {
 		lo = logf.New(logf.Opts{
@@ -595,6 +602,37 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 		return r
 	})
 
+	// Global rate limit on all /api/ routes, keyed by user ID (or IP if unauthenticated).
+	// Runs after auth so the user identity is available.
+	if cfg.RateLimit.Enabled {
+		apiMax := cfg.RateLimit.APIMaxRequests
+		if apiMax == 0 {
+			apiMax = 200
+		}
+		apiWindow := cfg.RateLimit.APIWindowSeconds
+		if apiWindow == 0 {
+			apiWindow = 60
+		}
+		apiRL := middleware.UserAwareRateLimit(middleware.RateLimitOpts{
+			Redis:      rdb,
+			Log:        lo,
+			Max:        apiMax,
+			Window:     time.Duration(apiWindow) * time.Second,
+			KeyPrefix:  "api_global",
+			TrustProxy: cfg.RateLimit.TrustProxy,
+		})
+		g.Before(func(r *fastglue.Request) *fastglue.Request {
+			path := string(r.RequestCtx.Path())
+			if len(path) > 4 && path[:4] == "/api" {
+				if isRateLimitExemptIntegrationRequest(r, path) {
+					return r
+				}
+				return apiRL(r)
+			}
+			return r
+		})
+	}
+
 	// Role-based access control middleware
 	g.Before(func(r *fastglue.Request) *fastglue.Request {
 		method := string(r.RequestCtx.Method())
@@ -633,7 +671,9 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 
 	// API Keys (admin only - enforced by middleware)
 	g.GET("/api/api-keys", app.ListAPIKeys)
+	g.GET("/api/api-keys/{id}", app.GetAPIKey)
 	g.POST("/api/api-keys", app.CreateAPIKey)
+	g.PUT("/api/api-keys/{id}", app.UpdateAPIKey)
 	g.DELETE("/api/api-keys/{id}", app.DeleteAPIKey)
 	g.GET("/api/admin/chat-repair", app.PreviewChatRepairCandidates)
 	g.POST("/api/admin/chat-repair/scan", app.ScanChatRepairCandidates)
@@ -694,6 +734,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/contacts/{id}/messages", app.GetMessages)
 	g.POST("/api/contacts/{id}/messages", app.SendMessage)
 	g.DELETE("/api/contacts/{id}/messages/{message_id}", app.DeleteMessage)
+	g.POST("/api/contacts/{id}/mark-read", app.MarkContactRead)
 	g.POST("/api/contacts/{id}/messages/{message_id}/reaction", app.SendReaction)
 	g.POST("/api/messages", app.SendMessage) // Legacy route
 	g.POST("/api/messages/external", app.CreateExternalMessage)
@@ -830,6 +871,10 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/teams/{id}/members", app.AddTeamMember)
 	g.DELETE("/api/teams/{id}/members/{member_user_id}", app.RemoveTeamMember)
 
+	// Audit Logs
+	g.GET("/api/audit-logs", app.ListAuditLogs)
+	g.GET("/api/audit-logs/{id}", app.GetAuditLog)
+
 	// Canned Responses
 	g.GET("/api/canned-responses", app.ListCannedResponses)
 	g.POST("/api/canned-responses", app.CreateCannedResponse)
@@ -924,6 +969,10 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/call-transfers/{id}/connect", app.ConnectCallTransfer)
 	g.POST("/api/call-transfers/{id}/hangup", app.HangupCallTransfer)
 	g.POST("/api/call-transfers/initiate", app.InitiateAgentTransfer)
+
+	// Call Hold
+	g.POST("/api/call-logs/{id}/hold", app.HoldCall)
+	g.POST("/api/call-logs/{id}/resume", app.ResumeCall)
 
 	// Outgoing Calls
 	g.POST("/api/calls/outgoing", app.InitiateOutgoingCall)
@@ -1032,4 +1081,28 @@ func corsWrapper(next fasthttp.RequestHandler, allowedOrigins map[string]bool) f
 
 		next(ctx)
 	}
+}
+
+// rateLimitExemptIntegrationPaths are the machine-to-machine endpoints used by
+// external integrations (external message API, template send API and message
+// status lookups). High-volume API-key callers on these paths must not be
+// throttled by the per-user UI rate limiter.
+var rateLimitExemptIntegrationPaths = []string{
+	"/api/messages/external",
+	"/api/messages/template",
+	"/api/messages/status",
+}
+
+// isRateLimitExemptIntegrationRequest reports whether the request is an
+// API-key authenticated call to one of the integration endpoints.
+func isRateLimitExemptIntegrationRequest(r *fastglue.Request, path string) bool {
+	if strings.TrimSpace(string(r.RequestCtx.Request.Header.Peek("X-API-Key"))) == "" {
+		return false
+	}
+	for _, p := range rateLimitExemptIntegrationPaths {
+		if path == p {
+			return true
+		}
+	}
+	return strings.HasPrefix(path, "/api/messages/") && strings.HasSuffix(path, "/status")
 }
