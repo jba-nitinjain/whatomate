@@ -239,10 +239,11 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 			}
 			// Add auto-generated button components (Flow needs flow_token)
 			components = append(components, whatsapp.AutoButtonComponents(req.Template.Buttons)...)
-			// Add URL/COPY_CODE button components keyed by string index when the
-			// caller used upstream-style button params instead of ButtonParams.
-			if len(req.ButtonParams) == 0 && len(req.ButtonURLParams) > 0 {
-				components = append(components, whatsapp.ButtonURLParamsToComponents(req.ButtonURLParams, req.Template.Buttons)...)
+			// Add URL/COPY_CODE/OTP button components keyed by string index
+			// (upstream-style button params) for buttons ButtonParams did not
+			// already cover, so no button index is sent twice.
+			if extra := buttonURLParamsExcluding(req.ButtonURLParams, req.ButtonParams); len(extra) > 0 {
+				components = append(components, whatsapp.ButtonURLParamsToComponents(extra, req.Template.Buttons)...)
 			}
 			route := models.ResolveTemplateDeliveryRoute(req.Account, req.Template)
 			if route == models.TemplateDeliveryRouteMarketingMessagesLite {
@@ -980,7 +981,7 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 	buttonParamNames := templateutil.ExtractURLButtonParamNames(template.Buttons)
 	bodyParams := templateutil.ResolveParamsFromMap(paramNames, req.TemplateParams)
 	resolvedBodyParams := templateutil.ResolveParamsMapFromMap(paramNames, req.TemplateParams)
-	buttonParams, missingButtonParams := templateutil.ResolveURLButtonParamsFromMap(template.Buttons, req.TemplateParams)
+	buttonParams, missingButtonParams := templateutil.ResolveURLButtonParamsFromMap(template.Buttons, urlButtonParamSource(req.TemplateParams, req.ButtonParams))
 	buttonPayloads, err := resolveTemplateButtonPayloads(template.Buttons, req.ButtonPayloads)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
@@ -1163,6 +1164,8 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		MediaURL:                    headerLocalPath,
 		MediaMimeType:               headerMimeType,
 		MediaFilename:               req.HeaderMediaFilename,
+		HeaderMediaFilename:         headerMediaFilename,
+		ButtonURLParams:             nonURLButtonParams(template.Buttons, buttonURLParams),
 		ResponseCallbackURL:         req.ResponseCallbackURL,
 		ResponseCallbackBearerToken: req.ResponseCallbackBearerToken,
 		StatusCallbackURL:           req.StatusCallbackURL,
