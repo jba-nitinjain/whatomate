@@ -291,7 +291,7 @@ function groupPointsByCurrency<T>(extract: (account: MetaAnalyticsResponse) => T
   for (const account of analyticsData.value) {
     const points = extract(account)
     if (!points?.length) continue
-    const currency = account.currency || getCurrencyCandidatesFromAccount(account)[0] || DEFAULT_CURRENCY
+    const currency = account.currency || DEFAULT_CURRENCY
     const existing = byCurrency.get(currency)
     if (existing) {
       existing.push(...points)
