@@ -100,9 +100,13 @@ interface WSMessage {
 
 class WebSocketService {
   private ws: WebSocket | null = null
+  private isConnecting = false
   private reconnectAttempts = 0
-  private maxReconnectAttempts = 5
   private reconnectDelay = 1000
+  private maxReconnectDelay = 30000
+  private reconnectTimer: number | null = null
+  private intentionalClose = false
+  private lifecycleListenersInstalled = false
   private pingInterval: number | null = null
   private isConnected = false
   private hasConnectedBefore = false
@@ -123,18 +127,45 @@ class WebSocketService {
   }
 
   async connect(getToken?: () => Promise<string | null>) {
-    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+    // isConnecting covers the async token-fetch window below, during which
+    // this.ws still holds the previous (closed) socket: on a device wake,
+    // visibilitychange/online/pageshow and a pending backoff timer can all
+    // call connect() near-simultaneously, and a readyState-only check would
+    // let each of them open its own socket and fork the retry into parallel
+    // backoff chains.
+    if (
+      this.isConnecting ||
+      this.ws?.readyState === WebSocket.OPEN ||
+      this.ws?.readyState === WebSocket.CONNECTING
+    ) {
       return
     }
+    this.isConnecting = true
+
+    this.intentionalClose = false
+    this.installLifecycleListeners()
 
     // Store the token function for reconnects
     if (getToken) {
       this.getTokenFn = getToken
     }
 
-    // Get a fresh short-lived WS token
-    const token = this.getTokenFn ? await this.getTokenFn() : null
+    // Get a fresh short-lived WS token. A rejecting getTokenFn must not escape:
+    // this await is outside the try below, so an uncaught rejection would leave
+    // isConnecting = true forever and the top-of-function guard would then block
+    // every future reconnect — the exact permanent-disconnect state this avoids.
+    let token: string | null = null
+    try {
+      token = this.getTokenFn ? await this.getTokenFn() : null
+    } catch {
+      token = null
+    }
     if (!token) {
+      // No socket was created, so no onclose will ever fire: schedule the
+      // retry here or the reconnect chain would silently end on a transient
+      // token-fetch failure (backoff keeps this cheap if auth truly expired).
+      this.isConnecting = false
+      this.handleReconnect()
       return
     }
 
@@ -147,6 +178,7 @@ class WebSocketService {
       this.ws = new WebSocket(url)
 
       this.ws.onopen = () => {
+        this.isConnecting = false
         // Send auth message as the first message (token not in URL for security)
         this.send({ type: WS_TYPE_AUTH, payload: { token } })
 
@@ -167,6 +199,7 @@ class WebSocketService {
       }
 
       this.ws.onclose = () => {
+        this.isConnecting = false
         this.isConnected = false
         this.stopPing()
         this.handleReconnect()
@@ -176,18 +209,27 @@ class WebSocketService {
         // Error handled by onclose
       }
     } catch {
+      this.isConnecting = false
       this.handleReconnect()
     }
   }
 
   disconnect() {
     this.stopPing()
+    this.removeLifecycleListeners() // Drop wake listeners; connect() reinstalls on next login.
+    this.intentionalClose = true // Prevent reconnect (deliberate close, e.g. logout)
+    this.isConnecting = false
+    // Cancel any pending backoff: otherwise a timer scheduled before disconnect()
+    // still fires connect(), which resets intentionalClose = false and reopens.
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
     if (this.ws) {
       this.ws.close()
       this.ws = null
     }
     this.isConnected = false
-    this.reconnectAttempts = this.maxReconnectAttempts // Prevent reconnect
   }
 
   private handleMessage(data: string) {
@@ -283,6 +325,13 @@ class WebSocketService {
     const currentContact = store.currentContact
     const isViewingThisContact = currentContact && payload.contact_id === currentContact.id
 
+    // The sidebar row is updated in place (addMessage does it for the open
+    // chat). Only refetch, coalesced, when the contact isn't loaded yet,
+    // e.g. a brand-new conversation.
+    if (!store.contacts.some(c => c.id === payload.contact_id)) {
+      store.scheduleContactsRefresh()
+    }
+
     if (isViewingThisContact) {
       // Add message to the store
       store.addMessage({
@@ -305,6 +354,8 @@ class WebSocketService {
         created_at: payload.created_at,
         updated_at: payload.updated_at
       })
+    } else {
+      store.updateContactFromMessage(payload)
     }
 
     // Show toast notification for incoming messages if:
@@ -338,9 +389,8 @@ class WebSocketService {
     }
 
     // If the user is actively viewing this contact, mark messages read on
-    // the server before refetching so the unread badge stays at zero
-    // (otherwise the new message comes back as unread and the sidebar flashes
-    // a count for a chat that's already open). See issue #280.
+    // the server and clear the sidebar badge, so a chat that's already open
+    // doesn't show an unread count. See issue #280.
     // Use currentContact.id (already validated, from our /contacts response)
     // rather than the WS payload value to avoid pushing untrusted data into
     // a request URL.
@@ -358,10 +408,8 @@ class WebSocketService {
       || (document.visibilityState === 'visible' && document.hasFocus())
     if (isViewingThisContact && currentContact && payload.direction === 'incoming' && !alreadyRead && userActive) {
       contactsService.markRead(currentContact.id)
+        .then(() => store.markContactRead(currentContact.id))
         .catch(() => { /* non-critical, will resync on next chat-open */ })
-        .finally(() => store.fetchContacts())
-    } else {
-      store.fetchContacts()
     }
   }
 
@@ -532,8 +580,9 @@ class WebSocketService {
     const callingStore = useCallingStore()
     callingStore.handleCallEvent('call_transfer_waiting', payload)
 
+    // No one-shot beep here — the calling store rings a looping tone for as
+    // long as the transfer is waiting.
     const contactName = payload.caller_phone || 'Unknown'
-    playNotificationSound()
     toast.info('Incoming Call Transfer', {
       description: `Call from ${contactName} waiting for an agent`,
       duration: 10000,
@@ -581,17 +630,91 @@ class WebSocketService {
     }
   }
 
+  // Reconnection must not outlive the session: logout is a client-side nav, so
+  // this singleton and its backoff timer survive it. Without this gate, once the
+  // socket closes post-logout the token fetch returns null (401) and — with the
+  // uncapped retry — reschedules forever, polling the WS-token endpoint on a 401
+  // loop. isAuthenticated() distinguishes "session gone" (stop) from a transient
+  // token-fetch failure while still logged in (keep retrying). Guarded because
+  // this may run before Pinia is ready; treat "unknown" as unauthenticated.
+  private isAuthenticated(): boolean {
+    try {
+      return useAuthStore().isAuthenticated
+    } catch {
+      return false
+    }
+  }
+
   private handleReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+    if (this.intentionalClose || !this.isAuthenticated()) {
       return
     }
 
+    // Never give up: mobile browsers freeze background tabs for arbitrarily
+    // long, so a retry cap would leave the app permanently disconnected.
+    // Exponential backoff capped at maxReconnectDelay keeps retries cheap.
     this.reconnectAttempts++
-    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1)
+    const delay = Math.min(
+      this.reconnectDelay * Math.pow(2, Math.min(this.reconnectAttempts - 1, 10)),
+      this.maxReconnectDelay
+    )
 
-    setTimeout(() => {
+    // Track the pending timer so disconnect() can cancel it; clear any prior one
+    // so overlapping triggers can't stack multiple backoff chains.
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer)
+    }
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null
       this.connect()
     }, delay)
+  }
+
+  private reconnectIfDead() {
+    if (this.intentionalClose || !this.isAuthenticated()) {
+      return
+    }
+    const state = this.ws?.readyState
+    if (state !== WebSocket.OPEN && state !== WebSocket.CONNECTING) {
+      this.reconnectAttempts = 0
+      this.connect()
+    }
+  }
+
+  // Stable handler references so removeLifecycleListeners() can detach them;
+  // an inline arrow would be a new function each call and impossible to remove.
+  private onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      this.reconnectIfDead()
+    }
+  }
+  private onWake = () => {
+    this.reconnectIfDead()
+  }
+
+  // Reconnect immediately when the device wakes up: phones freeze background
+  // tabs (killing the socket and throttling timers), so waiting for the next
+  // backoff tick would leave the agent minutes behind after unlocking.
+  private installLifecycleListeners() {
+    if (this.lifecycleListenersInstalled) {
+      return
+    }
+    this.lifecycleListenersInstalled = true
+
+    document.addEventListener('visibilitychange', this.onVisibilityChange)
+    window.addEventListener('online', this.onWake)
+    window.addEventListener('pageshow', this.onWake)
+  }
+
+  private removeLifecycleListeners() {
+    if (!this.lifecycleListenersInstalled) {
+      return
+    }
+    this.lifecycleListenersInstalled = false
+
+    document.removeEventListener('visibilitychange', this.onVisibilityChange)
+    window.removeEventListener('online', this.onWake)
+    window.removeEventListener('pageshow', this.onWake)
   }
 
   setCurrentContact(contactId: string | null) {

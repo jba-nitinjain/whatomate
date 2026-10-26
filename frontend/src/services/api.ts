@@ -87,6 +87,27 @@ function onRefreshComplete(success: boolean) {
   refreshSubscribers = [];
 }
 
+// refreshAccessToken posts to /auth/refresh. The refresh token is single-use
+// with rotation, so two tabs refreshing at once would have the loser's token
+// rejected as "revoked" and get logged out. The Web Locks API serializes the
+// refresh across all same-origin tabs: each tab refreshes in turn using the
+// cookie rotated by the previous holder, so every refresh succeeds instead of
+// racing. The in-tab `isRefreshing` mutex still dedupes concurrent 401s within
+// a single tab. Falls back to a plain request where Web Locks is unavailable
+// (older browsers / insecure contexts).
+async function refreshAccessToken(): Promise<void> {
+  const doRefresh = () =>
+    axios.post(`${API_BASE_URL}/auth/refresh`, {}, { withCredentials: true })
+
+  if (navigator.locks?.request) {
+    await navigator.locks.request('whm-token-refresh', async () => {
+      await doRefresh()
+    })
+  } else {
+    await doRefresh()
+  }
+}
+
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
@@ -124,12 +145,9 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        // Browser sends whm_refresh cookie automatically via withCredentials
-        await axios.post(
-          `${API_BASE_URL}/auth/refresh`,
-          {},
-          { withCredentials: true },
-        );
+        // Browser sends whm_refresh cookie automatically via withCredentials.
+        // Serialized across tabs via Web Locks to avoid single-use-token races.
+        await refreshAccessToken()
 
         // Cookies are updated by the server response — notify waiting requests
         onRefreshComplete(true);
@@ -172,12 +190,9 @@ export const usersService = {
   update: (id: string, data: { email?: string; password?: string; full_name?: string; role_id?: string; is_active?: boolean }) =>
     api.put(`/users/${id}`, data),
   delete: (id: string) => api.delete(`/users/${id}`),
-  me: () => api.get("/me"),
-  updateSettings: (data: {
-    email_notifications: boolean;
-    new_message_alerts: boolean;
-    campaign_updates: boolean;
-  }) => api.put("/me/settings", data),
+  me: () => api.get('/me'),
+  updateSettings: (data: { email_notifications: boolean; new_message_alerts: boolean; campaign_updates: boolean; call_ringtone?: string }) =>
+    api.put('/me/settings', data),
   changePassword: (data: { current_password: string; new_password: string }) =>
     api.put("/me/password", data),
   updateAvailability: (isAvailable: boolean) =>
@@ -586,9 +601,9 @@ export const messagesService = {
       content: any
       reply_to_message_id?: string
       whatsapp_account?: string
-      // Interactive button / cta_url payload. Mirrors backend InteractiveContent.
+      // Interactive payload. Mirrors backend InteractiveContent.
       interactive?: {
-        type: 'button' | 'cta_url' | 'list' | 'voice_call'
+        type: 'button' | 'cta_url' | 'list' | 'voice_call' | 'flow'
         body: string
         buttons?: Array<{ id: string; title: string }>
         button_text?: string
@@ -596,6 +611,10 @@ export const messagesService = {
         // voice_call only
         display_text?: string
         ttl_minutes?: number
+        // flow only
+        flow_id?: string
+        first_screen?: string
+        header?: string
       }
     },
   ) => api.post(`/contacts/${contactId}/messages`, data),
@@ -781,10 +800,12 @@ export const chatbotService = {
 export interface CannedResponseButton {
   id: string
   title: string
-  type?: 'reply' | 'url' | 'phone' | 'voice_call'
+  type?: 'reply' | 'url' | 'phone' | 'voice_call' | 'flow'
   url?: string
   phone_number?: string
   ttl_minutes?: number
+  flow_id?: string
+  screen?: string
 }
 
 export interface CannedResponse {
@@ -933,10 +954,11 @@ interface MetaAnalyticsData {
 }
 
 export interface MetaAnalyticsResponse {
-  account_id: string;
-  account_name: string;
-  data: MetaAnalyticsData | null;
-  template_names?: Record<string, string>; // meta_template_id -> template name
+  account_id: string
+  account_name: string
+  data: MetaAnalyticsData | null
+  template_names?: Record<string, string> // meta_template_id -> template name
+  currency?: string // ISO 4217 code the WABA is billed in, from Meta
 }
 
 export const metaAnalyticsService = {
@@ -1564,7 +1586,7 @@ export interface CallTransfer {
   caller_phone: string;
   contact_id: string;
   whatsapp_account: string;
-  status: "waiting" | "connected" | "completed" | "abandoned" | "no_answer";
+  status: "waiting" | "connecting" | "connected" | "completed" | "abandoned" | "no_answer";
   team_id?: string;
   agent_id?: string;
   initiating_agent_id?: string;

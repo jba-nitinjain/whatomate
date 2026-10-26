@@ -334,13 +334,13 @@ func (a *App) WebhookHandler(r *fastglue.Request) error {
 				)
 
 				// Tracked so in-flight status callbacks are awaited on shutdown, and
-			// so the callback dispatcher never grows the WaitGroup from zero
-			// while WaitForBackgroundTasks is already waiting.
-			a.wg.Add(1)
-			go func(s WebhookStatus) {
-				defer a.wg.Done()
-				a.processStatusUpdate(phoneNumberID, s)
-			}(status)
+				// so the callback dispatcher never grows the WaitGroup from zero
+				// while WaitForBackgroundTasks is already waiting.
+				a.wg.Add(1)
+				go func(s WebhookStatus) {
+					defer a.wg.Done()
+					a.processStatusUpdate(phoneNumberID, s)
+				}(status)
 			}
 		}
 	}
@@ -776,6 +776,9 @@ func (a *App) processMessageEcho(phoneNumberID string, msg IncomingTextMessage) 
 		ContactName:     contact.ProfileName,
 		MessageType:     models.MessageType(messageType),
 		Content:         messageText,
+		MediaURL:        messageMediaURL(&message),
+		MediaMimeType:   message.MediaMimeType,
+		MediaFilename:   message.MediaFilename,
 		WhatsAppAccount: account.Name,
 		Direction:       models.DirectionOutgoing,
 	})

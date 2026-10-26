@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nikyjain/whatomate/internal/audit"
 	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/nikyjain/whatomate/internal/queue"
 	"github.com/nikyjain/whatomate/internal/utils"
@@ -163,12 +162,7 @@ func (a *App) ListCampaigns(r *fastglue.Request) error {
 		}
 	}
 
-	return r.SendEnvelope(map[string]any{
-		"campaigns": response,
-		"total":     total,
-		"page":      pg.Page,
-		"limit":     pg.Limit,
-	})
+	return r.SendEnvelope(listEnvelope("campaigns", response, total, pg))
 }
 
 // CreateCampaign implements campaign creation
@@ -226,7 +220,7 @@ func (a *App) CreateCampaign(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create campaign", nil, "")
 	}
 
-	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+	a.logAudit(orgID, userID,
 		"campaign", campaign.ID, models.AuditActionCreated, nil, &campaign)
 
 	a.Log.Info("Campaign created", "campaign_id", campaign.ID, "name", campaign.Name)
@@ -409,7 +403,7 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 	// Reload campaign
 	a.DB.Where("id = ?", id).Preload("Template").Preload("Creator").Preload("UpdatedBy").First(campaign)
 
-	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+	a.logAudit(orgID, userID,
 		"campaign", campaign.ID, models.AuditActionUpdated, &oldCampaign, campaign)
 
 	response := CampaignResponse{
@@ -584,7 +578,7 @@ func (a *App) DeleteCampaign(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete campaign", nil, "")
 	}
 
-	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+	a.logAudit(orgID, userID,
 		"campaign", id, models.AuditActionDeleted, campaign, nil)
 
 	a.Log.Info("Campaign deleted", "campaign_id", id)
@@ -1253,7 +1247,7 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 	for i, rec := range req.Recipients {
 		phoneNumbers[i] = rec.PhoneNumber
 	}
-	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+	a.logAudit(orgID, userID,
 		"campaign", id, models.AuditActionUpdated, nil, nil,
 		map[string]any{
 			"field":     "recipients_added",
@@ -1659,7 +1653,7 @@ func (a *App) DeleteCampaignRecipient(r *fastglue.Request) error {
 	// Update campaign recipient count
 	a.DB.Model(campaign).Update("total_recipients", gorm.Expr("total_recipients - 1"))
 
-	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+	a.logAudit(orgID, userID,
 		"campaign", campaignUUID, models.AuditActionUpdated, nil, nil,
 		map[string]any{
 			"field":     "recipient_removed",

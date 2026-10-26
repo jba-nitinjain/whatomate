@@ -23,7 +23,7 @@ RUN npm run build
 
 # Go build stage — runs on BUILDPLATFORM, cross-compiles to TARGETOS/TARGETARCH
 # so multi-arch builds don't emulate the Go toolchain under QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.25.3-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.0-alpine AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -47,7 +47,9 @@ COPY config.example.toml ./
 COPY --from=frontend-builder /app/frontend/dist/ ./internal/frontend/dist/
 
 # Build the binary
-RUN --mount=type=cache,target=/go/pkg/mod \n    --mount=type=cache,target=/root/.cache/go-build \n    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -o whatomate ./cmd/whatomate
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -o whatomate ./cmd/whatomate
 
 # Piper TTS download stage — runs on BUILDPLATFORM (just wget+tar, no native exec),
 # selects the tarball matching TARGETARCH so the final image gets a binary that runs.

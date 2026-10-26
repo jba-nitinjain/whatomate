@@ -14,6 +14,18 @@ import (
 	"github.com/nikyjain/whatomate/internal/templateutil"
 )
 
+// truncateLabel caps a customer-visible button label at max characters.
+// Meta counts characters, not bytes, and the locales this app ships (hi/ta/ar)
+// are multi-byte — slicing on a byte boundary splits a rune and the label
+// arrives garbled instead of merely shortened.
+func truncateLabel(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max])
+}
+
 // SendTextMessage sends a text message to a recipient with optional reply context
 func (c *Client) SendTextMessage(ctx context.Context, account *Account, rcpt Recipient, text string, replyToMsgID ...string) (string, error) {
 	payload := map[string]any{
@@ -43,16 +55,10 @@ func (c *Client) SendTextMessage(ctx context.Context, account *Account, rcpt Rec
 		return "", fmt.Errorf("failed to send text message: %w", err)
 	}
 
-	var resp MetaAPIResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+	messageID, err := parseMessageID(respBody)
+	if err != nil {
+		return "", err
 	}
-
-	if len(resp.Messages) == 0 {
-		return "", fmt.Errorf("no message ID in response")
-	}
-
-	messageID := resp.Messages[0].ID
 	c.Log.Info("Text message sent", "message_id", messageID, "phone", rcpt.Phone)
 	return messageID, nil
 }
@@ -84,10 +90,7 @@ func (c *Client) SendInteractiveReplyButtonsWithHeader(ctx context.Context, acco
 
 	buttonsList := make([]map[string]any, 0, len(buttons))
 	for _, btn := range buttons {
-		title := btn.Title
-		if len(title) > 20 {
-			title = title[:20]
-		}
+		title := truncateLabel(btn.Title, 20)
 		buttonsList = append(buttonsList, map[string]any{
 			"type": "reply",
 			"reply": map[string]any{
@@ -138,20 +141,13 @@ func (c *Client) SendInteractiveList(ctx context.Context, account *Account, rcpt
 
 	rows := make([]map[string]any, 0, len(buttons))
 	for _, btn := range buttons {
-		title := btn.Title
-		if len(title) > 24 {
-			title = title[:24]
-		}
+		title := truncateLabel(btn.Title, 24)
 		row := map[string]any{
 			"id":    btn.ID,
 			"title": title,
 		}
 		if btn.Description != "" {
-			description := btn.Description
-			if len(description) > 72 {
-				description = description[:72]
-			}
-			row["description"] = description
+			row["description"] = truncateLabel(btn.Description, 72)
 		}
 		rows = append(rows, row)
 	}
@@ -192,16 +188,10 @@ func (c *Client) sendInteractivePayload(ctx context.Context, account *Account, r
 		return "", fmt.Errorf("failed to send interactive message: %w", err)
 	}
 
-	var resp MetaAPIResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+	messageID, err := parseMessageID(respBody)
+	if err != nil {
+		return "", err
 	}
-
-	if len(resp.Messages) == 0 {
-		return "", fmt.Errorf("no message ID in response")
-	}
-
-	messageID := resp.Messages[0].ID
 	c.Log.Info("Interactive message sent", "message_id", messageID, "phone", rcpt.Phone)
 	return messageID, nil
 }
@@ -249,9 +239,7 @@ func (c *Client) SendCTAURLButton(ctx context.Context, account *Account, rcpt Re
 	}
 
 	// Truncate button text to 20 chars (WhatsApp limit)
-	if len(buttonText) > 20 {
-		buttonText = buttonText[:20]
-	}
+	buttonText = truncateLabel(buttonText, 20)
 
 	interactive := map[string]any{
 		"type": "cta_url",
@@ -284,16 +272,10 @@ func (c *Client) SendCTAURLButton(ctx context.Context, account *Account, rcpt Re
 		return "", fmt.Errorf("failed to send CTA URL button message: %w", err)
 	}
 
-	var resp MetaAPIResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+	messageID, err := parseMessageID(respBody)
+	if err != nil {
+		return "", err
 	}
-
-	if len(resp.Messages) == 0 {
-		return "", fmt.Errorf("no message ID in response")
-	}
-
-	messageID := resp.Messages[0].ID
 	c.Log.Info("CTA URL button message sent", "message_id", messageID, "phone", rcpt.Phone)
 	return messageID, nil
 }
@@ -315,9 +297,7 @@ func (c *Client) SendVoiceCallButton(ctx context.Context, account *Account, rcpt
 	if displayText == "" {
 		return "", fmt.Errorf("display text is required")
 	}
-	if len(displayText) > 20 {
-		displayText = displayText[:20]
-	}
+	displayText = truncateLabel(displayText, 20)
 
 	parameters := map[string]any{
 		"display_text": displayText,
@@ -364,16 +344,10 @@ func (c *Client) SendVoiceCallButton(ctx context.Context, account *Account, rcpt
 		return "", fmt.Errorf("failed to send voice_call button message: %w", err)
 	}
 
-	var resp MetaAPIResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+	messageID, err := parseMessageID(respBody)
+	if err != nil {
+		return "", err
 	}
-
-	if len(resp.Messages) == 0 {
-		return "", fmt.Errorf("no message ID in response")
-	}
-
-	messageID := resp.Messages[0].ID
 	c.Log.Info("voice_call button message sent", "message_id", messageID, "phone", rcpt.Phone)
 	return messageID, nil
 }
@@ -792,9 +766,7 @@ func (c *Client) SendFlowMessage(ctx context.Context, account *Account, rcpt Rec
 	}
 
 	// Truncate CTA text to 20 chars (WhatsApp limit)
-	if len(ctaText) > 20 {
-		ctaText = ctaText[:20]
-	}
+	ctaText = truncateLabel(ctaText, 20)
 
 	interactive := map[string]any{
 		"type": "flow",
@@ -841,16 +813,10 @@ func (c *Client) SendFlowMessage(ctx context.Context, account *Account, rcpt Rec
 		return "", fmt.Errorf("failed to send flow message: %w", err)
 	}
 
-	var resp MetaAPIResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+	messageID, err := parseMessageID(respBody)
+	if err != nil {
+		return "", err
 	}
-
-	if len(resp.Messages) == 0 {
-		return "", fmt.Errorf("no message ID in response")
-	}
-
-	messageID := resp.Messages[0].ID
 	c.Log.Info("Flow message sent", "message_id", messageID, "phone", rcpt.Phone, "flow_id", flowID)
 	return messageID, nil
 }
@@ -884,16 +850,10 @@ func (c *Client) SendTemplateMessage(ctx context.Context, account *Account, rcpt
 		return "", fmt.Errorf("failed to send template message: %w", err)
 	}
 
-	var resp MetaAPIResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+	messageID, err := parseMessageID(respBody)
+	if err != nil {
+		return "", err
 	}
-
-	if len(resp.Messages) == 0 {
-		return "", fmt.Errorf("no message ID in response")
-	}
-
-	messageID := resp.Messages[0].ID
 	c.Log.Info("Template message sent", "message_id", messageID, "phone", rcpt.Phone, "template", templateName)
 	return messageID, nil
 }

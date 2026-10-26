@@ -14,6 +14,19 @@ import (
 	"github.com/zerodha/fastglue"
 )
 
+// messageMediaURL returns the URL a client can fetch the message's media from, or an
+// empty string when the message carries no media. Message.MediaURL is a storage-relative
+// path and is not fetchable on its own, so the authenticated /api/media/{message_id}
+// endpoint is published instead. The result is relative to the deployment's base path
+// (see internal/frontend.Handler), which the server does not know here — browser clients
+// must prefix window.__BASE_PATH__ rather than using this value verbatim.
+func messageMediaURL(msg *models.Message) string {
+	if msg.MediaURL == "" {
+		return ""
+	}
+	return "/api/media/" + msg.ID.String()
+}
+
 // getMediaStoragePath returns the base path for media storage
 func (a *App) getMediaStoragePath() string {
 	basePath := a.Config.Storage.LocalPath
@@ -152,12 +165,15 @@ func (a *App) ServeMedia(r *fastglue.Request) error {
 		return nil
 	}
 
-	// Users without contacts:read permission can only access media from their assigned contacts
-	// or from contacts with an active team transfer where the user is a team member.
+	// Users without contacts:read permission can only access media from contacts
+	// assigned to them — the persistent owner or an active transfer assigned
+	// directly to them (via scopeAssignedContact) — or from contacts with an
+	// active team transfer where the user is a team member.
 	if !a.HasPermission(userID, models.ResourceContacts, models.ActionRead, orgID) {
 		var contact models.Contact
-		if err := a.DB.Where("id = ? AND assigned_user_id = ?", message.ContactID, userID).First(&contact).Error; err != nil {
-			// Not directly assigned — check team membership via active transfer
+		q := a.scopeAssignedContact(a.DB.Where("id = ? AND organization_id = ?", message.ContactID, orgID), userID, orgID)
+		if err := q.First(&contact).Error; err != nil {
+			// Not owner / not directly assigned — check team membership via active transfer
 			var transfer models.AgentTransfer
 			if err := a.DB.Where("contact_id = ? AND organization_id = ? AND status = ? AND team_id IS NOT NULL",
 				message.ContactID, orgID, models.TransferStatusActive).First(&transfer).Error; err != nil {

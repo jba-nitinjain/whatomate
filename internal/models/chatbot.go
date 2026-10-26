@@ -89,10 +89,14 @@ type ChatbotSettings struct {
 	IsEnabled       bool      `gorm:"default:false" json:"is_enabled"`
 
 	// Response settings
-	DefaultResponse string     `gorm:"type:text" json:"default_response"`
-	GreetingButtons JSONBArray `gorm:"type:jsonb;default:'[]'" json:"greeting_buttons"` // [{id, title}] - max 10 buttons
+	DefaultResponse string `gorm:"type:text" json:"default_response"`
+	// Buttons are [{id, title, type}] where type is "reply" (default) or "url"
+	// (which also carries a url field). Up to 10 reply buttons, or 2 CTA URL
+	// buttons; sendAndSaveInteractiveButtons enforces WhatsApp's rule that the
+	// two kinds cannot be mixed in one message.
+	GreetingButtons JSONBArray `gorm:"type:jsonb;default:'[]'" json:"greeting_buttons"`
 	FallbackMessage string     `gorm:"type:text" json:"fallback_message"`
-	FallbackButtons JSONBArray `gorm:"type:jsonb;default:'[]'" json:"fallback_buttons"` // [{id, title}] - max 10 buttons
+	FallbackButtons JSONBArray `gorm:"type:jsonb;default:'[]'" json:"fallback_buttons"`
 
 	// Embedded configs (all fields stored in same table)
 	BusinessHours    BusinessHoursConfig    `gorm:"embedded"`
@@ -164,9 +168,9 @@ type ChatbotFlow struct {
 	CanvasLayout       JSONB        `gorm:"type:jsonb;default:'{}'" json:"canvas_layout"` // Node positions for flow diagram
 	// Graph holds upstream's v2 graph representation. It is stored for
 	// forward compatibility only; the step engine (Steps) remains the runtime.
-	Graph JSONB `gorm:"type:jsonb" json:"graph,omitempty"`
-	CreatedByID        *uuid.UUID   `gorm:"type:uuid" json:"created_by_id,omitempty"`
-	UpdatedByID        *uuid.UUID   `gorm:"type:uuid" json:"updated_by_id,omitempty"`
+	Graph       JSONB      `gorm:"type:jsonb" json:"graph,omitempty"`
+	CreatedByID *uuid.UUID `gorm:"type:uuid" json:"created_by_id,omitempty"`
+	UpdatedByID *uuid.UUID `gorm:"type:uuid" json:"updated_by_id,omitempty"`
 
 	// Rich initial message: optional media header + reply buttons that route into
 	// steps. When InitialButtons is non-empty the initial message is delivered as
@@ -174,9 +178,9 @@ type ChatbotFlow struct {
 	// (optionally with a media header) for backward compatibility.
 	InitialMediaType       string     `gorm:"size:20" json:"initial_media_type"` // image, video, document
 	InitialMediaURL        string     `gorm:"type:text" json:"initial_media_url"`
-	InitialButtons         JSONBArray `gorm:"type:jsonb;default:'[]'" json:"initial_buttons"`         // [{id, title}]
+	InitialButtons         JSONBArray `gorm:"type:jsonb;default:'[]'" json:"initial_buttons"`          // [{id, title}]
 	InitialConditionalNext JSONB      `gorm:"type:jsonb;default:'{}'" json:"initial_conditional_next"` // buttonId -> step name / __complete__
-	InitialStoreAs         string     `gorm:"size:100" json:"initial_store_as"`                       // SessionData key for the tapped value
+	InitialStoreAs         string     `gorm:"size:100" json:"initial_store_as"`                        // SessionData key for the tapped value
 
 	// Relations
 	Organization    *Organization     `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`

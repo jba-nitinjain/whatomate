@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/nikyjain/whatomate/pkg/whatsapp"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -13,15 +14,15 @@ import (
 var sixDigitPINPattern = regexp.MustCompile(`^\d{6}$`)
 
 type accountPhoneStatusResponse struct {
-	DisplayPhoneNumber        string `json:"display_phone_number"`
-	VerifiedName              string `json:"verified_name"`
-	CodeVerificationStatus    string `json:"code_verification_status"`
-	AccountMode               string `json:"account_mode"`
-	QualityRating             string `json:"quality_rating"`
-	MessagingLimitTier        string `json:"messaging_limit_tier"`
-	IsTestNumber              bool   `json:"is_test_number"`
-	Warning                   string `json:"warning,omitempty"`
-	TwoStepDisableSupported   bool   `json:"two_step_disable_supported"`
+	DisplayPhoneNumber      string `json:"display_phone_number"`
+	VerifiedName            string `json:"verified_name"`
+	CodeVerificationStatus  string `json:"code_verification_status"`
+	AccountMode             string `json:"account_mode"`
+	QualityRating           string `json:"quality_rating"`
+	MessagingLimitTier      string `json:"messaging_limit_tier"`
+	IsTestNumber            bool   `json:"is_test_number"`
+	Warning                 string `json:"warning,omitempty"`
+	TwoStepDisableSupported bool   `json:"two_step_disable_supported"`
 }
 
 type accountPhoneRequestCodeRequest struct {
@@ -138,10 +139,23 @@ func (a *App) VerifyAccountPhoneCode(r *fastglue.Request) error {
 
 // RegisterAccountPhone enables messaging on the phone number and sets the initial PIN.
 func (a *App) RegisterAccountPhone(r *fastglue.Request) error {
-	waAccount, err := a.resolveWhatsAppAccountForPhoneSetup(r)
+	account, err := a.resolveWhatsAppAccountModelForPhoneSetup(r)
 	if err != nil {
 		return nil
 	}
+
+	// Coexistence (WhatsApp Business app) numbers are already registered via
+	// the Business app; Meta rejects /register for them, so skip the call.
+	if account.IsSMB {
+		a.Log.Info("Phone registration skipped for coexistence account", "phone_id", account.PhoneID)
+		return r.SendEnvelope(map[string]any{
+			"success": true,
+			"skipped": true,
+			"is_smb":  true,
+			"message": "This is a Coexistence (WhatsApp Business app) number. It is already registered, so Meta registration was skipped.",
+		})
+	}
+	waAccount := a.toWhatsAppAccount(account)
 
 	var req accountPhoneRegisterRequest
 	if err := a.decodeRequest(r, &req); err != nil {
@@ -203,13 +217,21 @@ func (a *App) UpdateAccountTwoStepVerification(r *fastglue.Request) error {
 	}
 
 	return r.SendEnvelope(map[string]any{
-		"success":                     true,
+		"success":                    true,
 		"two_step_disable_supported": false,
-		"message":                     "Two-step verification PIN updated successfully.",
+		"message":                    "Two-step verification PIN updated successfully.",
 	})
 }
 
 func (a *App) resolveWhatsAppAccountForPhoneSetup(r *fastglue.Request) (*whatsapp.Account, error) {
+	account, err := a.resolveWhatsAppAccountModelForPhoneSetup(r)
+	if err != nil {
+		return nil, err
+	}
+	return a.toWhatsAppAccount(account), nil
+}
+
+func (a *App) resolveWhatsAppAccountModelForPhoneSetup(r *fastglue.Request) (*models.WhatsAppAccount, error) {
 	orgID, err := a.getOrgID(r)
 	if err != nil {
 		_ = r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
@@ -221,12 +243,7 @@ func (a *App) resolveWhatsAppAccountForPhoneSetup(r *fastglue.Request) (*whatsap
 		return nil, err
 	}
 
-	account, err := a.resolveWhatsAppAccountByID(r, id, orgID)
-	if err != nil {
-		return nil, err
-	}
-
-	return a.toWhatsAppAccount(account), nil
+	return a.resolveWhatsAppAccountByID(r, id, orgID)
 }
 
 func normalizePhoneVerificationMethod(method string) string {

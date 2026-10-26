@@ -2,12 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/google/uuid"
-	"github.com/nikyjain/whatomate/internal/audit"
 	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -15,10 +12,11 @@ import (
 )
 
 // CannedResponseButton mirrors the chatbot flow ButtonConfig shape.
-// type is one of "reply", "url", "phone", "voice_call". For voice_call,
+// type is one of "reply", "url", "phone", "voice_call", "flow". For voice_call,
 // Title is the on-button label (Meta's display_text, 20-char cap applied at
 // send time) and TTLMinutes is how long the button stays clickable (0 ⇒
-// Meta default, 15 min).
+// Meta default, 15 min). For flow, Title is the CTA label, FlowID is the Meta
+// flow id to launch and Screen is the first screen to open.
 type CannedResponseButton struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
@@ -26,6 +24,10 @@ type CannedResponseButton struct {
 	URL         string `json:"url,omitempty"`
 	PhoneNumber string `json:"phone_number,omitempty"`
 	TTLMinutes  int    `json:"ttl_minutes,omitempty"`
+	// flow only. Like voice_call, a flow button is exclusive — it can't share
+	// a message with other button types.
+	FlowID string `json:"flow_id,omitempty"`
+	Screen string `json:"screen,omitempty"`
 }
 
 // CannedResponseRequest represents the request body for creating/updating a canned response
@@ -98,12 +100,7 @@ func (a *App) ListCannedResponses(r *fastglue.Request) error {
 		result[i] = cannedResponseToResponse(cr)
 	}
 
-	return r.SendEnvelope(map[string]any{
-		"canned_responses": result,
-		"total":            total,
-		"page":             pg.Page,
-		"limit":            pg.Limit,
-	})
+	return r.SendEnvelope(listEnvelope("canned_responses", result, total, pg))
 }
 
 // CreateCannedResponse creates a new canned response
@@ -152,7 +149,7 @@ func (a *App) CreateCannedResponse(r *fastglue.Request) error {
 			"Failed to create canned response", nil, "")
 	}
 
-	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+	a.logAudit(orgID, userID,
 		"canned_response", cannedResponse.ID, models.AuditActionCreated, nil, cannedResponseAuditSnapshot(&cannedResponse))
 
 	return r.SendEnvelope(cannedResponseToResponse(cannedResponse))
@@ -228,7 +225,7 @@ func (a *App) UpdateCannedResponse(r *fastglue.Request) error {
 			"Failed to update canned response", nil, "")
 	}
 
-	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+	a.logAudit(orgID, userID,
 		"canned_response", cannedResponse.ID, models.AuditActionUpdated, oldSnap, cannedResponseAuditSnapshot(&cannedResponse))
 
 	return r.SendEnvelope(cannedResponseToResponse(cannedResponse))
@@ -259,7 +256,7 @@ func (a *App) DeleteCannedResponse(r *fastglue.Request) error {
 			"Failed to delete canned response", nil, "")
 	}
 
-	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+	a.logAudit(orgID, userID,
 		"canned_response", cannedResponse.ID, models.AuditActionDeleted, cannedResponseAuditSnapshot(&cannedResponse), nil)
 
 	return r.SendEnvelope(map[string]string{"message": "Canned response deleted"})
@@ -406,45 +403,22 @@ func buttonsToAuditString(arr models.JSONBArray) string {
 	return out
 }
 
-// validateCannedResponseButtons enforces the combo rules WhatsApp Cloud API
-// imposes on free-form interactive messages. We block at save time so the
-// agent gets a clear error instead of a silent fallback to plain text at
-// send time. Frontend mirrors these checks in
-// CannedResponseDetailView.vue:buttonsValidationError; keep them in sync.
-//
-//   - voice_call is interactive.type:"voice_call" — Meta does not allow it to
-//     coexist with reply / url / phone buttons in a single send, and only
-//     one voice_call button per message.
-//   - voice_call needs a non-empty title (becomes Meta's display_text) and a
-//     ttl_minutes in [0, 60]; 0 means "use Meta's default" (15 min).
-//
-// Other combo rules (no phone, max 1 url, no reply+url mix, max 10 reply)
-// are enforced on the frontend today and left there for now since the
-// existing send path falls back gracefully to text.
+// validateCannedResponseButtons applies the shared free-form interactive
+// button rules to a canned response. The rules themselves live in
+// validateInteractiveButtons so the chatbot greeting/fallback path enforces
+// exactly the same set.
 func validateCannedResponseButtons(buttons []CannedResponseButton) error {
-	if len(buttons) == 0 {
-		return nil
-	}
-	voiceCalls := 0
-	others := 0
+	converted := make([]InteractiveButton, 0, len(buttons))
 	for _, b := range buttons {
-		if strings.ToLower(b.Type) == "voice_call" {
-			voiceCalls++
-			if strings.TrimSpace(b.Title) == "" {
-				return fmt.Errorf("voice_call button needs a title")
-			}
-			if b.TTLMinutes < 0 || b.TTLMinutes > 60 {
-				return fmt.Errorf("voice_call ttl_minutes must be between 0 and 60")
-			}
-			continue
-		}
-		others++
+		converted = append(converted, InteractiveButton{
+			ID:          b.ID,
+			Title:       b.Title,
+			Type:        b.Type,
+			URL:         b.URL,
+			PhoneNumber: b.PhoneNumber,
+			TTLMinutes:  b.TTLMinutes,
+			FlowID:      b.FlowID,
+		})
 	}
-	if voiceCalls > 1 {
-		return fmt.Errorf("only one voice_call button is allowed per message")
-	}
-	if voiceCalls > 0 && others > 0 {
-		return fmt.Errorf("voice_call cannot be combined with other button types")
-	}
-	return nil
+	return validateInteractiveButtons(converted)
 }

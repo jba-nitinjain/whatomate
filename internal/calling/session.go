@@ -9,14 +9,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pion/webrtc/v4"
-	"github.com/redis/go-redis/v9"
 	"github.com/nikyjain/whatomate/internal/assignment"
 	"github.com/nikyjain/whatomate/internal/config"
+	"github.com/nikyjain/whatomate/internal/flowgraph"
 	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/nikyjain/whatomate/internal/storage"
 	"github.com/nikyjain/whatomate/internal/websocket"
 	"github.com/nikyjain/whatomate/pkg/whatsapp"
+	"github.com/pion/webrtc/v4"
+	"github.com/redis/go-redis/v9"
 	"github.com/zerodha/logf"
 	"gorm.io/gorm"
 )
@@ -26,6 +27,11 @@ type CallSession struct {
 	ID             string // WhatsApp call_id
 	OrganizationID uuid.UUID
 	AccountName    string
+	// WAAccount is the decrypted account for this call, captured when the
+	// session is created. Terminating a call needs it long after the
+	// handler-supplied copy has gone out of scope, and reloading it from the
+	// DB here would hand Meta the still-encrypted token.
+	WAAccount      *whatsapp.Account
 	CallerPhone    string
 	ContactID      uuid.UUID
 	CallLogID      uuid.UUID
@@ -112,72 +118,16 @@ type TransferCallbacks struct {
 	OnConnect *TransferHTTPCallback
 }
 
-// IVRNodePosition stores the (x,y) position for the visual editor.
-type IVRNodePosition struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-}
-
-// IVRNode represents a single node (applet) in an IVR flow graph.
-type IVRNode struct {
-	ID       string          `json:"id"`
-	Type     IVRNodeType     `json:"type"`
-	Label    string          `json:"label"`
-	Position IVRNodePosition `json:"position"`
-	Config   map[string]any  `json:"config"`
-}
-
-// IVREdge connects two nodes in the flow graph.
-type IVREdge struct {
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Condition string `json:"condition"` // default, digit:N, timeout, max_retries, http:2xx, http:non2xx, in_hours, out_of_hours
-}
-
-// IVRFlowGraph is the top-level structure stored in IVRFlow.Menu (version 2).
-type IVRFlowGraph struct {
-	Version   int       `json:"version"`
-	Nodes     []IVRNode `json:"nodes"`
-	Edges     []IVREdge `json:"edges"`
-	EntryNode string    `json:"entry_node"`
-
-	// Runtime lookup maps — populated by buildMaps()
-	nodeMap map[string]*IVRNode  // id → node
-	edgeMap map[string][]IVREdge // from-node-id → outgoing edges
-}
-
-// buildMaps populates the runtime lookup maps for fast traversal.
-func (g *IVRFlowGraph) buildMaps() {
-	g.nodeMap = make(map[string]*IVRNode, len(g.Nodes))
-	g.edgeMap = make(map[string][]IVREdge, len(g.Edges))
-	for i := range g.Nodes {
-		g.nodeMap[g.Nodes[i].ID] = &g.Nodes[i]
-	}
-	for _, e := range g.Edges {
-		g.edgeMap[e.From] = append(g.edgeMap[e.From], e)
-	}
-}
-
-// getNode returns the node with the given ID, or nil.
-func (g *IVRFlowGraph) getNode(id string) *IVRNode {
-	return g.nodeMap[id]
-}
-
-// resolveEdge finds the next node ID for a given outcome.
-// It tries an exact condition match first, then falls back to "default".
-func (g *IVRFlowGraph) resolveEdge(fromID, outcome string) string {
-	edges := g.edgeMap[fromID]
-	var defaultTarget string
-	for _, e := range edges {
-		if e.Condition == outcome {
-			return e.To
-		}
-		if e.Condition == "default" {
-			defaultTarget = e.To
-		}
-	}
-	return defaultTarget
-}
+// IVRNode, IVREdge and IVRFlowGraph are the IVR domain's views of the shared
+// flow-graph types, specialized to IVRNodeType. Edge conditions for the IVR
+// engine include "default", "digit:N", "timeout", "max_retries", "http:2xx",
+// "http:non2xx", "in_hours", "out_of_hours". Traversal (BuildMaps/Node/
+// ResolveEdge/OutgoingEdges) lives in internal/flowgraph.
+type (
+	IVRNode      = flowgraph.Node[IVRNodeType]
+	IVREdge      = flowgraph.Edge
+	IVRFlowGraph = flowgraph.Graph[IVRNodeType]
+)
 
 // IVRContext holds runtime state during IVR flow execution.
 type IVRContext struct {
@@ -222,6 +172,10 @@ func NewManager(cfg *config.CallingConfig, s3Client *storage.S3Client, db *gorm.
 		cfg.PerAgentTimeoutSecs = 15
 	}
 
+	if cfg.StickyRingSecs <= 0 {
+		cfg.StickyRingSecs = 30
+	}
+
 	return &Manager{
 		sessions: make(map[string]*CallSession),
 		log:      log,
@@ -248,6 +202,7 @@ func (m *Manager) HandleIncomingCall(account *models.WhatsAppAccount, contact *m
 		ID:             callLog.WhatsAppCallID,
 		OrganizationID: account.OrganizationID,
 		AccountName:    account.Name,
+		WAAccount:      account.ToWAAccount(),
 		CallerPhone:    contact.PhoneNumber,
 		ContactID:      contact.ID,
 		CallLogID:      callLog.ID,
@@ -276,6 +231,13 @@ func (m *Manager) HandleIncomingCall(account *models.WhatsAppAccount, contact *m
 
 	// Start WebRTC negotiation using the consumer's SDP offer
 	go m.negotiateWebRTC(session, account, sdpOffer)
+}
+
+// RejectIncomingCall declines a ringing call without answering it. Used for a
+// click-to-call call whose originating agent can't take it: the call is never
+// offered to anyone else, so there is no reason to pre-accept it for WebRTC.
+func (m *Manager) RejectIncomingCall(ctx context.Context, account *models.WhatsAppAccount, callID string) {
+	m.rejectCall(ctx, account.ToWAAccount(), callID)
 }
 
 // HandleCallEvent processes a call lifecycle event (in_call, ended, etc.)
@@ -570,19 +532,15 @@ func (m *Manager) terminateCall(session *CallSession, waAccount *whatsapp.Accoun
 	}
 }
 
-// terminateCallBySession looks up the WhatsApp account from the DB and
-// terminates the call. Used when only the session is available.
+// terminateCallBySession terminates the call using the account captured on the
+// session. Used when only the session is available.
 func (m *Manager) terminateCallBySession(session *CallSession) {
-	var account models.WhatsAppAccount
-	if err := m.db.Where("organization_id = ? AND name = ?", session.OrganizationID, session.AccountName).
-		First(&account).Error; err != nil {
-		m.log.Error("Failed to look up account for call termination", "error", err, "call_id", session.ID)
+	if session.WAAccount == nil || session.WAAccount.AccessToken == "" {
+		m.log.Error("No account on session, cannot terminate call",
+			"call_id", session.ID, "account", session.AccountName)
 		return
 	}
-	waAccount := account.ToWAAccount()
-	if waAccount.AccessToken != "" {
-		m.terminateCall(session, waAccount)
-	}
+	m.terminateCall(session, session.WAAccount)
 }
 
 // durationSince calculates seconds elapsed since a given time, returning 0 if

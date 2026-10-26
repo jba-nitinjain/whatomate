@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
+import { startRinging, stopRinging } from '@/lib/ringtone'
 import { callLogsService, ivrFlowsService, callTransfersService, outgoingCallsService, type CallLog, type IVRFlow, type CallTransfer } from '@/services/api'
 import { toast } from 'vue-sonner'
 import { i18n } from '@/i18n'
@@ -27,9 +28,15 @@ export const useCallingStore = defineStore('calling', () => {
   const localStream = ref<MediaStream | null>(null)
   const peerConnection = ref<RTCPeerConnection | null>(null)
   const isOnCall = ref(false)
+  // True from the moment a transfer is accepted until media is connected.
+  // Keeps the call panel on screen across the WebRTC setup gap.
+  const isConnecting = ref(false)
   const callDuration = ref(0)
   const isMuted = ref(false)
   let durationTimer: number | null = null
+  // Remote (caller/consumer) audio element. Held on a stable ref so the browser
+  // doesn't garbage-collect it mid-call — otherwise the remote voice goes silent.
+  let remoteAudioEl: HTMLAudioElement | null = null
 
   // Call permission state (in-memory only, cleared on refresh)
   const callPermissions = reactive(new Map<string, { status: string, expiresAt?: string }>())
@@ -173,6 +180,25 @@ export const useCallingStore = defineStore('calling', () => {
     const transfer = waitingTransfers.value.find(t => t.id === id)
     waitingTransfers.value = waitingTransfers.value.filter(t => t.id !== id)
 
+    isConnecting.value = true
+    if (transfer) {
+      activeTransfer.value = { ...transfer, status: 'connecting' }
+    }
+
+    try {
+      await connectTransferMedia(id, transfer)
+    } catch (err) {
+      cleanup()
+      throw err
+    } finally {
+      isConnecting.value = false
+    }
+  }
+
+  // Media setup for an accepted transfer. Split out so acceptTransfer can own
+  // the connecting state around it — this stretch takes seconds (mic prompt,
+  // ICE gathering, /connect round trip) and the panel must stay up throughout.
+  async function connectTransferMedia(id: string, transfer: CallTransfer | undefined) {
     // Get microphone access
     let stream: MediaStream
     try {
@@ -195,9 +221,13 @@ export const useCallingStore = defineStore('calling', () => {
 
     // Handle remote audio (caller's voice)
     pc.ontrack = (event) => {
-      const audio = new Audio()
-      audio.srcObject = event.streams[0]
-      audio.play().catch(() => { /* ignore autoplay */ })
+      // A queued ontrack can still fire after cleanup() tore this call down
+      // (or after a new call replaced the connection); recreating the audio
+      // element here would leak it and play ghost audio from a dead stream.
+      if (peerConnection.value !== pc) return
+      if (!remoteAudioEl) remoteAudioEl = new Audio()
+      remoteAudioEl.srcObject = event.streams[0]
+      remoteAudioEl.play().catch(() => { /* ignore autoplay */ })
     }
 
     // Clean up when WebRTC connection drops
@@ -280,9 +310,12 @@ export const useCallingStore = defineStore('calling', () => {
 
     // Handle remote audio (consumer's voice)
     pc.ontrack = (event) => {
-      const audio = new Audio()
-      audio.srcObject = event.streams[0]
-      audio.play().catch(() => { /* ignore autoplay */ })
+      // Same late-ontrack guard as in acceptTransfer: never re-create
+      // the audio element for a connection that is no longer the active one.
+      if (peerConnection.value !== pc) return
+      if (!remoteAudioEl) remoteAudioEl = new Audio()
+      remoteAudioEl.srcObject = event.streams[0]
+      remoteAudioEl.play().catch(() => { /* ignore autoplay */ })
     }
 
     // Clean up when WebRTC connection drops
@@ -406,7 +439,16 @@ export const useCallingStore = defineStore('calling', () => {
     isOnHold.value = false
   }
 
+  // One rule for the ringtone: it rings while a call is waiting to be answered
+  // and stops the moment nothing is. Covers accepting, rejecting, another agent
+  // taking it, no-answer and termination without a stop call on each path.
+  watch(
+    () => waitingTransfers.value.length,
+    waiting => (waiting > 0 ? startRinging() : stopRinging()),
+  )
+
   function cleanup() {
+    stopRinging()
     if (durationTimer) {
       clearInterval(durationTimer)
       durationTimer = null
@@ -419,7 +461,13 @@ export const useCallingStore = defineStore('calling', () => {
       localStream.value.getTracks().forEach(t => t.stop())
       localStream.value = null
     }
+    if (remoteAudioEl) {
+      remoteAudioEl.pause()
+      remoteAudioEl.srcObject = null
+      remoteAudioEl = null
+    }
     isOnCall.value = false
+    isConnecting.value = false
     isOnHold.value = false
     activeTransfer.value = null
     outgoingCallLogId.value = null
@@ -539,6 +587,7 @@ export const useCallingStore = defineStore('calling', () => {
     // Call transfers
     waitingTransfers,
     activeTransfer,
+    isConnecting,
     isOnCall,
     callDuration,
     isMuted,

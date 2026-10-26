@@ -1,10 +1,10 @@
 package config
 
 import (
-	"os"
 	"crypto/hmac"
 	"crypto/sha1" //nolint:gosec // SHA-1 is mandated by the coturn TURN REST API (RFC draft)
 	"encoding/base64"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -90,6 +90,7 @@ type CallingConfig struct {
 	HoldMusicFile       string            `koanf:"hold_music_file"`
 	TransferTimeoutSecs int               `koanf:"transfer_timeout_secs"`
 	PerAgentTimeoutSecs int               `koanf:"per_agent_timeout_secs"`
+	StickyRingSecs      int               `koanf:"sticky_ring_secs"`
 	RingbackFile        string            `koanf:"ringback_file"`
 	UDPPortMin          uint16            `koanf:"udp_port_min"` // WebRTC UDP port range start (default: 10000)
 	UDPPortMax          uint16            `koanf:"udp_port_max"` // WebRTC UDP port range end (default: 10100)
@@ -158,10 +159,10 @@ type WhatsAppConfig struct {
 	// account (or platform). When false, such webhooks are processed but logged
 	// as a warning. Webhooks for accounts that DO have an app secret are always
 	// signature-enforced regardless of this flag.
-	RequireWebhookSignature bool `koanf:"require_webhook_signature"`
-	AppID              string `koanf:"app_id"`   // WhatsApp App ID for frontend
-	AppSecret          string `koanf:"app_secret"`
-	ConfigID           string `koanf:"config_id"` // WhatsApp Config ID for frontend
+	RequireWebhookSignature bool   `koanf:"require_webhook_signature"`
+	AppID                   string `koanf:"app_id"` // WhatsApp App ID for frontend
+	AppSecret               string `koanf:"app_secret"`
+	ConfigID                string `koanf:"config_id"` // WhatsApp Config ID for frontend
 }
 
 type AIConfig struct {
@@ -220,10 +221,25 @@ func Load(configPath string) (*Config, error) {
 		}
 	}
 
-	// Load from environment variables (WHATOMATE_ prefix)
-	// e.g., WHATOMATE_DATABASE_HOST -> database.host
+	// Load from environment variables (WHATOMATE_ prefix). A DOUBLE underscore
+	// separates config levels; single underscores are preserved as part of the
+	// key. This is required because both section and field names contain
+	// underscores (e.g. default_admin, rate_limit, whatsapp.app_id) — collapsing
+	// every "_" to "." would mangle them (whatsapp.app_id -> whatsapp.app.id), so
+	// those keys could never be set via env.
+	// e.g. WHATOMATE_DATABASE__HOST -> database.host
+	//      WHATOMATE_WHATSAPP__APP_ID -> whatsapp.app_id
+	//      WHATOMATE_DEFAULT_ADMIN__EMAIL -> default_admin.email
+	// Legacy single-underscore names (WHATOMATE_DATABASE_HOST) are still
+	// accepted for known keys and loaded first, so the "__" form wins when both
+	// are set. See env_compat.go.
+	legacyUsed, err := loadLegacyEnv(k)
+	if err != nil {
+		return nil, err
+	}
+	warnLegacyEnv(legacyUsed)
 	if err := k.Load(env.Provider("WHATOMATE_", ".", func(s string) string {
-		return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(s, "WHATOMATE_")), "_", ".")
+		return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(s, "WHATOMATE_")), "__", ".")
 	}), nil); err != nil {
 		return nil, err
 	}
