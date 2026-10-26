@@ -1,11 +1,7 @@
 package handlers
 
 import (
-	"encoding/json"
-	"fmt"
-
 	"github.com/nikyjain/whatomate/internal/flowgraph"
-	"github.com/nikyjain/whatomate/internal/models"
 )
 
 // ChatNodeType identifies the kind of node in a chatbot flow graph.
@@ -40,31 +36,3 @@ type (
 	ChatEdge  = flowgraph.Edge
 	ChatGraph = flowgraph.Graph[ChatNodeType]
 )
-
-// parseChatGraph decodes a raw JSONB blob into a ChatGraph and builds the
-// runtime lookup maps. Returns (nil, nil) when raw is nil — caller treats
-// that as "no graph, use legacy Steps".
-func parseChatGraph(raw models.JSONB) (*ChatGraph, error) {
-	if raw == nil {
-		return nil, nil
-	}
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("marshal graph: %w", err)
-	}
-	var g ChatGraph
-	if err := json.Unmarshal(b, &g); err != nil {
-		return nil, fmt.Errorf("unmarshal graph: %w", err)
-	}
-	if g.Version != 2 {
-		return nil, fmt.Errorf("unsupported graph version %d (want 2)", g.Version)
-	}
-	if g.EntryNode == "" {
-		return nil, fmt.Errorf("graph missing entry_node")
-	}
-	g.BuildMaps()
-	if g.Node(g.EntryNode) == nil {
-		return nil, fmt.Errorf("entry_node %q not found in nodes", g.EntryNode)
-	}
-	return &g, nil
-}
