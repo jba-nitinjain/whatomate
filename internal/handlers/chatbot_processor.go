@@ -1257,16 +1257,14 @@ func (a *App) sendFlowCompletionWebhook(flow *models.ChatbotFlow, session *model
 		return
 	}
 
-	// Seed phone_number into the substitution map so custom URL/body/header
-	// templates can reference {{phone_number}} (parity with fetchAPIContext
-	// and the flow-step API fetch path).
-	if session.SessionData == nil {
-		session.SessionData = models.JSONB{}
-	}
-	session.SessionData["phone_number"] = session.PhoneNumber
+	// Substitution variables: the session data plus the sender number as
+	// {{phone_number}} when the flow did not collect its own phone_number.
+	// This is a copy, so session.SessionData (and the default payload's
+	// session_data) stays exactly as the flow collected it.
+	vars := templateVarsWithSenderPhone(session.SessionData, session.PhoneNumber)
 
 	// Replace variables in URL
-	webhookURL = processTemplate(webhookURL, session.SessionData)
+	webhookURL = processTemplate(webhookURL, vars)
 
 	// Get HTTP method (default: POST)
 	method := "POST"
@@ -1290,7 +1288,7 @@ func (a *App) sendFlowCompletionWebhook(flow *models.ChatbotFlow, session *model
 	var bodyReader io.Reader
 	if bodyTemplate, ok := config["body"].(string); ok && bodyTemplate != "" {
 		// Replace variables in body template
-		bodyWithVars := processTemplate(bodyTemplate, session.SessionData)
+		bodyWithVars := processTemplate(bodyTemplate, vars)
 		bodyReader = strings.NewReader(bodyWithVars)
 	} else {
 		// Use default payload
@@ -1317,7 +1315,7 @@ func (a *App) sendFlowCompletionWebhook(flow *models.ChatbotFlow, session *model
 	if headers, ok := config["headers"].(map[string]any); ok {
 		for key, value := range headers {
 			if strVal, ok := value.(string); ok {
-				req.Header.Set(key, processTemplate(strVal, session.SessionData))
+				req.Header.Set(key, processTemplate(strVal, vars))
 			}
 		}
 	}
@@ -1577,12 +1575,14 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 		a.logSessionMessage(session.ID, models.DirectionOutgoing, message, step.StepName)
 
 	case models.FlowStepTypeTransfer:
-		// Outside business hours: skip both the transfer-step message
-		// ("Connecting you to an agent...") AND the transfer itself.
-		// Send only the out-of-hours message so the customer doesn't
-		// see a confusing "transferring..." followed by "we're closed".
+		// Opt-in (BusinessHours.SkipTransferOutsideHours, default off):
+		// outside business hours, skip both the transfer-step message
+		// ("Connecting you to an agent...") AND the transfer itself and send
+		// only the out-of-hours message. Off keeps the original behaviour
+		// of always transferring.
 		settings, _ := a.getChatbotSettingsCached(account.OrganizationID, account.Name)
-		if settings != nil && settings.BusinessHours.Enabled && len(settings.BusinessHours.Hours) > 0 {
+		if settings != nil && settings.BusinessHours.SkipTransferOutsideHours &&
+			settings.BusinessHours.Enabled && len(settings.BusinessHours.Hours) > 0 {
 			if !a.isWithinBusinessHours(settings.BusinessHours.Hours) {
 				if settings.BusinessHours.OutOfHoursMessage != "" {
 					if err := a.sendAndSaveTextMessage(account, contact, settings.BusinessHours.OutOfHoursMessage); err != nil {
@@ -1797,14 +1797,16 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, session *models.ChatbotSe
 		return nil, fmt.Errorf("API config is empty")
 	}
 
+	// Copy so the sender number is only a substitution fallback: it never
+	// overwrites a flow-collected phone_number and is never persisted into
+	// the session.
 	sessionData := models.JSONB{}
 	if session != nil {
-		sessionData = session.SessionData
-		if sessionData == nil {
-			sessionData = models.JSONB{}
-			session.SessionData = sessionData
+		if session.SessionData == nil {
+			// Callers merge mapped API data into the session map afterwards.
+			session.SessionData = models.JSONB{}
 		}
-		sessionData["phone_number"] = session.PhoneNumber
+		sessionData = templateVarsWithSenderPhone(session.SessionData, session.PhoneNumber)
 	}
 
 	replaceVar := func(s string) string { return processTemplate(s, sessionData) }
@@ -2526,11 +2528,13 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 		return nil
 	}
 
-	// If the chatbot will handle this conversation (enabled + no active
-	// agent transfer), pre-mark the message as read so the contact-list
-	// unread badge doesn't briefly flash before the bot's reply arrives.
-	// See issue #280.
-	if a.willChatbotHandle(account, contact) {
+	// Opt-in (ChatbotSettings.MarkBotHandledAsRead, default off): if the
+	// chatbot will handle this conversation (enabled + no active agent
+	// transfer), pre-mark the message as read so the contact-list unread
+	// badge doesn't briefly flash before the bot's reply arrives (upstream
+	// issue #280). Off keeps incoming messages unread until an agent opens
+	// the chat, which is also when read receipts go to the customer.
+	if a.chatbotMarksBotHandledRead(account.OrganizationID, account.Name) && a.willChatbotHandle(account, contact) {
 		a.DB.Model(&models.Message{}).Where("id = ?", message.ID).
 			Update("status", models.MessageStatusRead)
 		message.Status = models.MessageStatusRead

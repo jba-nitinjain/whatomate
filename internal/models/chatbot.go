@@ -12,6 +12,11 @@ type BusinessHoursConfig struct {
 	Hours                 JSONBArray `gorm:"column:business_hours;type:jsonb;default:'[]'" json:"business_hours"` // [{day, enabled, start_time, end_time}]
 	OutOfHoursMessage     string     `gorm:"column:out_of_hours_message;type:text" json:"out_of_hours_message"`
 	AllowAutomatedOutside bool       `gorm:"column:allow_automated_outside_hours;default:true" json:"allow_automated_outside_hours"` // Allow flows/keywords/AI outside business hours
+	// SkipTransferOutsideHours (opt-in, default off): when a flow reaches a
+	// transfer step outside business hours, send only the out-of-hours
+	// message and end the flow instead of transferring. Off keeps the
+	// original behaviour (always transfer).
+	SkipTransferOutsideHours bool `gorm:"column:skip_transfer_outside_hours;default:false" json:"skip_transfer_outside_hours"`
 }
 
 // AgentAssignmentConfig holds agent assignment and queue settings
@@ -104,6 +109,13 @@ type ChatbotSettings struct {
 	SLA              SLAConfig              `gorm:"embedded"`
 	ClientInactivity ClientInactivityConfig `gorm:"embedded"`
 	AI               AIConfig               `gorm:"embedded"`
+
+	// MarkBotHandledAsRead (opt-in, default off): pre-mark incoming messages
+	// as read when the chatbot will handle them and mark the conversation
+	// read after each bot reply. Off keeps the original behaviour: incoming
+	// messages stay unread until an agent opens the chat (which is also when
+	// read receipts are sent to the customer).
+	MarkBotHandledAsRead bool `gorm:"column:mark_bot_handled_as_read;default:false" json:"mark_bot_handled_as_read"`
 
 	// Session settings
 	SessionTimeoutMins int        `gorm:"default:30" json:"session_timeout_minutes"`

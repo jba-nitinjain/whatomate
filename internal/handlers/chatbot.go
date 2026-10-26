@@ -27,6 +27,8 @@ type ChatbotSettingsResponse struct {
 	BusinessHours                []map[string]interface{} `json:"business_hours"`
 	OutOfHoursMessage            string                   `json:"out_of_hours_message"`
 	AllowAutomatedOutsideHours   bool                     `json:"allow_automated_outside_hours"`
+	SkipTransferOutsideHours     bool                     `json:"skip_transfer_outside_hours"`
+	MarkBotHandledAsRead         bool                     `json:"mark_bot_handled_as_read"`
 	AllowAgentQueuePickup        bool                     `json:"allow_agent_queue_pickup"`
 	AssignToSameAgent            bool                     `json:"assign_to_same_agent"`
 	AgentCurrentConversationOnly bool                     `json:"agent_current_conversation_only"`
@@ -172,6 +174,8 @@ func (a *App) GetChatbotSettings(r *fastglue.Request) error {
 		BusinessHours:              businessHours,
 		OutOfHoursMessage:          settings.BusinessHours.OutOfHoursMessage,
 		AllowAutomatedOutsideHours: settings.BusinessHours.AllowAutomatedOutside,
+		SkipTransferOutsideHours:   settings.BusinessHours.SkipTransferOutsideHours,
+		MarkBotHandledAsRead:       settings.MarkBotHandledAsRead,
 		// Agent Assignment
 		AllowAgentQueuePickup:        settings.AgentAssignment.AllowQueuePickup,
 		AssignToSameAgent:            settings.AgentAssignment.AssignToSameAgent,
@@ -209,12 +213,13 @@ func (a *App) GetChatbotSettings(r *fastglue.Request) error {
 // chatbotMessagesSnapshot captures the fields shown on the Chatbot "Messages" tab.
 func chatbotMessagesSnapshot(s *models.ChatbotSettings) map[string]any {
 	return map[string]any{
-		"enabled":                 s.IsEnabled,
-		"greeting_message":        s.DefaultResponse,
-		"greeting_buttons":        s.GreetingButtons,
-		"fallback_message":        s.FallbackMessage,
-		"fallback_buttons":        s.FallbackButtons,
-		"session_timeout_minutes": s.SessionTimeoutMins,
+		"enabled":                  s.IsEnabled,
+		"greeting_message":         s.DefaultResponse,
+		"greeting_buttons":         s.GreetingButtons,
+		"fallback_message":         s.FallbackMessage,
+		"fallback_buttons":         s.FallbackButtons,
+		"session_timeout_minutes":  s.SessionTimeoutMins,
+		"mark_bot_handled_as_read": s.MarkBotHandledAsRead,
 	}
 }
 
@@ -234,6 +239,7 @@ func chatbotHoursSnapshot(s *models.ChatbotSettings) map[string]any {
 		"business_hours":                s.BusinessHours.Hours,
 		"out_of_hours_message":          s.BusinessHours.OutOfHoursMessage,
 		"allow_automated_outside_hours": s.BusinessHours.AllowAutomatedOutside,
+		"skip_transfer_outside_hours":   s.BusinessHours.SkipTransferOutsideHours,
 	}
 }
 
@@ -287,6 +293,8 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 		BusinessHours                *[]map[string]interface{} `json:"business_hours"`
 		OutOfHoursMessage            *string                   `json:"out_of_hours_message"`
 		AllowAutomatedOutsideHours   *bool                     `json:"allow_automated_outside_hours"`
+		SkipTransferOutsideHours     *bool                     `json:"skip_transfer_outside_hours"`
+		MarkBotHandledAsRead         *bool                     `json:"mark_bot_handled_as_read"`
 		AllowAgentQueuePickup        *bool                     `json:"allow_agent_queue_pickup"`
 		AssignToSameAgent            *bool                     `json:"assign_to_same_agent"`
 		AgentCurrentConversationOnly *bool                     `json:"agent_current_conversation_only"`
@@ -360,11 +368,13 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 	// for tabs the user actually submitted.
 	messagesTouched := req.Enabled != nil || req.GreetingMessage != nil ||
 		req.GreetingButtons != nil || req.FallbackMessage != nil ||
-		req.FallbackButtons != nil || req.SessionTimeoutMinutes != nil
+		req.FallbackButtons != nil || req.SessionTimeoutMinutes != nil ||
+		req.MarkBotHandledAsRead != nil
 	agentsTouched := req.AllowAgentQueuePickup != nil || req.AssignToSameAgent != nil ||
 		req.AgentCurrentConversationOnly != nil
 	hoursTouched := req.BusinessHoursEnabled != nil || req.BusinessHours != nil ||
-		req.OutOfHoursMessage != nil || req.AllowAutomatedOutsideHours != nil
+		req.OutOfHoursMessage != nil || req.AllowAutomatedOutsideHours != nil ||
+		req.SkipTransferOutsideHours != nil
 	slaTouched := req.SLAEnabled != nil || req.SLAResponseMinutes != nil ||
 		req.SLAResolutionMinutes != nil || req.SLAEscalationMinutes != nil ||
 		req.SLAAutoCloseHours != nil || req.SLAAutoCloseMessage != nil ||
@@ -418,6 +428,12 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 	}
 	if req.AllowAutomatedOutsideHours != nil {
 		settings.BusinessHours.AllowAutomatedOutside = *req.AllowAutomatedOutsideHours
+	}
+	if req.SkipTransferOutsideHours != nil {
+		settings.BusinessHours.SkipTransferOutsideHours = *req.SkipTransferOutsideHours
+	}
+	if req.MarkBotHandledAsRead != nil {
+		settings.MarkBotHandledAsRead = *req.MarkBotHandledAsRead
 	}
 
 	// Agent Assignment

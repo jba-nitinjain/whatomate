@@ -26,6 +26,21 @@ var (
 
 const maxLoopIterations = 50
 
+// templateVarsWithSenderPhone returns a shallow copy of data for template
+// substitution with the sender's number available as {{phone_number}}. A
+// phone_number the flow already collected is never overwritten, and the
+// caller's map is never mutated.
+func templateVarsWithSenderPhone(data map[string]any, senderPhone string) map[string]any {
+	vars := make(map[string]any, len(data)+1)
+	for k, v := range data {
+		vars[k] = v
+	}
+	if existing, ok := vars["phone_number"]; !ok || existing == nil {
+		vars["phone_number"] = senderPhone
+	}
+	return vars
+}
+
 // processTemplate processes a template string with variables, conditionals, and loops
 func processTemplate(template string, data map[string]any) string {
 	if data == nil {

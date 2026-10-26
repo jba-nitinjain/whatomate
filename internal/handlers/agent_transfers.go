@@ -1094,6 +1094,37 @@ func (a *App) willChatbotHandle(account *models.WhatsAppAccount, contact *models
 	return true
 }
 
+// suppressTransferOutsideHours applies the opt-in
+// BusinessHours.SkipTransferOutsideHours setting: when enabled and the
+// current time is outside business hours it sends the out-of-hours message
+// and reports true so the caller skips the transfer. With the setting off
+// (default) it always reports false and transfers proceed as before.
+func (a *App) suppressTransferOutsideHours(settings *models.ChatbotSettings, account *models.WhatsAppAccount, contact *models.Contact) bool {
+	if settings == nil || !settings.BusinessHours.SkipTransferOutsideHours ||
+		!settings.BusinessHours.Enabled || len(settings.BusinessHours.Hours) == 0 {
+		return false
+	}
+	if a.isWithinBusinessHours(settings.BusinessHours.Hours) {
+		return false
+	}
+	if settings.BusinessHours.OutOfHoursMessage != "" {
+		_ = a.sendAndSaveTextMessage(account, contact, settings.BusinessHours.OutOfHoursMessage)
+	}
+	return true
+}
+
+// chatbotMarksBotHandledRead reports whether the org opted in to marking
+// bot-handled conversations as read (ChatbotSettings.MarkBotHandledAsRead).
+// Defaults to false so incoming messages stay unread until an agent opens
+// the chat.
+func (a *App) chatbotMarksBotHandledRead(orgID uuid.UUID, accountName string) bool {
+	settings, err := a.getChatbotSettingsCached(orgID, accountName)
+	if err != nil || settings == nil {
+		return false
+	}
+	return settings.MarkBotHandledAsRead
+}
+
 // WebSocket broadcast helpers
 
 func (a *App) broadcastTransferCreated(transfer *models.AgentTransfer, contact *models.Contact) {
@@ -1231,17 +1262,11 @@ func (a *App) createTransferToQueue(account *models.WhatsAppAccount, contact *mo
 
 	settings, _ := a.getChatbotSettingsCached(account.OrganizationID, account.Name)
 
-	// Suppress transfers outside business hours — flow steps and the
-	// chatbot-disabled fallback would otherwise hand off to a human at
-	// 11pm. createTransferFromKeyword already does this; mirror it here.
-	if settings != nil && settings.BusinessHours.Enabled && len(settings.BusinessHours.Hours) > 0 {
-		if !a.isWithinBusinessHours(settings.BusinessHours.Hours) {
-			a.Log.Info("Outside business hours, sending out-of-hours message instead of queue transfer", "contact_id", contact.ID, "source", source)
-			if settings.BusinessHours.OutOfHoursMessage != "" {
-				_ = a.sendAndSaveTextMessage(account, contact, settings.BusinessHours.OutOfHoursMessage)
-			}
-			return
-		}
+	// Opt-in (BusinessHours.SkipTransferOutsideHours): suppress queue
+	// transfers outside business hours. Default keeps transferring.
+	if a.suppressTransferOutsideHours(settings, account, contact) {
+		a.Log.Info("Outside business hours, sent out-of-hours message instead of queue transfer", "contact_id", contact.ID, "source", source)
+		return
 	}
 
 	transfer := models.AgentTransfer{
@@ -1329,16 +1354,11 @@ func (a *App) createTransferToTeam(account *models.WhatsAppAccount, contact *mod
 
 	settings, _ := a.getChatbotSettingsCached(account.OrganizationID, account.Name)
 
-	// Suppress transfers outside business hours (same reason as
-	// createTransferToQueue / createTransferFromKeyword).
-	if settings != nil && settings.BusinessHours.Enabled && len(settings.BusinessHours.Hours) > 0 {
-		if !a.isWithinBusinessHours(settings.BusinessHours.Hours) {
-			a.Log.Info("Outside business hours, sending out-of-hours message instead of team transfer", "contact_id", contact.ID, "team_id", teamID, "source", source)
-			if settings.BusinessHours.OutOfHoursMessage != "" {
-				_ = a.sendAndSaveTextMessage(account, contact, settings.BusinessHours.OutOfHoursMessage)
-			}
-			return
-		}
+	// Opt-in (BusinessHours.SkipTransferOutsideHours): suppress team
+	// transfers outside business hours. Default keeps transferring.
+	if a.suppressTransferOutsideHours(settings, account, contact) {
+		a.Log.Info("Outside business hours, sent out-of-hours message instead of team transfer", "contact_id", contact.ID, "team_id", teamID, "source", source)
+		return
 	}
 
 	var agentID *uuid.UUID

@@ -113,7 +113,8 @@ type MessageSendOptions struct {
 
 	// MarkIncomingRead marks the contact's incoming messages as read after a
 	// successful send. Used for chatbot replies so a bot-handled exchange
-	// doesn't leave an "unread" badge in the agent's contact list.
+	// doesn't leave an "unread" badge in the agent's contact list. Only takes
+	// effect when the org opted in via ChatbotSettings.MarkBotHandledAsRead.
 	MarkIncomingRead bool
 }
 
@@ -589,7 +590,7 @@ func (a *App) finalizeMessageSend(msg *models.Message, req OutgoingMessageReques
 	// Mark the contact's incoming messages as read once a chatbot reply has
 	// gone out. Keeps the agent's contact-list unread count clean for
 	// conversations the bot is auto-handling. See issue #280.
-	if opts.MarkIncomingRead {
+	if opts.MarkIncomingRead && a.chatbotMarksBotHandledRead(req.Account.OrganizationID, req.Account.Name) {
 		a.markMessagesAsRead(req.Account.OrganizationID, req.Contact.ID, req.Contact)
 	}
 }

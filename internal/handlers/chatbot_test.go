@@ -1185,6 +1185,35 @@ func TestApp_UpdateChatbotSettings_PartialUpdate(t *testing.T) {
 		assert.True(t, resp.Data.Settings.BusinessHoursEnabled)
 		assert.Equal(t, "We are closed right now.", resp.Data.Settings.OutOfHoursMessage)
 		assert.False(t, resp.Data.Settings.AllowAutomatedOutsideHours)
+		// Opt-in upstream behaviours default to off (main behaviour).
+		assert.False(t, resp.Data.Settings.SkipTransferOutsideHours)
+		assert.False(t, resp.Data.Settings.MarkBotHandledAsRead)
+	})
+
+	t.Run("opt-in upstream behaviour flags round-trip", func(t *testing.T) {
+		app := newTestApp(t)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		user := testutil.CreateTestUser(t, app.DB, org.ID)
+
+		req := testutil.NewJSONRequest(t, map[string]any{
+			"skip_transfer_outside_hours": true,
+			"mark_bot_handled_as_read":    true,
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+		require.NoError(t, app.UpdateChatbotSettings(req))
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		getReq := testutil.NewGETRequest(t)
+		testutil.SetAuthContext(getReq, org.ID, user.ID)
+		require.NoError(t, app.GetChatbotSettings(getReq))
+		var resp struct {
+			Data struct {
+				Settings handlers.ChatbotSettingsResponse `json:"settings"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(getReq), &resp))
+		assert.True(t, resp.Data.Settings.SkipTransferOutsideHours)
+		assert.True(t, resp.Data.Settings.MarkBotHandledAsRead)
 	})
 
 	t.Run("update agent assignment settings", func(t *testing.T) {

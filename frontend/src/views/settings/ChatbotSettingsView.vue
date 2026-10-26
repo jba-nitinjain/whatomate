@@ -89,6 +89,8 @@ const chatbotSettings = ref({
   business_hours: [...defaultBusinessHours] as BusinessHour[],
   out_of_hours_message: '',
   allow_automated_outside_hours: true,
+  skip_transfer_outside_hours: false,
+  mark_bot_handled_as_read: false,
   allow_agent_queue_pickup: true,
   assign_to_same_agent: true,
   agent_current_conversation_only: false
@@ -196,6 +198,8 @@ onMounted(async () => {
         business_hours: mergedHours,
         out_of_hours_message: chatbotData.settings.out_of_hours_message || '',
         allow_automated_outside_hours: chatbotData.settings.allow_automated_outside_hours !== false,
+        skip_transfer_outside_hours: chatbotData.settings.skip_transfer_outside_hours === true,
+        mark_bot_handled_as_read: chatbotData.settings.mark_bot_handled_as_read === true,
         allow_agent_queue_pickup: chatbotData.settings.allow_agent_queue_pickup !== false,
         assign_to_same_agent: chatbotData.settings.assign_to_same_agent !== false,
         agent_current_conversation_only: chatbotData.settings.agent_current_conversation_only === true
@@ -259,7 +263,8 @@ async function saveMessagesSettings() {
       greeting_buttons: chatbotSettings.value.greeting_buttons,
       fallback_message: chatbotSettings.value.fallback_message,
       fallback_buttons: chatbotSettings.value.fallback_buttons,
-      session_timeout_minutes: chatbotSettings.value.session_timeout_minutes
+      session_timeout_minutes: chatbotSettings.value.session_timeout_minutes,
+      mark_bot_handled_as_read: chatbotSettings.value.mark_bot_handled_as_read
     })
     toast.success(t('chatbotSettings.messagesSaved'))
     refreshActivityLog(messagesLogKey)
@@ -294,7 +299,8 @@ async function saveBusinessHoursSettings() {
       business_hours_enabled: chatbotSettings.value.business_hours_enabled,
       business_hours: chatbotSettings.value.business_hours,
       out_of_hours_message: chatbotSettings.value.out_of_hours_message,
-      allow_automated_outside_hours: chatbotSettings.value.allow_automated_outside_hours
+      allow_automated_outside_hours: chatbotSettings.value.allow_automated_outside_hours,
+      skip_transfer_outside_hours: chatbotSettings.value.skip_transfer_outside_hours
     })
     toast.success(t('chatbotSettings.businessHoursSaved'))
     refreshActivityLog(hoursLogKey)
@@ -459,6 +465,17 @@ function removeEscalationUser(userId: string) {
                   <p class="text-xs text-muted-foreground">{{ $t('chatbotSettings.sessionTimeoutHint') }}</p>
                 </div>
 
+                <div class="flex items-center justify-between py-2">
+                  <div>
+                    <p class="font-medium">{{ $t('chatbotSettings.markBotHandledAsRead') }}</p>
+                    <p class="text-sm text-muted-foreground">{{ $t('chatbotSettings.markBotHandledAsReadDesc') }}</p>
+                  </div>
+                  <Switch
+                    :checked="chatbotSettings.mark_bot_handled_as_read"
+                    @update:checked="chatbotSettings.mark_bot_handled_as_read = $event"
+                  />
+                </div>
+
                 <div class="flex justify-end pt-2">
                   <Button @click="saveMessagesSettings" :disabled="isSubmitting">
                     <Loader2 v-if="isSubmitting" class="mr-2 h-4 w-4 animate-spin" />
@@ -604,6 +621,17 @@ function removeEscalationUser(userId: string) {
                     <Switch
                       :checked="chatbotSettings.allow_automated_outside_hours"
                       @update:checked="chatbotSettings.allow_automated_outside_hours = $event"
+                    />
+                  </div>
+
+                  <div class="flex items-center justify-between py-2">
+                    <div>
+                      <p class="font-medium">{{ $t('chatbotSettings.skipTransferOutsideHours') }}</p>
+                      <p class="text-sm text-muted-foreground">{{ $t('chatbotSettings.skipTransferOutsideHoursDesc') }}</p>
+                    </div>
+                    <Switch
+                      :checked="chatbotSettings.skip_transfer_outside_hours"
+                      @update:checked="chatbotSettings.skip_transfer_outside_hours = $event"
                     />
                   </div>
                 </div>
