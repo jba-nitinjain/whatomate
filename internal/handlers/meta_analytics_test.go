@@ -536,7 +536,7 @@ func TestApp_GetMetaAnalytics_CurrencyLookupCached(t *testing.T) {
 	assert.Equal(t, int64(1), srv.CurrencyHits(), "currency must be served from Redis on the second call")
 }
 
-func TestApp_GetMetaAnalytics_CurrencyFallsBackToUSDWithoutCaching(t *testing.T) {
+func TestApp_GetMetaAnalytics_CurrencyFallsBackToINRWithoutCaching(t *testing.T) {
 	srv := newFakeWABAServer(t, pricingAnalyticsResp,
 		`{"error":{"message":"Invalid OAuth access token","code":190}}`, http.StatusBadRequest)
 	app := newAppForMetaAnalytics(t, srv.server.URL)
@@ -548,11 +548,11 @@ func TestApp_GetMetaAnalytics_CurrencyFallsBackToUSDWithoutCaching(t *testing.T)
 	from, to := dateRange()
 	accounts := fetchPricingAccounts(t, app, org.ID, user.ID, from, to)
 	require.Len(t, accounts, 1)
-	assert.Equal(t, "USD", accounts[0].Currency, "a Graph failure must fall back to USD")
+	assert.Equal(t, "INR", accounts[0].Currency, "a Graph failure must fall back to INR (main's fallback)")
 
 	// A transient failure must not pin the fallback in Redis for the full TTL.
 	_, err := app.Redis.Get(context.Background(), "meta:waba:currency:"+acc.BusinessID).Result()
-	assert.Error(t, err, "the USD fallback must not be cached")
+	assert.Error(t, err, "the INR fallback must not be cached")
 }
 
 func TestApp_GetMetaAnalytics_MessagingSkipsCurrencyLookup(t *testing.T) {

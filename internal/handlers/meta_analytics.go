@@ -28,8 +28,8 @@ const (
 	metaWABACurrencyCacheTTL    = 24 * time.Hour
 
 	// defaultAnalyticsCurrency is what cost is reported in when the WABA's own
-	// currency cannot be determined. It matches the pre-existing behaviour.
-	defaultAnalyticsCurrency = "USD"
+	// currency cannot be determined. INR matches our main branch's fallback.
+	defaultAnalyticsCurrency = "INR"
 )
 
 // MetaAnalyticsRequest represents the request parameters for Meta analytics
@@ -457,7 +457,7 @@ func (a *App) buildMetaAnalyticsCacheKey(orgID uuid.UUID, accountID, analyticsTy
 // is billed in, which is the currency Meta denominates analytics costs in.
 // The value is cached in Redis for a day.
 //
-// A lookup failure degrades to USD rather than failing the whole analytics
+// A lookup failure degrades to defaultAnalyticsCurrency (INR) rather than failing the whole analytics
 // request, and the fallback is deliberately not cached so a transient Graph
 // error does not pin the wrong currency for the full TTL.
 func (a *App) getWABACurrency(ctx context.Context, account *whatsapp.Account) string {

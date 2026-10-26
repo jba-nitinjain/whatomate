@@ -76,8 +76,8 @@ const accountComboboxOpen = ref(false)
 const activeTab = ref<MetaAnalyticsType>('analytics')
 const analyticsData = ref<MetaAnalyticsResponse[]>([])
 
-// Used only when Meta gives us no currency for an account.
-const DEFAULT_CURRENCY = 'USD'
+// Used only when Meta gives us no currency for an account (main's fallback).
+const DEFAULT_CURRENCY = 'INR'
 const isCached = ref(false)
 const isMobileViewport = ref(false)
 let mobileViewportMediaQuery: MediaQueryList | null = null
@@ -291,7 +291,7 @@ function groupPointsByCurrency<T>(extract: (account: MetaAnalyticsResponse) => T
   for (const account of analyticsData.value) {
     const points = extract(account)
     if (!points?.length) continue
-    const currency = account.currency || DEFAULT_CURRENCY
+    const currency = account.currency || getCurrencyCandidatesFromAccount(account)[0] || DEFAULT_CURRENCY
     const existing = byCurrency.get(currency)
     if (existing) {
       existing.push(...points)
