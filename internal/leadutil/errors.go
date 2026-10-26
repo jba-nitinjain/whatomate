@@ -3,99 +3,101 @@ package leadutil
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/nikyjain/whatomate/pkg/whatsapp"
 )
 
-// Classify classifies errors from Meta Graph API / WhatsApp Cloud API into retryable vs permanent failures
+// Meta error codes the lead pipeline reacts to.
+const (
+	CodeTokenInvalid     = 190
+	CodeMarketingOptOut  = 131050
+	codePermission       = 200
+	codePermissionLegacy = 10
+	codeNotFound         = 100
+)
+
+// metaCodeRe extracts the Meta error code from the message produced by
+// whatsapp.ParseMetaAPIError ("API error <code>: ..."). It is only used when
+// the typed error is no longer available, e.g. after a send failure was
+// persisted as text on the message row.
+var metaCodeRe = regexp.MustCompile(`API error (\d+):`)
+
+// MetaErrorCode returns the Meta error code and HTTP status carried by err.
+// It prefers the typed *whatsapp.GraphError and falls back to parsing the
+// canonical "API error <code>:" prefix. ok is false when no code is present.
+func MetaErrorCode(err error) (code, httpStatus int, ok bool) {
+	if err == nil {
+		return 0, 0, false
+	}
+	var ge *whatsapp.GraphError
+	if errors.As(err, &ge) {
+		return ge.Code, ge.StatusCode, ge.Code != 0 || ge.StatusCode != 0
+	}
+	if m := metaCodeRe.FindStringSubmatch(err.Error()); m != nil {
+		if c, convErr := strconv.Atoi(m[1]); convErr == nil {
+			return c, 0, true
+		}
+	}
+	return 0, 0, false
+}
+
+// Classify classifies errors from Meta Graph API / WhatsApp Cloud API into
+// retryable vs permanent failures and returns a human readable reason.
 func Classify(err error) (retryable bool, reason string) {
 	if err == nil {
 		return false, ""
 	}
-
 	errMsg := err.Error()
 
-	// Check if it's a typed MetaAPIError
-	var metaErr *whatsapp.MetaAPIError
-	if errors.As(err, &metaErr) {
-		code := metaErr.Error.Code
-		subcode := metaErr.Error.ErrorSubcode
-
-		// Permanent token invalidation
-		if code == 190 {
-			return false, fmt.Sprintf("Graph API token expired or invalid (code %d)", code)
-		}
-		// Leads retrieval permissions / Leads Access Manager
-		if code == 200 || code == 10 {
-			return false, fmt.Sprintf("Missing leads_retrieval permission or Leads Access Manager restriction (code %d)", code)
-		}
-		// Lead deleted / not found
-		if code == 100 {
-			return false, fmt.Sprintf("Lead or object not found (code %d)", code)
-		}
-
-		// Rate limiting (retryable)
-		if code == 4 || code == 17 || code == 32 || code == 613 {
-			return true, fmt.Sprintf("Graph API rate limit (code %d)", code)
-		}
-
-		// WhatsApp Cloud API errors
-		switch code {
-		case 131056, 130429:
-			// Pair rate limit or throughput limit
-			return true, fmt.Sprintf("WhatsApp rate/throughput limit (code %d)", code)
-		case 131026:
-			// Not on WhatsApp / undeliverable
-			return false, fmt.Sprintf("Recipient not on WhatsApp (code %d)", code)
-		case 132000, 132001, 132018:
-			// Template params mismatch or formatting error
-			return false, fmt.Sprintf("Template parameters or name invalid (code %d: %s)", code, metaErr.Error.Message)
-		case 131049:
-			// Marketing frequency cap
-			return false, fmt.Sprintf("Marketing frequency cap reached (code %d)", code)
-		case 131050:
-			// User stopped marketing messages
-			return false, fmt.Sprintf("User opted out of marketing (code %d)", code)
-		}
-
-		if subcode > 0 {
-			errMsg = fmt.Sprintf("Meta error %d (%d): %s", code, subcode, metaErr.Error.Message)
-		} else {
-			errMsg = fmt.Sprintf("Meta error %d: %s", code, metaErr.Error.Message)
+	code, status, hasCode := MetaErrorCode(err)
+	if hasCode && code != 0 {
+		if r, reason, known := classifyMetaCode(code, errMsg); known {
+			return r, reason
 		}
 	}
-
-	lower := strings.ToLower(errMsg)
-
-	// Check standard HTTP / network errors
-	if strings.Contains(lower, "timeout") ||
-		strings.Contains(lower, "connection refused") ||
-		strings.Contains(lower, "deadline exceeded") ||
-		strings.Contains(lower, "500") ||
-		strings.Contains(lower, "502") ||
-		strings.Contains(lower, "503") ||
-		strings.Contains(lower, "504") {
+	if hasCode && status >= 500 {
+		return true, errMsg
+	}
+	if hasCode && status == 429 {
 		return true, errMsg
 	}
 
-	// Meta codes inside error message string if not unmarshaled into MetaAPIError
-	if strings.Contains(lower, "190") {
-		return false, "Meta access token expired or invalid"
-	}
-	if strings.Contains(lower, "131026") {
-		return false, "Recipient not on WhatsApp"
-	}
-	if strings.Contains(lower, "131049") {
-		return false, "Marketing frequency cap reached"
-	}
-	if strings.Contains(lower, "131050") {
-		return false, "User opted out of marketing"
-	}
-	if strings.Contains(lower, "132000") || strings.Contains(lower, "132001") || strings.Contains(lower, "132018") {
-		return false, "Template parameter error"
+	lower := strings.ToLower(errMsg)
+	if strings.Contains(lower, "timeout") ||
+		strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "deadline exceeded") ||
+		strings.Contains(lower, "request failed") {
+		return true, errMsg
 	}
 
-	// Default fallback: non-retryable if unknown permanent error
+	// Unknown errors are treated as permanent so a bad lead cannot loop forever.
 	return false, errMsg
+}
+
+func classifyMetaCode(code int, errMsg string) (retryable bool, reason string, known bool) {
+	switch code {
+	case CodeTokenInvalid:
+		return false, fmt.Sprintf("Graph API token expired or invalid (code %d)", code), true
+	case codePermission, codePermissionLegacy:
+		return false, fmt.Sprintf("Missing leads_retrieval permission or Leads Access Manager restriction (code %d)", code), true
+	case codeNotFound:
+		return false, fmt.Sprintf("Lead or object not found (code %d)", code), true
+	case 4, 17, 32, 613:
+		return true, fmt.Sprintf("Graph API rate limit (code %d)", code), true
+	case 131056, 130429:
+		return true, fmt.Sprintf("WhatsApp rate/throughput limit (code %d)", code), true
+	case 131026:
+		return false, fmt.Sprintf("Recipient not on WhatsApp (code %d)", code), true
+	case 132000, 132001, 132018:
+		return false, fmt.Sprintf("Template parameters or name invalid: %s", errMsg), true
+	case 131049:
+		return false, fmt.Sprintf("Marketing frequency cap reached (code %d)", code), true
+	case CodeMarketingOptOut:
+		return false, fmt.Sprintf("User opted out of marketing (code %d)", code), true
+	}
+	return false, "", false
 }

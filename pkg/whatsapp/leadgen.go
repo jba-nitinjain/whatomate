@@ -29,11 +29,11 @@ type LeadDetails struct {
 
 // LeadForm represents a Leadgen form on a Facebook Page
 type LeadForm struct {
-	ID         string                 `json:"id"`
-	Name       string                 `json:"name"`
-	Status     string                 `json:"status"`
-	Questions  []LeadFormQuestion     `json:"questions"`
-	LeadsCount int                    `json:"leads_count"`
+	ID         string             `json:"id"`
+	Name       string             `json:"name"`
+	Status     string             `json:"status"`
+	Questions  []LeadFormQuestion `json:"questions"`
+	LeadsCount int                `json:"leads_count"`
 }
 
 // LeadFormQuestion represents a question in a leadgen form

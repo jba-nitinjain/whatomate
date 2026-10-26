@@ -67,9 +67,9 @@ func ParseMetaAPIError(statusCode int, respBody []byte) error {
 		if apiErr.Error.ErrorUserMsg != "" {
 			errMsg += " - " + apiErr.Error.ErrorUserMsg
 		}
-		return fmt.Errorf("%s", errMsg)
+		return &GraphError{StatusCode: statusCode, Code: apiErr.Error.Code, Subcode: apiErr.Error.ErrorSubcode, msg: errMsg}
 	}
-	return fmt.Errorf("API returned status %d: %s", statusCode, string(respBody))
+	return &GraphError{StatusCode: statusCode, msg: fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody))}
 }
 
 // TemplateResponse represents response from template submission
