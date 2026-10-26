@@ -1635,7 +1635,7 @@ func (a *App) resolveWhatsAppAccountByPhoneNumberIDGlobal(phoneNumberID string) 
 		return nil, fmt.Errorf("WhatsApp account not found for phone_number_id")
 	}
 	if len(accounts) > 1 {
-		return nil, fmt.Errorf("Multiple WhatsApp accounts found for phone_number_id; send X-Organization-ID")
+		return nil, fmt.Errorf("Multiple WhatsApp accounts found for phone_number_id; send X-Organization-ID") //nolint:staticcheck // ST1005: user-facing external API message, text must stay unchanged
 	}
 
 	account := accounts[0]
@@ -1679,7 +1679,7 @@ func (a *App) persistExternalMedia(mediaURL, mediaMimeType, mediaFilename string
 	if err != nil {
 		return "", "", "", fmt.Errorf("download media: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", "", "", fmt.Errorf("download media: unexpected status %d", resp.StatusCode)

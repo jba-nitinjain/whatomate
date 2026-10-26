@@ -148,14 +148,15 @@ func (a *App) refreshContactChatSnapshot(tx *gorm.DB, contactID uuid.UUID, now t
 		updates["last_inbound_at"] = lastInbound.Time
 	}
 
-	if latestErr == nil {
+	switch latestErr {
+	case nil:
 		updates["last_message_at"] = latest.CreatedAt
 		updates["last_message_preview"] = a.getPersistedMessagePreview(&latest)
 		updates["whats_app_account"] = latest.WhatsAppAccount
-	} else if latestErr == gorm.ErrRecordNotFound {
+	case gorm.ErrRecordNotFound:
 		updates["last_message_at"] = nil
 		updates["last_message_preview"] = ""
-	} else {
+	default:
 		return latestErr
 	}
 

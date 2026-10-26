@@ -63,13 +63,13 @@ func NormalizePhone(raw, defaultCC string) (string, error) {
 	natLen, hasNatLen := nationalLengths[defaultCC]
 	if hasNatLen {
 		// 4. Length == national length for defaultCC: prepend defaultCC
+		// 6. Otherwise (e.g. already starts with defaultCC and length ==
+		//    cc + national) the number is kept as-is.
 		if len(s) == natLen {
 			s = defaultCC + s
 		} else if len(s) == natLen+1 && strings.HasPrefix(s, "0") {
 			// 5. Length == national + 1 with leading 0: drop 0, prepend defaultCC
 			s = defaultCC + s[1:]
-		} else if strings.HasPrefix(s, defaultCC) && len(s) == len(defaultCC)+natLen {
-			// 6. Already starts with defaultCC and length == cc + national: keep
 		}
 	}
 

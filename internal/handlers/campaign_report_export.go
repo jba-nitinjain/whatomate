@@ -9,7 +9,6 @@ import (
 	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/nikyjain/whatomate/internal/utils"
 	"github.com/valyala/fasthttp"
-	"github.com/xuri/excelize/v2"
 	"github.com/zerodha/fastglue"
 )
 
@@ -116,12 +115,4 @@ func campaignReportFilename(name string, now time.Time) string {
 		cleanName = "campaign_report"
 	}
 	return fmt.Sprintf("%s_%s.xlsx", cleanName, now.Format("20060102_150405"))
-}
-
-func mustNewReportStyle(file *excelize.File, style *excelize.Style) int {
-	id, err := file.NewStyle(style)
-	if err != nil {
-		panic(err)
-	}
-	return id
 }

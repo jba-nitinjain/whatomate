@@ -18,8 +18,12 @@ const (
 
 func buildCampaignReportWorkbook(report campaignReportData) (*excelize.File, error) {
 	file := excelize.NewFile()
-	file.SetSheetName(file.GetSheetName(0), campaignReportSummarySheet)
-	file.NewSheet(campaignReportRecipientsSheet)
+	if err := file.SetSheetName(file.GetSheetName(0), campaignReportSummarySheet); err != nil {
+		return nil, err
+	}
+	if _, err := file.NewSheet(campaignReportRecipientsSheet); err != nil {
+		return nil, err
+	}
 
 	titleStyle, err := file.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Bold: true, Size: 16},

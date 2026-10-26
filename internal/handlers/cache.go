@@ -290,7 +290,7 @@ func (a *App) getLeadSourceCached(pageID string) (*models.LeadSource, error) {
 		if err := json.Unmarshal([]byte(cached), &cacheData); err == nil {
 			cacheData.LeadSource.PageAccessToken = cacheData.PageAccessToken
 			cacheData.LeadSource.AppSecret = cacheData.AppSecret
-			cacheData.LeadSource.DecryptSecrets(a.Config.App.EncryptionKey)
+			cacheData.DecryptSecrets(a.Config.App.EncryptionKey)
 			return &cacheData.LeadSource, nil
 		}
 	}
