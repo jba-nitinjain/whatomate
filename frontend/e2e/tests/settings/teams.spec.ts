@@ -139,13 +139,22 @@ test.describe('Teams - Detail Page CRUD', () => {
     await expectDeleteFromForm(page, '/settings/teams')
   })
 
-  test('should show metadata', async ({ page }) => {
-    await page.goto('/settings/teams')
+  test('should show metadata', async ({ page, request }) => {
+    // Seed our own team for the same reason as the activity-log test below:
+    // the first row can be deleted by a parallel worker before goto lands.
+    const api = new ApiHelper(request)
+    await api.login(SUPER_ADMIN.email, SUPER_ADMIN.password)
+    const teamResp = await api.post('/api/teams', {
+      name: scope.name('md-seed'),
+      description: 'seeded for metadata test',
+    })
+    expect(teamResp.ok(), `seed team: ${await teamResp.text()}`).toBe(true)
+    const team = (await teamResp.json()).data.team
+
+    await page.goto(`/settings/teams/${team.id}`)
     await page.waitForLoadState('networkidle')
 
-    if (await navigateToFirstItem(page)) {
-      await expectMetadataVisible(page)
-    }
+    await expectMetadataVisible(page)
   })
 
   test('should show activity log', async ({ page, request }) => {
