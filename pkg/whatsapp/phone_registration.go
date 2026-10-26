@@ -69,10 +69,7 @@ type RegisterPhoneNumberRequest struct {
 
 // GetPhoneNumberStatus retrieves phone number metadata needed for verification and registration flows.
 func (c *Client) GetPhoneNumberStatus(ctx context.Context, account *Account) (*PhoneNumberStatus, error) {
-	fields := "display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier,is_on_biz_app,platform_type"
-	url := fmt.Sprintf("%s/%s/%s?fields=%s", c.getBaseURL(), account.APIVersion, account.PhoneID, fields)
-
-	respBody, err := c.doRequest(ctx, http.MethodGet, url, nil, account.AccessToken)
+	respBody, err := c.getNodeFields(ctx, account.APIVersion, account.PhoneID, PhoneStatusFields, PhoneStatusFieldsLegacy, account.AccessToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get phone number status: %w", err)
 	}

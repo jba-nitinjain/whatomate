@@ -191,9 +191,7 @@ type CredentialsValidationResult struct {
 // that the phone number belongs to the specified business account
 func (c *Client) ValidateCredentials(ctx context.Context, phoneID, businessID, accessToken, apiVersion string) (*CredentialsValidationResult, error) {
 	// 1. Validate PhoneID
-	phoneURL := fmt.Sprintf("%s/%s/%s?fields=display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,is_on_biz_app,platform_type",
-		c.getBaseURL(), apiVersion, phoneID)
-	phoneBody, err := c.doRequest(ctx, http.MethodGet, phoneURL, nil, accessToken)
+	phoneBody, err := c.getNodeFields(ctx, apiVersion, phoneID, PhoneValidateFields, PhoneValidateFieldsLegacy, accessToken)
 	if err != nil {
 		return nil, fmt.Errorf("invalid phone_id or access_token: %w", err)
 	}
@@ -726,10 +724,7 @@ type PhoneNumberInfo struct {
 
 // GetPhoneNumberInfo retrieves information about a phone number
 func (c *Client) GetPhoneNumberInfo(ctx context.Context, phoneID, accessToken, apiVersion string) (*PhoneNumberInfo, error) {
-	url := fmt.Sprintf("%s/%s/%s?fields=verified_name,display_phone_number,quality_rating,is_on_biz_app,platform_type",
-		c.getBaseURL(), apiVersion, phoneID)
-
-	respBody, err := c.doRequest(ctx, http.MethodGet, url, nil, accessToken)
+	respBody, err := c.getNodeFields(ctx, apiVersion, phoneID, PhoneInfoFields, PhoneInfoFieldsLegacy, accessToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get phone number info: %w", err)
 	}

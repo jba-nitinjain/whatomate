@@ -97,6 +97,29 @@ func (a *App) buildOnboardingReadiness(session *models.WhatsAppOnboardingSession
 	return readiness
 }
 
+const (
+	accountConnectionFieldsLegacy = "display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier"
+	accountConnectionFields       = accountConnectionFieldsLegacy + ",whatsapp_business_manager_messaging_limit"
+)
+
+// getAccountPhoneFields GETs the account's phone-number node with fields.
+func (a *App) getAccountPhoneFields(account *models.WhatsAppAccount, fields string) (int, []byte, error) {
+	requestURL := fmt.Sprintf("%s/%s/%s?fields=%s",
+		a.Config.WhatsApp.BaseURL, account.APIVersion, account.PhoneID, fields)
+	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+account.AccessToken)
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	return resp.StatusCode, body, err
+}
+
 func (a *App) runAccountConnectionCheck(account *models.WhatsAppAccount) (*accountConnectionCheck, error) {
 	if err := a.validateAccountCredentials(account.PhoneID, account.BusinessID, account.AccessToken, account.APIVersion); err != nil {
 		return &accountConnectionCheck{
@@ -105,25 +128,21 @@ func (a *App) runAccountConnectionCheck(account *models.WhatsAppAccount) (*accou
 		}, nil
 	}
 
-	requestURL := fmt.Sprintf("%s/%s/%s?fields=display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier,whatsapp_business_manager_messaging_limit",
-		a.Config.WhatsApp.BaseURL, account.APIVersion, account.PhoneID)
-	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
-	if err != nil {
-		return nil, err
+	// Request the newer portfolio messaging-limit field too; if Meta rejects
+	// it as an unknown field, retry once with main's original field list so
+	// the connection check never fails because of it.
+	statusCode, body, err := a.getAccountPhoneFields(account, accountConnectionFields)
+	if err == nil && whatsapp.IsUnknownFieldResponse(statusCode, body) {
+		a.Log.Warn("Meta rejected extended connection-check fields, retrying with legacy list", "phone_id", account.PhoneID)
+		statusCode, body, err = a.getAccountPhoneFields(account, accountConnectionFieldsLegacy)
 	}
-	req.Header.Set("Authorization", "Bearer "+account.AccessToken)
-
-	resp, err := a.HTTPClient.Do(req)
 	if err != nil {
 		return &accountConnectionCheck{
 			Success: false,
 			Error:   "Failed to connect to WhatsApp API",
 		}, nil
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
+	if statusCode != http.StatusOK {
 		return &accountConnectionCheck{
 			Success: false,
 			Error:   "API error",
