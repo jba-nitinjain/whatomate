@@ -826,9 +826,12 @@ func TestWorker_sendTemplateMessage_WithDynamicURLButton(t *testing.T) {
 
 	templateData := capturedBody["template"].(map[string]interface{})
 	components := templateData["components"].([]interface{})
-	require.Len(t, components, 2)
+	// The body "Track your order" declares no variables, so Meta must receive
+	// no body component (an extra body parameter is rejected with #132000);
+	// only the dynamic URL button component is sent.
+	require.Len(t, components, 1)
 
-	buttonComponent := components[1].(map[string]interface{})
+	buttonComponent := components[0].(map[string]interface{})
 	assert.Equal(t, "button", buttonComponent["type"])
 	assert.Equal(t, "url", buttonComponent["sub_type"])
 	assert.Equal(t, "0", buttonComponent["index"])
@@ -1045,13 +1048,16 @@ func TestWorker_HandleRecipientJob_SkipsInactiveContact(t *testing.T) {
 	w := testWorker(t)
 	org, account, _, campaign, recipient := createTestCampaignData(t, w)
 
-	require.NoError(t, w.DB.Create(&models.Contact{
+	// Contact.IsActive has a gorm default of true, so a zero-value false is
+	// dropped on INSERT; create the contact first, then deactivate it.
+	inactiveContact := &models.Contact{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		OrganizationID: org.ID,
 		PhoneNumber:    recipient.PhoneNumber,
 		ProfileName:    "Inactive Contact",
-		IsActive:       false,
-	}).Error)
+	}
+	require.NoError(t, w.DB.Create(inactiveContact).Error)
+	require.NoError(t, w.DB.Model(inactiveContact).Update("is_active", false).Error)
 
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
@@ -1085,7 +1091,7 @@ func TestWorker_HandleRecipientJob_SkipsInactiveContact(t *testing.T) {
 	assert.Equal(t, "Contact is inactive", updatedRecipient.ErrorMessage)
 
 	var messageCount int64
-	require.NoError(t, w.DB.Model(&models.Message{}).Where("contact_id IN (SELECT id FROM contacts WHERE phone_number = ?)", recipient.PhoneNumber).Count(&messageCount).Error)
+	require.NoError(t, w.DB.Model(&models.Message{}).Where("contact_id IN (SELECT id FROM contacts WHERE organization_id = ? AND phone_number = ?)", org.ID, recipient.PhoneNumber).Count(&messageCount).Error)
 	assert.EqualValues(t, 0, messageCount)
 }
 

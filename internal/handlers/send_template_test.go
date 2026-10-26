@@ -737,9 +737,12 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		require.Len(t, mockServer.sentMessages, 1)
 		templateData := mockServer.sentMessages[0]["template"].(map[string]interface{})
 		components := templateData["components"].([]interface{})
-		require.Len(t, components, 2)
+		// The body "Track your order" declares no variables, so no body
+		// component may be sent (Meta rejects extra body parameters with
+		// #132000); only the dynamic URL button component is expected.
+		require.Len(t, components, 1)
 
-		buttonComp := components[1].(map[string]interface{})
+		buttonComp := components[0].(map[string]interface{})
 		assert.Equal(t, "button", buttonComp["type"])
 		assert.Equal(t, "url", buttonComp["sub_type"])
 		assert.Equal(t, "0", buttonComp["index"])

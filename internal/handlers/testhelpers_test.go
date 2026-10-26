@@ -76,3 +76,16 @@ func newTestApp(t *testing.T, opts ...appOption) *handlers.App {
 
 	return app
 }
+
+// newIsolatedTestApp is newTestApp backed by a private, freshly migrated
+// database schema (see testutil.SetupIsolatedTestDB). Use it for handlers whose
+// behaviour is deliberately global — super-admin listings and cross-org chat
+// repair scans — so sibling tests' rows can neither leak into assertions nor be
+// mutated by the code under test.
+func newIsolatedTestApp(t *testing.T, opts ...appOption) *handlers.App {
+	t.Helper()
+
+	app := newTestApp(t, opts...)
+	app.DB = testutil.SetupIsolatedTestDB(t)
+	return app
+}

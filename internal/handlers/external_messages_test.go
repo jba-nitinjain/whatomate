@@ -127,15 +127,18 @@ func TestApp_CreateExternalMessage(t *testing.T) {
 		adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)
 		superAdmin := testutil.CreateTestUser(t, app.DB, homeOrg.ID, testutil.WithRoleID(&adminRole.ID), testutil.WithSuperAdmin())
 
+		// Unique names/phone IDs: account names are globally unique and
+		// phone_number_id routing spans every organization in the shared DB.
+		suffix := uuid.NewString()[:8]
 		homeAccount := createTestAccount(t, app, homeOrg.ID)
-		homeAccount.PhoneID = "home-phone-id"
+		homeAccount.PhoneID = "home-phone-id-" + suffix
 		require.NoError(t, app.DB.Model(homeAccount).Update("phone_id", homeAccount.PhoneID).Error)
 
 		targetAccount := &models.WhatsAppAccount{
 			BaseModel:          models.BaseModel{ID: uuid.New()},
 			OrganizationID:     targetOrg.ID,
-			Name:               "target-account",
-			PhoneID:            "target-phone-id",
+			Name:               "target-account-" + suffix,
+			PhoneID:            "target-phone-id-" + suffix,
 			BusinessID:         "target-business-id",
 			AccessToken:        "test-token",
 			WebhookVerifyToken: "webhook-token",

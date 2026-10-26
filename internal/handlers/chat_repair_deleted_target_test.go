@@ -15,7 +15,7 @@ import (
 func TestApp_ApplyChatRepairCandidates_RestoresDeletedMergeTarget(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	homeOrg := testutil.CreateTestOrganization(t, app.DB)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
 	adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)

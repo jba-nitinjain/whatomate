@@ -582,7 +582,7 @@ func TestAuthWithDB_APIKey_SuperAdminKey_OmitsOrgContext(t *testing.T) {
 	org := testutil.CreateTestOrganization(t, db)
 	admin := testutil.CreateTestUser(t, db, org.ID, testutil.WithEmail(testutil.UniqueEmail("mw-super-admin")), testutil.WithSuperAdmin())
 
-	plainKey := "whm_" + strings.Repeat("a", 32)
+	plainKey := "whm_" + strings.ReplaceAll(uuid.NewString(), "-", "") // unique per run: lookup is by key prefix
 	hash, err := bcrypt.GenerateFromPassword([]byte(plainKey), bcrypt.DefaultCost)
 	require.NoError(t, err)
 
@@ -616,7 +616,7 @@ func TestAuthWithDB_APIKey_OrgScopedKey_SetsOrgContext(t *testing.T) {
 	org := testutil.CreateTestOrganization(t, db)
 	user := testutil.CreateTestUser(t, db, org.ID, testutil.WithEmail(testutil.UniqueEmail("mw-org-key")))
 
-	plainKey := "whm_" + strings.Repeat("b", 32)
+	plainKey := "whm_" + strings.ReplaceAll(uuid.NewString(), "-", "") // unique per run: lookup is by key prefix
 	hash, err := bcrypt.GenerateFromPassword([]byte(plainKey), bcrypt.DefaultCost)
 	require.NoError(t, err)
 

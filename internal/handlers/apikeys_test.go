@@ -393,7 +393,7 @@ func TestApp_ListAPIKeys_ExcludesDeletedKeys(t *testing.T) {
 func TestApp_ListAPIKeys_SuperAdmin_SeesAllOrgs(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	org1 := testutil.CreateTestOrganization(t, app.DB)
 	org2 := testutil.CreateTestOrganization(t, app.DB)
 	admin := testutil.CreateTestUser(t, app.DB, org1.ID, testutil.WithEmail(testutil.UniqueEmail("list-super-admin")), testutil.WithSuperAdmin())
@@ -417,12 +417,10 @@ func TestApp_ListAPIKeys_SuperAdmin_SeesAllOrgs(t *testing.T) {
 	}
 	err = json.Unmarshal(testutil.GetResponseBody(req), &resp)
 	require.NoError(t, err)
-	// GreaterOrEqual (not Equal) because this handlers test package shares one
-	// database across all parallel tests with no per-test isolation: the
-	// super-admin listing is intentionally global (no org filter), so it may
-	// also see keys created by sibling tests running concurrently in the same
-	// `go test` invocation. What matters here is that our 3 keys are present.
-	assert.GreaterOrEqual(t, resp.Data.Total, 3)
+	// The super-admin listing is intentionally global (no org filter). This
+	// test runs against an isolated schema, so exactly our 3 keys are visible.
+	assert.Equal(t, 3, resp.Data.Total)
+	assert.Len(t, resp.Data.APIKeys, 3)
 
 	var sawOrg1, sawOrg2, sawPlatform bool
 	for _, k := range resp.Data.APIKeys {

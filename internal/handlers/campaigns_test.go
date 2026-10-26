@@ -971,7 +971,21 @@ func TestApp_ExportCampaignReport_Success(t *testing.T) {
 	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusCompleted)
 
 	recipientOne := createTestRecipient(t, app, campaign.ID, "+1234567890", models.MessageStatusDelivered)
-	messageID := uuid.New()
+	// bulk_message_recipients.message_id is a foreign key to messages, so the
+	// referenced chat message must exist.
+	contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
+	message := &models.Message{
+		BaseModel:         models.BaseModel{ID: uuid.New()},
+		OrganizationID:    org.ID,
+		WhatsAppAccount:   account.Name,
+		ContactID:         contact.ID,
+		Direction:         models.DirectionOutgoing,
+		MessageType:       models.MessageTypeTemplate,
+		Status:            models.MessageStatusDelivered,
+		WhatsAppMessageID: "wamid.test-1-" + uuid.NewString()[:8],
+	}
+	require.NoError(t, app.DB.Create(message).Error)
+	messageID := message.ID
 	sentAt := time.Date(2026, time.January, 2, 15, 4, 5, 0, time.UTC)
 	deliveredAt := sentAt.Add(2 * time.Minute)
 	require.NoError(t, app.DB.Model(recipientOne).Updates(map[string]interface{}{
@@ -1414,13 +1428,16 @@ func TestApp_RetryFailed_SkipsInactiveContacts(t *testing.T) {
 	campaign := createTestCampaign(t, app, org.ID, template.ID, user.ID, account.Name, models.CampaignStatusCompleted)
 	inactiveRecipient := createTestRecipient(t, app, campaign.ID, "1112223333", models.MessageStatusFailed)
 	retryableRecipient := createTestRecipient(t, app, campaign.ID, "4445556666", models.MessageStatusFailed)
-	require.NoError(t, app.DB.Create(&models.Contact{
+	// Contact.IsActive has a gorm default of true, so a zero-value false is
+	// dropped on INSERT; create the contact first, then deactivate it.
+	inactiveContact := &models.Contact{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		OrganizationID: org.ID,
 		PhoneNumber:    inactiveRecipient.PhoneNumber,
 		ProfileName:    "Inactive Contact",
-		IsActive:       false,
-	}).Error)
+	}
+	require.NoError(t, app.DB.Create(inactiveContact).Error)
+	require.NoError(t, app.DB.Model(inactiveContact).Update("is_active", false).Error)
 
 	req := testutil.NewJSONRequest(t, nil)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1483,13 +1500,16 @@ func TestApp_ResendCampaign_CreatesNewCampaignAndQueuesActiveRecipients(t *testi
 	activeRecipient := createTestRecipient(t, app, source.ID, "1112223333", models.MessageStatusSent)
 	inactiveRecipient := createTestRecipient(t, app, source.ID, "4445556666", models.MessageStatusFailed)
 	require.NoError(t, app.DB.Model(source).Update("total_recipients", 2).Error)
-	require.NoError(t, app.DB.Create(&models.Contact{
+	// Contact.IsActive has a gorm default of true, so a zero-value false is
+	// dropped on INSERT; create the contact first, then deactivate it.
+	inactiveContact := &models.Contact{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		OrganizationID: org.ID,
 		PhoneNumber:    inactiveRecipient.PhoneNumber,
 		ProfileName:    "Inactive Contact",
-		IsActive:       false,
-	}).Error)
+	}
+	require.NoError(t, app.DB.Create(inactiveContact).Error)
+	require.NoError(t, app.DB.Model(inactiveContact).Update("is_active", false).Error)
 
 	req := testutil.NewJSONRequest(t, nil)
 	testutil.SetAuthContext(req, org.ID, user.ID)

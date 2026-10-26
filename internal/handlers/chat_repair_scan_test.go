@@ -14,7 +14,7 @@ import (
 func TestApp_ScanChatRepairCandidates_AutoAppliesMove(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	homeOrg := testutil.CreateTestOrganization(t, app.DB)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
 	adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)
@@ -52,7 +52,7 @@ func TestApp_ScanChatRepairCandidates_AutoAppliesMove(t *testing.T) {
 func TestApp_ScanChatRepairCandidates_AutoAppliesSameLocationMessageDrift(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
 	driftOrg := testutil.CreateTestOrganization(t, app.DB)
 	adminRole := testutil.CreateAdminRole(t, app.DB, targetOrg.ID)
@@ -105,7 +105,7 @@ func TestApp_ScanChatRepairCandidates_AutoAppliesSameLocationMessageDrift(t *tes
 func TestApp_PreviewChatRepairCandidates_SameLocationAlignedChatIsSkipped(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
 	adminRole := testutil.CreateAdminRole(t, app.DB, targetOrg.ID)
 	superAdmin := testutil.CreateTestUser(t, app.DB, targetOrg.ID, testutil.WithRoleID(&adminRole.ID), testutil.WithSuperAdmin())
@@ -132,7 +132,7 @@ func TestApp_PreviewChatRepairCandidates_SameLocationAlignedChatIsSkipped(t *tes
 func TestApp_ScanChatRepairCandidates_LeavesManualMergesUnchanged(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	homeOrg := testutil.CreateTestOrganization(t, app.DB)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
 	adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)
@@ -159,7 +159,7 @@ func TestApp_ScanChatRepairCandidates_LeavesManualMergesUnchanged(t *testing.T) 
 func TestApp_ScanChatRepairCandidates_LeavesConflictsUnchanged(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	homeOrg := testutil.CreateTestOrganization(t, app.DB)
 	otherSourceOrg := testutil.CreateTestOrganization(t, app.DB)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
