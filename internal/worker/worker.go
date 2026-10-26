@@ -116,6 +116,7 @@ func (w *Worker) HandleRecipientJob(ctx context.Context, job *queue.RecipientJob
 		w.Log.Info("Skipping marketing message for opted-out contact", "contact_id", contact.ID, "phone", job.PhoneNumber)
 		w.updateRecipientStatus(job.RecipientID, models.MessageStatusFailed, "", "Contact opted out of marketing messages")
 		w.incrementCampaignCount(job.CampaignID, "failed_count")
+		w.checkCampaignCompletion(ctx, job.CampaignID, job.OrganizationID)
 		return nil
 	}
 
