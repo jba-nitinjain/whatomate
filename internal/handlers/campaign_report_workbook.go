@@ -13,7 +13,7 @@ import (
 const (
 	campaignReportSummarySheet    = "Summary"
 	campaignReportRecipientsSheet = "Recipients"
-	campaignReportTimeLayout      = "2006-01-02 15:04:05"
+	campaignReportTimeLayout      = "02/01/2006 15:04:05" // dd/mm/yyyy HH:mm:ss for human readers
 )
 
 func buildCampaignReportWorkbook(report campaignReportData) (*excelize.File, error) {

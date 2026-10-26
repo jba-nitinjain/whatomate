@@ -1029,7 +1029,7 @@ func TestApp_ExportCampaignReport_Success(t *testing.T) {
 
 	sentAtCell, err := workbook.GetCellValue("Recipients", "D2")
 	require.NoError(t, err)
-	assert.Equal(t, "2026-01-02 20:34:05", sentAtCell)
+	assert.Equal(t, "02/01/2026 20:34:05", sentAtCell) // dd/mm/yyyy, org timezone
 
 	paramsCell, err := workbook.GetCellValue("Recipients", "J2")
 	require.NoError(t, err)
