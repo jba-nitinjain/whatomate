@@ -295,6 +295,19 @@ func getIndexes() []string {
 		// IVR flows
 		`CREATE INDEX IF NOT EXISTS idx_ivr_flows_org_active ON ivr_flows(organization_id, whatsapp_account, is_active)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_ivr_flows_org_call_start ON ivr_flows(organization_id, whatsapp_account) WHERE is_call_start = true AND is_active = true AND deleted_at IS NULL`,
+		// Lead Ads: partial unique indexes over live rows so a soft-deleted page
+		// or form mapping can be reconnected. Drop the full unique indexes an early
+		// build of the feature created from GORM tags.
+		`DROP INDEX IF EXISTS idx_lead_src_org_page`,
+		`DROP INDEX IF EXISTS idx_lead_sources_webhook_verify_token`,
+		`DROP INDEX IF EXISTS idx_lfm_src_form`,
+		// Leads must never block hard deletes of messages/contacts/templates.
+		`ALTER TABLE leads DROP CONSTRAINT IF EXISTS fk_leads_contact`,
+		`ALTER TABLE leads DROP CONSTRAINT IF EXISTS fk_leads_message`,
+		`ALTER TABLE lead_form_mappings DROP CONSTRAINT IF EXISTS fk_lead_form_mappings_template`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_lead_sources_page_live ON lead_sources(page_id) WHERE deleted_at IS NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_lead_sources_verify_token_live ON lead_sources(webhook_verify_token) WHERE deleted_at IS NULL AND webhook_verify_token <> ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_lead_form_mappings_source_form_live ON lead_form_mappings(lead_source_id, form_id) WHERE deleted_at IS NULL`,
 	}
 }
 

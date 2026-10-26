@@ -7,17 +7,20 @@ import (
 	"github.com/nikyjain/whatomate/internal/crypto"
 )
 
-// LeadSource represents one connected Facebook Page
+// LeadSource represents one connected Facebook Page.
+// Uniqueness of page_id and webhook_verify_token is enforced by partial unique
+// indexes (WHERE deleted_at IS NULL) created in database.getIndexes, so a page
+// can be reconnected after its previous source was soft-deleted.
 type LeadSource struct {
 	BaseModel
 	OrganizationID     uuid.UUID  `gorm:"type:uuid;index;not null" json:"organization_id"`
 	Name               string     `gorm:"size:100;not null" json:"name"`
-	PageID             string     `gorm:"size:50;not null;uniqueIndex:idx_lead_src_org_page" json:"page_id"`
+	PageID             string     `gorm:"size:50;not null" json:"page_id"`
 	PageName           string     `gorm:"size:255" json:"page_name"`
 	AppID              string     `gorm:"size:100" json:"app_id"`
-	AppSecret          string     `gorm:"size:255" json:"-"` // encrypted; HMAC verify
+	AppSecret          string     `gorm:"size:255" json:"-"`           // encrypted; HMAC verify
 	PageAccessToken    string     `gorm:"type:text;not null" json:"-"` // encrypted
-	WebhookVerifyToken string     `gorm:"size:64;uniqueIndex" json:"webhook_verify_token"`
+	WebhookVerifyToken string     `gorm:"size:64" json:"webhook_verify_token"`
 	APIVersion         string     `gorm:"size:20;default:'v21.0'" json:"api_version"`
 	DefaultCountryCode string     `gorm:"size:4;default:'91'" json:"default_country_code"`
 	IsActive           bool       `gorm:"default:true" json:"is_active"`
@@ -37,20 +40,22 @@ func (s *LeadSource) DecryptSecrets(encryptionKey string) {
 }
 
 // EncryptSecrets encrypts the plain PageAccessToken and AppSecret fields.
-func (s *LeadSource) EncryptSecrets(encryptionKey string) {
-	crypto.EncryptFields(encryptionKey, &s.PageAccessToken, &s.AppSecret)
+func (s *LeadSource) EncryptSecrets(encryptionKey string) error {
+	return crypto.EncryptFields(encryptionKey, &s.PageAccessToken, &s.AppSecret)
 }
 
-// LeadFormMapping defines what to do for leads from one form (FormID "*" = page default)
+// LeadFormMapping defines what to do for leads from one form (FormID "*" = page default).
+// (lead_source_id, form_id) uniqueness is a partial unique index over live rows
+// created in database.getIndexes.
 type LeadFormMapping struct {
 	BaseModel
 	OrganizationID   uuid.UUID   `gorm:"type:uuid;index;not null" json:"organization_id"`
-	LeadSourceID     uuid.UUID   `gorm:"type:uuid;not null;uniqueIndex:idx_lfm_src_form" json:"lead_source_id"`
-	FormID           string      `gorm:"size:50;not null;uniqueIndex:idx_lfm_src_form" json:"form_id"`
+	LeadSourceID     uuid.UUID   `gorm:"type:uuid;not null;index" json:"lead_source_id"`
+	FormID           string      `gorm:"size:50;not null" json:"form_id"`
 	FormName         string      `gorm:"size:255" json:"form_name"`
 	IsActive         bool        `gorm:"default:true" json:"is_active"`
-	WhatsAppAccount  string      `gorm:"size:100" json:"whatsapp_account"` // WhatsAppAccount.Name; "" = default outgoing
-	TemplateID       *uuid.UUID  `gorm:"type:uuid" json:"template_id"`     // nil = store lead, don't send
+	WhatsAppAccount  string      `gorm:"size:100" json:"whatsapp_account"`               // WhatsAppAccount.Name; "" = default outgoing
+	TemplateID       *uuid.UUID  `gorm:"type:uuid" json:"template_id"`                   // nil = store lead, don't send
 	TemplateParams   JSONB       `gorm:"type:jsonb;default:'{}'" json:"template_params"` // {"1":"{{lead.first_name}}"}
 	HeaderParams     JSONB       `gorm:"type:jsonb;default:'{}'" json:"header_params"`
 	ButtonParams     JSONB       `gorm:"type:jsonb;default:'{}'" json:"button_params"`
@@ -66,7 +71,7 @@ type LeadFormMapping struct {
 	SkipIfOptedOut   bool        `gorm:"default:true" json:"skip_if_opted_out"`
 
 	// Relations
-	Template *Template `gorm:"foreignKey:TemplateID" json:"template,omitempty"`
+	Template *Template `gorm:"foreignKey:TemplateID;constraint:-" json:"template,omitempty"`
 }
 
 func (LeadFormMapping) TableName() string {
@@ -101,11 +106,13 @@ type Lead struct {
 	LeadCreatedAt  time.Time  `gorm:"index:idx_lead_org_created" json:"lead_created_at"` // Meta created_time
 	SentAt         *time.Time `json:"sent_at,omitempty"`
 
-	// Relations
+	// Relations. Contact and Message deliberately have no DB foreign key:
+	// existing retention/cleanup jobs hard-delete messages and contacts, and a
+	// lead must never block them.
 	LeadSource *LeadSource      `gorm:"foreignKey:LeadSourceID" json:"lead_source,omitempty"`
 	Mapping    *LeadFormMapping `gorm:"foreignKey:MappingID" json:"mapping,omitempty"`
-	Contact    *Contact         `gorm:"foreignKey:ContactID" json:"contact,omitempty"`
-	Message    *Message         `gorm:"foreignKey:MessageID" json:"message,omitempty"`
+	Contact    *Contact         `gorm:"foreignKey:ContactID;constraint:-" json:"contact,omitempty"`
+	Message    *Message         `gorm:"foreignKey:MessageID;constraint:-" json:"message,omitempty"`
 }
 
 func (Lead) TableName() string {
