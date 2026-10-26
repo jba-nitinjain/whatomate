@@ -629,7 +629,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 		g.Before(func(r *fastglue.Request) *fastglue.Request {
 			path := string(r.RequestCtx.Path())
 			if len(path) > 4 && path[:4] == "/api" {
-				if isRateLimitExemptIntegrationRequest(r, path) {
+				if isRateLimitExemptProviderCallback(path) || isRateLimitExemptIntegrationRequest(r, path) {
 					return r
 				}
 				return apiRL(r)
@@ -1098,6 +1098,24 @@ var rateLimitExemptIntegrationPaths = []string{
 	"/api/messages/external",
 	"/api/messages/template",
 	"/api/messages/status",
+}
+
+// rateLimitExemptProviderCallbackPaths are inbound callbacks from Meta (the
+// WhatsApp webhook carrying messages, statuses and calling events, and the
+// Lead Ads leadgen webhook). They arrive unauthenticated from a small pool of
+// Meta IPs, so the per-user/IP API limiter would throttle legitimate bursts
+// and make Meta retry or drop deliveries. Both GET (verification) and POST
+// are exempt; they are protected by the verify token and payload signature.
+var rateLimitExemptProviderCallbackPaths = map[string]struct{}{
+	"/api/webhook":         {},
+	"/api/webhook/leadgen": {},
+}
+
+// isRateLimitExemptProviderCallback reports whether path is a provider
+// callback that must bypass the global API rate limiter.
+func isRateLimitExemptProviderCallback(path string) bool {
+	_, ok := rateLimitExemptProviderCallbackPaths[strings.TrimSuffix(path, "/")]
+	return ok
 }
 
 // isRateLimitExemptIntegrationRequest reports whether the request is an
