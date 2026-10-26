@@ -1,5 +1,6 @@
 import { ref, computed, watch } from 'vue'
 import { CalendarDate } from '@internationalized/date'
+import { formatDayMonthYear } from '@/lib/utils'
 
 export type TimeRangePreset = 'today' | '7days' | '30days' | 'this_month' | 'custom'
 
@@ -98,7 +99,7 @@ export function useDateRange(options: UseDateRangeOptions = {}) {
     if (selectedRange.value === 'custom' && customDateRange.value.start && customDateRange.value.end) {
       const s = customDateRange.value.start
       const e = customDateRange.value.end
-      return `${s.month}/${s.day}/${s.year} - ${e.month}/${e.day}/${e.year}`
+      return `${formatDayMonthYear(s.year, s.month, s.day)} - ${formatDayMonthYear(e.year, e.month, e.day)}`
     }
     return ''
   })

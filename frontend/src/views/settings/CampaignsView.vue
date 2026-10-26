@@ -78,7 +78,7 @@ import {
   FileText,
   Copy
 } from 'lucide-vue-next'
-import { formatDate } from '@/lib/utils'
+import { formatDate, formatDayMonthYear } from '@/lib/utils'
 import { useDebounceFn } from '@vueuse/core'
 
 const { t } = useI18n()
@@ -275,7 +275,7 @@ const formatDateRangeDisplay = computed(() => {
   if (selectedRange.value === 'custom' && customDateRange.value.start && customDateRange.value.end) {
     const start = customDateRange.value.start
     const end = customDateRange.value.end
-    return `${start.month}/${start.day}/${start.year} - ${end.month}/${end.day}/${end.year}`
+    return `${formatDayMonthYear(start.year, start.month, start.day)} - ${formatDayMonthYear(end.year, end.month, end.day)}`
   }
   return ''
 })

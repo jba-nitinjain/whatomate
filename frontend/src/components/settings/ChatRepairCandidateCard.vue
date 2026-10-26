@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { type ChatRepairCandidate } from "@/services/api";
 import { Loader2 } from "lucide-vue-next";
+import { formatDateTime } from "@/lib/utils";
 
 const props = defineProps<{
   candidate: ChatRepairCandidate;
@@ -22,7 +23,7 @@ const { t } = useI18n();
 function formatDate(value?: string) {
   if (!value) return t("settings.chatRepairNoTimestamp");
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? value : formatDateTime(date);
 }
 
 function actionVariant(action: ChatRepairCandidate["action"]) {

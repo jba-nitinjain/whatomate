@@ -98,7 +98,7 @@ import {
   Info,
   Trash2
 } from 'lucide-vue-next'
-import { getInitials, getAvatarGradient } from '@/lib/utils'
+import { getInitials, getAvatarGradient, formatDate } from '@/lib/utils'
 import { useColorMode } from '@/composables/useColorMode'
 import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import CannedResponsePicker from '@/components/chat/CannedResponsePicker.vue'
@@ -1483,7 +1483,7 @@ function formatContactTime(dateStr?: string) {
   } else if (diffDays < 7) {
     return date.toLocaleDateString('en-US', { weekday: 'short' })
   }
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return formatDate(date)
 }
 
 function getDateLabel(dateStr: string): string {
@@ -1498,7 +1498,7 @@ function getDateLabel(dateStr: string): string {
   } else if (diffDays === 1) {
     return 'Yesterday'
   }
-  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+  return `${date.toLocaleDateString('en-US', { weekday: 'long' })}, ${formatDate(date)}`
 }
 
 function shouldShowDateSeparator(index: number): boolean {

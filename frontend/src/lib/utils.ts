@@ -5,14 +5,29 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatDate(date: string | Date, options?: Intl.DateTimeFormatOptions): string {
+type DateInput = string | Date | null | undefined
+
+function toValidDate(date: DateInput): Date | null {
+  if (date === null || date === undefined || date === '') return null
   const d = typeof date === 'string' ? new Date(date) : date
-  return d.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    ...options
-  })
+  return isNaN(d.getTime()) ? null : d
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** Format calendar parts (month is 1-based) as dd/mm/yyyy. */
+export function formatDayMonthYear(year: number, month: number, day: number): string {
+  return `${pad2(day)}/${pad2(month)}/${year}`
+}
+
+/**
+ * Format a date for display as dd/mm/yyyy (local time).
+ * Store/transmit ISO; only format at display. Returns '' for empty/invalid input.
+ */
+export function formatDate(date: DateInput): string {
+  const d = toValidDate(date)
+  if (!d) return ''
+  return formatDayMonthYear(d.getFullYear(), d.getMonth() + 1, d.getDate())
 }
 
 export function formatTime(date: string | Date): string {
@@ -23,8 +38,18 @@ export function formatTime(date: string | Date): string {
   })
 }
 
-export function formatDateTime(date: string | Date): string {
-  return `${formatDate(date)} ${formatTime(date)}`
+/** Format a date-time for display as dd/mm/yyyy HH:mm (local time, 24-hour). */
+export function formatDateTime(date: DateInput): string {
+  const d = toValidDate(date)
+  if (!d) return ''
+  return `${formatDate(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+/** Format a date as dd/mm (local time) for compact chart axis labels. */
+export function formatDayMonth(date: DateInput): string {
+  const d = toValidDate(date)
+  if (!d) return ''
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`
 }
 
 export function truncate(str: string, length: number): string {
@@ -85,14 +110,9 @@ export function formatLabel(key: string): string {
     .replace(/\b\w/g, c => c.toUpperCase())
 }
 
-/** Format a date as dd/mm/yyyy for display. Store/transmit ISO; format only here. */
+/** Format a date as dd/mm/yyyy for display. Alias of formatDate, kept for existing callers. */
 export function formatDateDDMMYYYY(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date
-  if (isNaN(d.getTime())) return ''
-  const day = String(d.getDate()).padStart(2, '0')
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const year = d.getFullYear()
-  return `${day}/${month}/${year}`
+  return formatDate(date)
 }
 
 /** Format a date as dd/mm/yyyy HH:mm in IST (Asia/Kolkata) for display. */

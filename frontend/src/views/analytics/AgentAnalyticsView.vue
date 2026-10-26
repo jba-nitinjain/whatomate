@@ -32,6 +32,7 @@ import {
 // Centralized Chart.js setup (registered once)
 import { Line, Bar, Doughnut } from '@/lib/charts'
 import { useDateRange } from '@/composables/useDateRange'
+import { formatDayMonth } from '@/lib/utils'
 
 interface AgentAnalyticsSummary {
   total_transfers_handled: number
@@ -180,10 +181,7 @@ const trendChartData = computed(() => {
   }
 
   return {
-    labels: analytics.value.trend_data.map(t => {
-      const date = new Date(t.date)
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    }),
+    labels: analytics.value.trend_data.map(t => formatDayMonth(t.date)),
     datasets: [
       {
         label: t('agentAnalytics.transfersHandled'),

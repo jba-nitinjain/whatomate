@@ -21,6 +21,7 @@ import { toast } from 'vue-sonner'
 import { useRouter } from 'vue-router'
 import { UserX, Play, MessageSquare, User, Clock, Loader2, Users, UserPlus, AlertTriangle, CheckCircle2, XCircle } from 'lucide-vue-next'
 import { getErrorMessage } from '@/lib/api-utils'
+import { formatDateTime } from '@/lib/utils'
 
 const { t } = useI18n()
 
@@ -269,7 +270,7 @@ function viewChat(transfer: AgentTransfer) {
 }
 
 function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleString()
+  return formatDateTime(dateStr)
 }
 
 function getSourceBadge(source: string) {

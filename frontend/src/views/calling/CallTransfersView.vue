@@ -13,6 +13,7 @@ import DataTable from '@/components/shared/DataTable.vue'
 import type { Column } from '@/components/shared/types'
 import { useViewRefresh } from '@/composables/useViewRefresh'
 import { ErrorState } from '@/components/shared'
+import { formatDateTime } from '@/lib/utils'
 
 const { t } = useI18n()
 const store = useCallingStore()
@@ -90,7 +91,7 @@ function formatDuration(seconds: number): string {
 
 function formatDate(dateStr?: string): string {
   if (!dateStr) return '-'
-  return new Date(dateStr).toLocaleString()
+  return formatDateTime(dateStr)
 }
 
 function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {

@@ -61,6 +61,7 @@ import {
 import { Line, Bar } from '@/lib/charts'
 import { toast } from 'vue-sonner'
 import { useDateRange } from '@/composables/useDateRange'
+import { formatDate, formatDayMonth } from '@/lib/utils'
 
 
 const { t } = useI18n()
@@ -636,9 +637,9 @@ function formatTimestamp(ts: number): string {
   if (selectedGranularity.value === 'HALF_HOUR') {
     return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
   } else if (selectedGranularity.value === 'MONTH') {
-    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+    return formatDate(date).slice(3) // mm/yyyy
   }
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return formatDayMonth(date)
 }
 
 function formatCategory(category: string): string {
