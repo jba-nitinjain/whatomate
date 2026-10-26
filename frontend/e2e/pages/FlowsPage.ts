@@ -313,23 +313,19 @@ export class ChatbotFlowsPage extends BasePage {
   }
 }
 
-/**
- * Page object for the graph-native chatbot flow editor.
- *
- * Editor layout (post-refactor):
- *   header → node palette (toolbar) → canvas | right panel
- *
- * The palette adds nodes; clicking a palette button creates a new node
- * of that type *and* selects it, so the right-panel ChatNodeProperties
- * becomes visible. There is no left-side step list anymore.
- */
 export class ChatbotFlowBuilderPage extends BasePage {
-  readonly paletteToolbar: Locator
+  // Left panel
+  readonly stepsHeading: Locator
+  readonly addStepButton: Locator
+
+  // Right panel
+  readonly propertiesHeading: Locator
 
   constructor(page: Page) {
     super(page)
-    // The "Add node:" label uniquely identifies the palette row.
-    this.paletteToolbar = page.locator('div', { hasText: /^Add node:/ }).first()
+    this.stepsHeading = page.getByRole('heading', { name: 'Steps' })
+    this.addStepButton = page.getByRole('button', { name: /^Add$/ })
+    this.propertiesHeading = page.getByRole('heading', { name: /Step Properties|Flow Settings/i })
   }
 
   async gotoNew() {
@@ -337,52 +333,82 @@ export class ChatbotFlowBuilderPage extends BasePage {
     await this.page.waitForLoadState('networkidle')
   }
 
-  /** Click a palette button to add a new node (and auto-select it). */
-  async addNode(type: 'Text' | 'Buttons' | 'API' | 'WA Flow' | 'Transfer' | 'Condition' | 'Timing' | 'Go to Flow' | 'End') {
-    await this.paletteToolbar.getByRole('button', { name: type, exact: true }).click()
+  /** Click "Add" in the steps panel to create a new step */
+  async addStep() {
+    await this.addStepButton.click()
   }
 
-  /** "Button Options ({n}/{max})" label inside the right-panel buttons section. */
+  /** Click on a step in the left panel by its index (1-based badge) */
+  async selectStep(index: number) {
+    await this.page.locator('.font-mono').filter({ hasText: String(index) }).click()
+  }
+
+  /** Click a message type button in the center preview palette */
+  async selectMessageType(type: 'Text' | 'Buttons' | 'List' | 'API' | 'Flow' | 'Transfer') {
+    await this.page.getByRole('button', { name: type, exact: true }).click()
+  }
+
+  /** Get the step properties panel (right side) */
+  get propertiesPanel() {
+    return this.page.locator('div').filter({ has: this.propertiesHeading }).first()
+  }
+
+  /** Get the "Button Options" label in step properties */
   get buttonOptionsLabel() {
     return this.page.getByText(/Button Options/i)
   }
 
-  /** Right-panel "Body" textarea (used by buttons / prompt / transfer / etc.). */
-  get bodyTextarea() {
-    return this.page.getByPlaceholder(/Message shown above the buttons|Enter your message|Ask the user|Connecting you/i).first()
-  }
-
-  /** Message textarea on a Text/message node. */
-  get messageTextarea() {
-    return this.page.getByPlaceholder(/Enter your message/i)
-  }
-
-  /** Reply add-button in the buttons config. */
+  /** Get the "Reply" add-button in the buttons config section */
   get addReplyButton() {
     return this.page.getByRole('button', { name: /^Reply$/ })
   }
 
-  /** URL add-button in the buttons config. */
+  /** Get the "URL" add-button in the buttons config section */
   get addUrlButton() {
     return this.page.getByRole('button', { name: /^URL$/ })
   }
 
-  /** Phone add-button in the buttons config. */
+  /** Get the "Phone" add-button in the buttons config section */
   get addPhoneButton() {
     return this.page.getByRole('button', { name: /^Phone$/ })
   }
 
-  /** Per-button title input (0-based). */
+  /** Get a button title input by index (0-based) */
   getButtonTitleInput(index: number) {
     return this.page.getByPlaceholder(/Button Title/i).nth(index)
   }
 
-  /** All per-button config cards inside the right panel. */
+  /** "List button text" label (only rendered for reply_mode=list steps) */
+  get listButtonTextLabel() {
+    return this.page.getByText('List button text', { exact: true })
+  }
+
+  /** "List section title" label (only rendered for reply_mode=list steps) */
+  get listSectionTitleLabel() {
+    return this.page.getByText('List section title', { exact: true })
+  }
+
+  /** Per-row description inputs (only rendered for reply_mode=list steps) */
+  get listRowDescriptionInputs() {
+    return this.page.getByPlaceholder('Row description')
+  }
+
+  /** Get the message text textarea in step properties */
+  get messageTextarea() {
+    return this.page.getByPlaceholder(/Enter your message/i)
+  }
+
+  /** Get the "Go to" select for a button's conditional routing */
+  getButtonGoToSelect(index: number) {
+    return this.page.getByText(/Go to/i).nth(index)
+  }
+
+  /** Get all button config cards in step properties */
   get buttonCards() {
     return this.page.locator('.p-2.border.rounded-md.space-y-2')
   }
 
-  /** Delete button on a per-button card. */
+  /** Get delete button for a specific button config (0-based) */
   getButtonDeleteButton(index: number) {
     return this.buttonCards.nth(index).locator('button').filter({ has: this.page.locator('.text-destructive') })
   }
