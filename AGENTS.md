@@ -31,6 +31,9 @@ Read this file before starting any complex task in this repository.
 
 If the local shell does not have Go installed, note that explicitly instead of claiming backend verification.
 
+- DB-backed Go tests share one database (`TEST_DATABASE_URL`, plus `TEST_REDIS_URL`) and run in parallel. Give fixtures unique names (WhatsApp account names are globally unique) and scope assertions to your own org/fixtures. Tests of intentionally global behaviour (super-admin listings, cross-org chat repair scans) must use `newIsolatedTestApp` / `testutil.SetupIsolatedTestDB`, which gives the test a private, freshly migrated schema. Remember `Contact.IsActive` has a gorm default of `true`: create, then update to `false`.
+- Frontend unit tests: `cd frontend && npx vitest run`. User-facing dates go through `formatDate` / `formatDateTime` in `frontend/src/lib/utils.ts` (dd/mm/yyyy, dd/mm/yyyy HH:mm).
+
 ## Current Important Conventions
 
 - Conversation flow reply options support explicit reply-button and list-picker modes via step `input_config.reply_mode`; runtime routing uses option IDs for both button and list replies, and new flows should be scoped with `whatsapp_account` when account-specific.
