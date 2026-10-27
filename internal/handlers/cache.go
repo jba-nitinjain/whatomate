@@ -206,11 +206,12 @@ func (a *App) deleteKeysByPattern(ctx context.Context, pattern string) {
 	}
 }
 
-// whatsAppAccountCache is used for caching since AccessToken and AppSecret have json:"-" tag
+// whatsAppAccountCache is used for caching since AccessToken, AppSecret, and Pin have json:"-" tag
 type whatsAppAccountCache struct {
 	models.WhatsAppAccount
 	AccessToken string `json:"access_token"`
 	AppSecret   string `json:"app_secret"`
+	Pin         string `json:"pin"`
 }
 
 // getWhatsAppAccountCached retrieves WhatsApp account by phone_id from cache or database
@@ -225,6 +226,7 @@ func (a *App) getWhatsAppAccountCached(phoneID string) (*models.WhatsAppAccount,
 		if err := json.Unmarshal([]byte(cached), &cacheData); err == nil {
 			cacheData.WhatsAppAccount.AccessToken = cacheData.AccessToken
 			cacheData.WhatsAppAccount.AppSecret = cacheData.AppSecret
+			cacheData.WhatsAppAccount.Pin = cacheData.Pin
 			a.decryptAccountSecrets(&cacheData.WhatsAppAccount)
 			return &cacheData.WhatsAppAccount, nil
 		}
@@ -236,11 +238,12 @@ func (a *App) getWhatsAppAccountCached(phoneID string) (*models.WhatsAppAccount,
 		return nil, err
 	}
 
-	// Cache the result (include AccessToken and AppSecret explicitly since they have json:"-")
+	// Cache the result (include AccessToken, AppSecret, and Pin explicitly since they have json:"-")
 	cacheData := whatsAppAccountCache{
 		WhatsAppAccount: account,
 		AccessToken:     account.AccessToken,
 		AppSecret:       account.AppSecret,
+		Pin:             account.Pin,
 	}
 	if data, err := json.Marshal(cacheData); err == nil {
 		a.Redis.Set(ctx, cacheKey, data, whatsappAccountCacheTTL)
@@ -261,6 +264,60 @@ func (a *App) decryptAccountSecrets(account *models.WhatsAppAccount) {
 func (a *App) InvalidateWhatsAppAccountCache(phoneID string) {
 	ctx := context.Background()
 	cacheKey := fmt.Sprintf("%s%s", whatsappAccountCachePrefix, phoneID)
+	a.Redis.Del(ctx, cacheKey)
+}
+
+type leadSourceCache struct {
+	models.LeadSource
+	PageAccessToken string `json:"page_access_token"`
+	AppSecret       string `json:"app_secret"`
+}
+
+const (
+	leadSourceCachePrefix = "lead:source:"
+	leadSourceCacheTTL    = 6 * time.Hour
+)
+
+// getLeadSourceCached retrieves LeadSource by pageID from cache or database
+func (a *App) getLeadSourceCached(pageID string) (*models.LeadSource, error) {
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf("%s%s", leadSourceCachePrefix, pageID)
+
+	// Try cache first
+	cached, err := a.Redis.Get(ctx, cacheKey).Result()
+	if err == nil && cached != "" {
+		var cacheData leadSourceCache
+		if err := json.Unmarshal([]byte(cached), &cacheData); err == nil {
+			cacheData.LeadSource.PageAccessToken = cacheData.PageAccessToken
+			cacheData.LeadSource.AppSecret = cacheData.AppSecret
+			cacheData.DecryptSecrets(a.Config.App.EncryptionKey)
+			return &cacheData.LeadSource, nil
+		}
+	}
+
+	// Cache miss - fetch from DB
+	var source models.LeadSource
+	if err := a.DB.Where("page_id = ?", pageID).First(&source).Error; err != nil {
+		return nil, err
+	}
+
+	cacheData := leadSourceCache{
+		LeadSource:      source,
+		PageAccessToken: source.PageAccessToken,
+		AppSecret:       source.AppSecret,
+	}
+	if data, err := json.Marshal(cacheData); err == nil {
+		a.Redis.Set(ctx, cacheKey, data, leadSourceCacheTTL)
+	}
+
+	source.DecryptSecrets(a.Config.App.EncryptionKey)
+	return &source, nil
+}
+
+// InvalidateLeadSourceCache clears cache for a pageID
+func (a *App) InvalidateLeadSourceCache(pageID string) {
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf("%s%s", leadSourceCachePrefix, pageID)
 	a.Redis.Del(ctx, cacheKey)
 }
 
@@ -427,15 +484,18 @@ func (a *App) getUserPermissionsCached(userID uuid.UUID, orgIDs ...uuid.UUID) (*
 		return nil, err
 	}
 
-	// Determine which role to use
+	// Determine which role to use. For a specific org the role has to come from
+	// that org's membership row — falling back to users.role_id would carry the
+	// user's home-org role (possibly admin) into a tenant they only belong to as
+	// a plain member. The fallback survives only for the user's own org, where
+	// legacy rows may predate user_organizations.
 	var roleID *uuid.UUID
 	if orgID != uuid.Nil {
-		// Look up role from user_organizations for this specific org
 		var userOrg models.UserOrganization
-		if err := a.DB.Where("user_id = ? AND organization_id = ?", userID, orgID).First(&userOrg).Error; err == nil && userOrg.RoleID != nil {
+		if err := a.DB.Where("user_id = ? AND organization_id = ?", userID, orgID).First(&userOrg).Error; err == nil {
 			roleID = userOrg.RoleID
-		} else {
-			// Fall back to user's default role
+		}
+		if roleID == nil && orgID == user.OrganizationID {
 			roleID = user.RoleID
 		}
 	} else {
@@ -443,7 +503,18 @@ func (a *App) getUserPermissionsCached(userID uuid.UUID, orgIDs ...uuid.UUID) (*
 	}
 
 	if roleID == nil {
-		return nil, gorm.ErrRecordNotFound
+		if !user.IsSuperAdmin {
+			return nil, gorm.ErrRecordNotFound
+		}
+		// Super admin in an org they hold no membership in: the flag alone grants
+		// access (HasPermission short-circuits on it), with no role-derived perms.
+		perms := UserPermissions{IsSuperAdmin: true, Permissions: []string{}}
+		if a.Redis != nil {
+			if data, err := json.Marshal(perms); err == nil {
+				a.Redis.Set(ctx, cacheKey, data, userPermissionsCacheTTL)
+			}
+		}
+		return &perms, nil
 	}
 
 	// Fetch role and load permissions via JOIN

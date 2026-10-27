@@ -14,7 +14,7 @@ import (
 func TestApp_PreviewChatRepairCandidates_DuplicateMoveTargetsBecomeConflicts(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	homeOrg := testutil.CreateTestOrganization(t, app.DB)
 	otherSourceOrg := testutil.CreateTestOrganization(t, app.DB)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
@@ -60,7 +60,7 @@ func TestApp_PreviewChatRepairCandidates_DuplicateMoveTargetsBecomeConflicts(t *
 func TestApp_ApplyChatRepairCandidates_RejectsConflictingMoves(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	homeOrg := testutil.CreateTestOrganization(t, app.DB)
 	otherSourceOrg := testutil.CreateTestOrganization(t, app.DB)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)

@@ -1,8 +1,13 @@
 package config
 
 import (
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // SHA-1 is mandated by the coturn TURN REST API (RFC draft)
+	"encoding/base64"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/knadh/koanf/parsers/toml"
 	"github.com/knadh/koanf/providers/env"
@@ -34,10 +39,49 @@ type TTSConfig struct {
 	OpusencBinary string `koanf:"opusenc_binary"` // path to opusenc (defaults to "opusenc")
 }
 
+// defaultTURNCredentialTTLSecs is the lifetime of generated coturn REST
+// credentials when an ICE server has a secret but no explicit credential_ttl.
+const defaultTURNCredentialTTLSecs = 86400 // 24h
+
 type ICEServerConfig struct {
 	URLs       []string `koanf:"urls"`
 	Username   string   `koanf:"username"`
 	Credential string   `koanf:"credential"`
+	// Secret enables coturn's "use-auth-secret" (TURN REST API) mode. When set,
+	// short-lived credentials are generated per request instead of using the
+	// static Username/Credential above.
+	Secret string `koanf:"secret"`
+	// CredentialTTL is the lifetime (seconds) of generated credentials. Defaults
+	// to defaultTURNCredentialTTLSecs when <= 0. Only used when Secret is set.
+	CredentialTTL int `koanf:"credential_ttl"`
+}
+
+// ResolveCredentials returns the username and credential to advertise for this
+// ICE server. When Secret is set it derives short-lived coturn REST credentials
+// (use-auth-secret): the username is "<expiry-unix>" — optionally prefixed onto
+// any configured Username as "<expiry-unix>:<username>" — and the credential is
+// the base64-encoded HMAC-SHA1 of that username keyed by the secret. When Secret
+// is empty, the static Username/Credential are returned unchanged.
+func (s ICEServerConfig) ResolveCredentials(now time.Time) (username, credential string) {
+	if s.Secret == "" {
+		return s.Username, s.Credential
+	}
+
+	ttl := s.CredentialTTL
+	if ttl <= 0 {
+		ttl = defaultTURNCredentialTTLSecs
+	}
+
+	expiry := now.Add(time.Duration(ttl) * time.Second).Unix()
+	username = strconv.FormatInt(expiry, 10)
+	if s.Username != "" {
+		username = username + ":" + s.Username
+	}
+
+	mac := hmac.New(sha1.New, []byte(s.Secret))
+	mac.Write([]byte(username))
+	credential = base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	return username, credential
 }
 
 type CallingConfig struct {
@@ -46,6 +90,7 @@ type CallingConfig struct {
 	HoldMusicFile       string            `koanf:"hold_music_file"`
 	TransferTimeoutSecs int               `koanf:"transfer_timeout_secs"`
 	PerAgentTimeoutSecs int               `koanf:"per_agent_timeout_secs"`
+	StickyRingSecs      int               `koanf:"sticky_ring_secs"`
 	RingbackFile        string            `koanf:"ringback_file"`
 	UDPPortMin          uint16            `koanf:"udp_port_min"` // WebRTC UDP port range start (default: 10000)
 	UDPPortMax          uint16            `koanf:"udp_port_max"` // WebRTC UDP port range end (default: 10100)
@@ -114,7 +159,10 @@ type WhatsAppConfig struct {
 	// account (or platform). When false, such webhooks are processed but logged
 	// as a warning. Webhooks for accounts that DO have an app secret are always
 	// signature-enforced regardless of this flag.
-	RequireWebhookSignature bool `koanf:"require_webhook_signature"`
+	RequireWebhookSignature bool   `koanf:"require_webhook_signature"`
+	AppID                   string `koanf:"app_id"` // WhatsApp App ID for frontend
+	AppSecret               string `koanf:"app_secret"`
+	ConfigID                string `koanf:"config_id"` // WhatsApp Config ID for frontend
 }
 
 type AIConfig struct {
@@ -158,6 +206,8 @@ type RateLimitConfig struct {
 	SSOMaxAttempts      int  `koanf:"sso_max_attempts"`
 	WindowSeconds       int  `koanf:"window_seconds"`
 	TrustProxy          bool `koanf:"trust_proxy"`
+	APIMaxRequests      int  `koanf:"api_max_requests"`
+	APIWindowSeconds    int  `koanf:"api_window_seconds"`
 }
 
 // Load loads configuration from file and environment variables
@@ -171,10 +221,25 @@ func Load(configPath string) (*Config, error) {
 		}
 	}
 
-	// Load from environment variables (WHATOMATE_ prefix)
-	// e.g., WHATOMATE_DATABASE_HOST -> database.host
+	// Load from environment variables (WHATOMATE_ prefix). A DOUBLE underscore
+	// separates config levels; single underscores are preserved as part of the
+	// key. This is required because both section and field names contain
+	// underscores (e.g. default_admin, rate_limit, whatsapp.app_id) — collapsing
+	// every "_" to "." would mangle them (whatsapp.app_id -> whatsapp.app.id), so
+	// those keys could never be set via env.
+	// e.g. WHATOMATE_DATABASE__HOST -> database.host
+	//      WHATOMATE_WHATSAPP__APP_ID -> whatsapp.app_id
+	//      WHATOMATE_DEFAULT_ADMIN__EMAIL -> default_admin.email
+	// Legacy single-underscore names (WHATOMATE_DATABASE_HOST) are still
+	// accepted for known keys and loaded first, so the "__" form wins when both
+	// are set. See env_compat.go.
+	legacyUsed, err := loadLegacyEnv(k)
+	if err != nil {
+		return nil, err
+	}
+	warnLegacyEnv(legacyUsed)
 	if err := k.Load(env.Provider("WHATOMATE_", ".", func(s string) string {
-		return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(s, "WHATOMATE_")), "_", ".")
+		return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(s, "WHATOMATE_")), "__", ".")
 	}), nil); err != nil {
 		return nil, err
 	}

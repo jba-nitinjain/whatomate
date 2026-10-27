@@ -46,7 +46,9 @@ import {
   Bell,
   ShieldCheck,
   Rocket,
+  Eye,
 } from "lucide-vue-next";
+import { useRouter } from "vue-router";
 
 const { t } = useI18n();
 
@@ -63,6 +65,8 @@ interface WhatsAppAccount {
   auto_read_receipt: boolean;
   marketing_messages_lite_onboarded: boolean;
   marketing_messages_lite_enabled: boolean;
+  business_calling_enabled?: boolean;
+  is_smb?: boolean;
   status: string;
   has_access_token: boolean;
   has_app_secret: boolean;
@@ -130,6 +134,13 @@ function openProfileDialog(account: WhatsAppAccount) {
   isProfileDialogOpen.value = true;
 }
 
+const router = useRouter();
+
+// Opens the account detail page (activity log, metadata, business calling toggle).
+function openAccountDetail(account: WhatsAppAccount) {
+  router.push(`/settings/accounts/${account.id}`);
+}
+
 function openPhoneSetupDialog(account: WhatsAppAccount) {
   phoneSetupAccount.value = account;
   isPhoneSetupDialogOpen.value = true;
@@ -149,6 +160,7 @@ const formData = ref({
   auto_read_receipt: false,
   marketing_messages_lite_onboarded: false,
   marketing_messages_lite_enabled: false,
+  business_calling_enabled: false,
 });
 
 // Refetch data when organization changes
@@ -254,6 +266,7 @@ function openCreateDialog() {
     auto_read_receipt: false,
     marketing_messages_lite_onboarded: false,
     marketing_messages_lite_enabled: false,
+    business_calling_enabled: false,
   };
   isDialogOpen.value = true;
 }
@@ -275,6 +288,7 @@ function openEditDialog(account: WhatsAppAccount) {
     marketing_messages_lite_onboarded:
       account.marketing_messages_lite_onboarded,
     marketing_messages_lite_enabled: account.marketing_messages_lite_enabled,
+    business_calling_enabled: account.business_calling_enabled ?? false,
   };
   isDialogOpen.value = true;
 }
@@ -663,6 +677,15 @@ const webhookUrl = window.location.origin + basePath + "/api/webhook";
                         <TestTube2 class="h-3 w-3 mr-1" />
                         {{ $t("accounts.testNumber") }}
                       </Badge>
+                      <!-- Coexistence (WhatsApp Business app) Badge -->
+                      <Badge
+                        v-if="account.is_smb"
+                        variant="outline"
+                        class="border-sky-600 text-sky-600 light:border-sky-500 light:text-sky-700"
+                        :title="$t('accounts.coexistenceBadgeDesc')"
+                      >
+                        {{ $t("accounts.coexistenceBadge") }}
+                      </Badge>
                     </div>
 
                     <!-- Test Result -->
@@ -904,6 +927,20 @@ const webhookUrl = window.location.origin + basePath + "/api/webhook";
                     </TooltipTrigger>
                     <TooltipContent>{{
                       $t("accounts.phoneSetup")
+                    }}</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        @click="openAccountDetail(account)"
+                      >
+                        <Eye class="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{{
+                      $t("accounts.accountDetails", "Account Details")
                     }}</TooltipContent>
                   </Tooltip>
                   <Tooltip>
@@ -1187,6 +1224,21 @@ const webhookUrl = window.location.origin + basePath + "/api/webhook";
               id="auto_read_receipt"
               :checked="formData.auto_read_receipt"
               @update:checked="formData.auto_read_receipt = $event"
+            />
+          </div>
+          <div class="flex items-start justify-between gap-3">
+            <div class="space-y-0.5">
+              <Label for="business_calling_enabled" class="font-normal cursor-pointer">
+                {{ $t("accounts.businessCallingEnabled", "Business Calling enabled") }}
+              </Label>
+              <p class="text-xs text-muted-foreground">
+                {{ $t("accounts.businessCallingEnabledDesc", "Enable only after Meta enrolls this number in the WhatsApp Business Calling API. Required for click-to-call buttons in canned responses.") }}
+              </p>
+            </div>
+            <Switch
+              id="business_calling_enabled"
+              :checked="formData.business_calling_enabled"
+              @update:checked="formData.business_calling_enabled = $event"
             />
           </div>
           <Separator />

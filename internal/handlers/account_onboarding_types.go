@@ -148,7 +148,7 @@ type accountConnectionCheck struct {
 	MessagingLimitTier     string `json:"messaging_limit_tier,omitempty"`
 	CodeVerificationStatus string `json:"code_verification_status,omitempty"`
 	AccountMode            string `json:"account_mode,omitempty"`
-	IsTestNumber           bool   `json:"is_test_number,omitempty"`
+	IsTestNumber           bool   `json:"is_test_number"`
 	Warning                string `json:"warning,omitempty"`
 }
 

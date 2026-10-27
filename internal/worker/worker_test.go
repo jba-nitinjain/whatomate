@@ -490,7 +490,7 @@ func TestWorker_checkCampaignCompletion_CompletesWhenAllProcessed(t *testing.T) 
 	org, _, _, campaign := createMinimalCampaignData(t, w, models.CampaignStatusProcessing)
 
 	// Update campaign counts for this test
-	require.NoError(t, w.DB.Model(campaign).Updates(map[string]interface{}{
+	require.NoError(t, w.DB.Model(campaign).Updates(map[string]any{
 		"total_recipients": 2,
 		"sent_count":       2,
 	}).Error)
@@ -525,7 +525,7 @@ func TestWorker_checkCampaignCompletion_DoesNotCompleteWithPending(t *testing.T)
 	org, _, _, campaign := createMinimalCampaignData(t, w, models.CampaignStatusProcessing)
 
 	// Update campaign counts for this test
-	require.NoError(t, w.DB.Model(campaign).Updates(map[string]interface{}{
+	require.NoError(t, w.DB.Model(campaign).Updates(map[string]any{
 		"total_recipients": 2,
 		"sent_count":       1,
 	}).Error)
@@ -571,12 +571,12 @@ func TestWorker_sendTemplateMessage_BuildsComponents(t *testing.T) {
 	w := testWorker(t)
 
 	// Create mock server
-	var capturedBody map[string]interface{}
+	var capturedBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 		rw.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
-			"messages": []map[string]interface{}{
+		_ = json.NewEncoder(rw).Encode(map[string]any{
+			"messages": []map[string]any{
 				{"id": "wamid.test123"},
 			},
 		})
@@ -612,32 +612,133 @@ func TestWorker_sendTemplateMessage_BuildsComponents(t *testing.T) {
 	assert.Equal(t, "wamid.test123", msgID)
 
 	// Verify request structure
-	templateData := capturedBody["template"].(map[string]interface{})
+	templateData := capturedBody["template"].(map[string]any)
 	assert.Equal(t, "test_template", templateData["name"])
-	assert.Equal(t, "en", templateData["language"].(map[string]interface{})["code"])
+	assert.Equal(t, "en", templateData["language"].(map[string]any)["code"])
 
-	components := templateData["components"].([]interface{})
+	components := templateData["components"].([]any)
 	require.Len(t, components, 1)
 
-	bodyComponent := components[0].(map[string]interface{})
+	bodyComponent := components[0].(map[string]any)
 	assert.Equal(t, "body", bodyComponent["type"])
 
-	params := bodyComponent["parameters"].([]interface{})
+	params := bodyComponent["parameters"].([]any)
 	require.Len(t, params, 2)
-	assert.Equal(t, "Hello", params[0].(map[string]interface{})["text"])
-	assert.Equal(t, "World", params[1].(map[string]interface{})["text"])
+	assert.Equal(t, "Hello", params[0].(map[string]any)["text"])
+	assert.Equal(t, "World", params[1].(map[string]any)["text"])
+}
+
+// When the recipient has explicit HeaderParams, the worker must use them
+// for the TEXT-header component instead of falling back to TemplateParams.
+// This protects positional templates where header {{1}} and body {{1}}
+// would otherwise share the same value.
+func TestWorker_sendTemplateMessage_HeaderParamsTakePrecedence(t *testing.T) {
+	w := testWorker(t)
+
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		rw.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(rw).Encode(map[string]any{
+			"messages": []map[string]any{{"id": "wamid.hp-explicit"}},
+		})
+	}))
+	defer server.Close()
+	w.WhatsApp = whatsapp.NewWithBaseURL(w.Log, server.URL)
+
+	account := &models.WhatsAppAccount{PhoneID: "123", BusinessID: "456", AccessToken: "token", APIVersion: "v21.0"}
+	template := &models.Template{
+		Name:          "tpl_explicit_hp",
+		Language:      "en",
+		HeaderType:    "TEXT",
+		HeaderContent: "Code {{1}}",
+		BodyContent:   "Use {{1}} to redeem",
+	}
+	recipient := &models.BulkMessageRecipient{
+		PhoneNumber:    "1234567890",
+		HeaderParams:   models.JSONB{"1": "HEADER-VAL"},
+		TemplateParams: models.JSONB{"1": "BODY-VAL"},
+	}
+
+	_, err := w.sendTemplateMessage(context.Background(), account, template, recipient, "", "")
+	require.NoError(t, err)
+
+	components := capturedBody["template"].(map[string]any)["components"].([]any)
+	var headerComp, bodyComp map[string]any
+	for _, c := range components {
+		m := c.(map[string]any)
+		switch m["type"] {
+		case "header":
+			headerComp = m
+		case "body":
+			bodyComp = m
+		}
+	}
+	require.NotNil(t, headerComp)
+	require.NotNil(t, bodyComp)
+	assert.Equal(t, "HEADER-VAL", headerComp["parameters"].([]any)[0].(map[string]any)["text"])
+	assert.Equal(t, "BODY-VAL", bodyComp["parameters"].([]any)[0].(map[string]any)["text"],
+		"body {{1}} must keep its own value when HeaderParams is set")
+}
+
+// Legacy recipient rows persisted before HeaderParams existed only have
+// TemplateParams. For NAMED templates the var name is unique across
+// components, so the worker falls back to TemplateParams[name].
+func TestWorker_sendTemplateMessage_HeaderParamsFallbackToTemplateParams(t *testing.T) {
+	w := testWorker(t)
+
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		rw.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(rw).Encode(map[string]any{
+			"messages": []map[string]any{{"id": "wamid.hp-fallback"}},
+		})
+	}))
+	defer server.Close()
+	w.WhatsApp = whatsapp.NewWithBaseURL(w.Log, server.URL)
+
+	account := &models.WhatsAppAccount{PhoneID: "123", BusinessID: "456", AccessToken: "token", APIVersion: "v21.0"}
+	template := &models.Template{
+		Name:          "tpl_fallback_hp",
+		Language:      "en",
+		HeaderType:    "TEXT",
+		HeaderContent: "Our {{season}} sale",
+		BodyContent:   "Hi {{name}}",
+	}
+	recipient := &models.BulkMessageRecipient{
+		PhoneNumber: "1234567890",
+		// No HeaderParams — legacy row. season lives in TemplateParams.
+		TemplateParams: models.JSONB{"season": "Summer", "name": "Alex"},
+	}
+
+	_, err := w.sendTemplateMessage(context.Background(), account, template, recipient, "", "")
+	require.NoError(t, err)
+
+	components := capturedBody["template"].(map[string]any)["components"].([]any)
+	var headerComp map[string]any
+	for _, c := range components {
+		if m := c.(map[string]any); m["type"] == "header" {
+			headerComp = m
+			break
+		}
+	}
+	require.NotNil(t, headerComp, "header component must still be emitted via fallback")
+	params := headerComp["parameters"].([]any)[0].(map[string]any)
+	assert.Equal(t, "Summer", params["text"])
+	assert.Equal(t, "season", params["parameter_name"])
 }
 
 func TestWorker_sendTemplateMessage_NoParams(t *testing.T) {
 	w := testWorker(t)
 
 	// Create mock server
-	var capturedBody map[string]interface{}
+	var capturedBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 		rw.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
-			"messages": []map[string]interface{}{
+		_ = json.NewEncoder(rw).Encode(map[string]any{
+			"messages": []map[string]any{
 				{"id": "wamid.test456"},
 			},
 		})
@@ -668,7 +769,7 @@ func TestWorker_sendTemplateMessage_NoParams(t *testing.T) {
 	assert.Equal(t, "wamid.test456", msgID)
 
 	// Verify no components when no params
-	templateData := capturedBody["template"].(map[string]interface{})
+	templateData := capturedBody["template"].(map[string]any)
 	components, hasComponents := templateData["components"]
 	if hasComponents {
 		assert.Empty(t, components)
@@ -725,9 +826,12 @@ func TestWorker_sendTemplateMessage_WithDynamicURLButton(t *testing.T) {
 
 	templateData := capturedBody["template"].(map[string]interface{})
 	components := templateData["components"].([]interface{})
-	require.Len(t, components, 2)
+	// The body "Track your order" declares no variables, so Meta must receive
+	// no body component (an extra body parameter is rejected with #132000);
+	// only the dynamic URL button component is sent.
+	require.Len(t, components, 1)
 
-	buttonComponent := components[1].(map[string]interface{})
+	buttonComponent := components[0].(map[string]interface{})
 	assert.Equal(t, "button", buttonComponent["type"])
 	assert.Equal(t, "url", buttonComponent["sub_type"])
 	assert.Equal(t, "0", buttonComponent["index"])
@@ -804,11 +908,17 @@ func TestWorker_HandleRecipientJob_Success(t *testing.T) {
 	w := testWorker(t)
 	org, account, template, campaign, recipient := createTestCampaignData(t, w)
 
+	campaign.HeaderMediaID = "media-123"
+	campaign.HeaderMediaLocalPath = "/media/documents/invoice.pdf"
+	campaign.HeaderMediaMimeType = "application/pdf"
+	campaign.HeaderMediaFilename = "invoice.pdf"
+	require.NoError(t, w.DB.Save(campaign).Error)
+
 	// Create mock server
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
-			"messages": []map[string]interface{}{
+		_ = json.NewEncoder(rw).Encode(map[string]any{
+			"messages": []map[string]any{
 				{"id": "wamid.success123"},
 			},
 		})
@@ -849,6 +959,9 @@ func TestWorker_HandleRecipientJob_Success(t *testing.T) {
 	assert.Equal(t, models.MessageStatusSent, message.Status)
 	assert.Equal(t, models.DirectionOutgoing, message.Direction)
 	assert.Equal(t, models.MessageTypeTemplate, message.MessageType)
+	assert.Equal(t, "/media/documents/invoice.pdf", message.MediaURL)
+	assert.Equal(t, "application/pdf", message.MediaMimeType)
+	assert.Equal(t, "invoice.pdf", message.MediaFilename)
 }
 
 func TestWorker_HandleRecipientJob_WhatsAppError(t *testing.T) {
@@ -859,8 +972,8 @@ func TestWorker_HandleRecipientJob_WhatsAppError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("Content-Type", "application/json")
 		rw.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
-			"error": map[string]interface{}{
+		_ = json.NewEncoder(rw).Encode(map[string]any{
+			"error": map[string]any{
 				"message": "Invalid phone number",
 				"code":    100,
 			},
@@ -935,13 +1048,16 @@ func TestWorker_HandleRecipientJob_SkipsInactiveContact(t *testing.T) {
 	w := testWorker(t)
 	org, account, _, campaign, recipient := createTestCampaignData(t, w)
 
-	require.NoError(t, w.DB.Create(&models.Contact{
+	// Contact.IsActive has a gorm default of true, so a zero-value false is
+	// dropped on INSERT; create the contact first, then deactivate it.
+	inactiveContact := &models.Contact{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		OrganizationID: org.ID,
 		PhoneNumber:    recipient.PhoneNumber,
 		ProfileName:    "Inactive Contact",
-		IsActive:       false,
-	}).Error)
+	}
+	require.NoError(t, w.DB.Create(inactiveContact).Error)
+	require.NoError(t, w.DB.Model(inactiveContact).Update("is_active", false).Error)
 
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
@@ -975,7 +1091,7 @@ func TestWorker_HandleRecipientJob_SkipsInactiveContact(t *testing.T) {
 	assert.Equal(t, "Contact is inactive", updatedRecipient.ErrorMessage)
 
 	var messageCount int64
-	require.NoError(t, w.DB.Model(&models.Message{}).Where("contact_id IN (SELECT id FROM contacts WHERE phone_number = ?)", recipient.PhoneNumber).Count(&messageCount).Error)
+	require.NoError(t, w.DB.Model(&models.Message{}).Where("contact_id IN (SELECT id FROM contacts WHERE organization_id = ? AND phone_number = ?)", org.ID, recipient.PhoneNumber).Count(&messageCount).Error)
 	assert.EqualValues(t, 0, messageCount)
 }
 
@@ -986,8 +1102,8 @@ func TestWorker_HandleRecipientJob_CreatesContact(t *testing.T) {
 	// Create mock server
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
-			"messages": []map[string]interface{}{
+		_ = json.NewEncoder(rw).Encode(map[string]any{
+			"messages": []map[string]any{
 				{"id": "wamid.contact123"},
 			},
 		})
@@ -1024,8 +1140,8 @@ func TestWorker_HandleRecipientJob_CampaignCompletion(t *testing.T) {
 	// Create mock server
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
-			"messages": []map[string]interface{}{
+		_ = json.NewEncoder(rw).Encode(map[string]any{
+			"messages": []map[string]any{
 				{"id": "wamid.complete123"},
 			},
 		})
@@ -1061,8 +1177,8 @@ func TestWorker_HandleRecipientJob_TemplateParamSubstitution(t *testing.T) {
 	// Create mock server
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
-			"messages": []map[string]interface{}{
+		_ = json.NewEncoder(rw).Encode(map[string]any{
+			"messages": []map[string]any{
 				{"id": "wamid.subst123"},
 			},
 		})
@@ -1154,7 +1270,7 @@ func TestWorker_HandleRecipientJob_WithEncryptedToken(t *testing.T) {
 	// Encrypt the token in the DB (simulating production)
 	encToken, err := crypto.Encrypt("test-token", encKey)
 	require.NoError(t, err)
-	require.NoError(t, w.DB.Model(account).Updates(map[string]interface{}{
+	require.NoError(t, w.DB.Model(account).Updates(map[string]any{
 		"access_token": encToken,
 		"api_version":  "v21.0",
 	}).Error)
@@ -1164,8 +1280,8 @@ func TestWorker_HandleRecipientJob_WithEncryptedToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		capturedAuth = r.Header.Get("Authorization")
 		rw.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(rw).Encode(map[string]interface{}{
-			"messages": []map[string]interface{}{
+		_ = json.NewEncoder(rw).Encode(map[string]any{
+			"messages": []map[string]any{
 				{"id": "wamid.encrypted123"},
 			},
 		})

@@ -13,13 +13,17 @@ import (
 const (
 	campaignReportSummarySheet    = "Summary"
 	campaignReportRecipientsSheet = "Recipients"
-	campaignReportTimeLayout      = "2006-01-02 15:04:05"
+	campaignReportTimeLayout      = "02/01/2006 15:04:05" // dd/mm/yyyy HH:mm:ss for human readers
 )
 
 func buildCampaignReportWorkbook(report campaignReportData) (*excelize.File, error) {
 	file := excelize.NewFile()
-	file.SetSheetName(file.GetSheetName(0), campaignReportSummarySheet)
-	file.NewSheet(campaignReportRecipientsSheet)
+	if err := file.SetSheetName(file.GetSheetName(0), campaignReportSummarySheet); err != nil {
+		return nil, err
+	}
+	if _, err := file.NewSheet(campaignReportRecipientsSheet); err != nil {
+		return nil, err
+	}
 
 	titleStyle, err := file.NewStyle(&excelize.Style{
 		Font:      &excelize.Font{Bold: true, Size: 16},

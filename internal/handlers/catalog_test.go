@@ -39,8 +39,8 @@ func newMockCatalogServer() *mockCatalogServer {
 		auth := r.Header.Get("Authorization")
 		if auth != "Bearer test-token" {
 			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{
 					"message": "Invalid access token",
 					"code":    190,
 				},
@@ -50,8 +50,8 @@ func newMockCatalogServer() *mockCatalogServer {
 
 		if m.returnError {
 			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{
 					"message": m.errorMessage,
 					"code":    100,
 				},
@@ -63,18 +63,18 @@ func newMockCatalogServer() *mockCatalogServer {
 		case http.MethodPost:
 			// Handle catalog or product creation
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": m.nextCatalogID,
 			})
 		case http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
 			})
 		case http.MethodGet:
 			// List catalogs
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": []map[string]string{},
 			})
 		default:
@@ -156,6 +156,31 @@ func createCatalogTestAccount(t *testing.T, app *handlers.App, orgID uuid.UUID) 
 	return account
 }
 
+// catalogTestUser creates a user whose role holds every catalogs permission.
+// The catalogs permission rows are ensured explicitly so the helper also works
+// against a shared test database seeded before the resource existed.
+func catalogTestUser(t *testing.T, app *handlers.App, orgID uuid.UUID) *models.User {
+	t.Helper()
+
+	testutil.GetOrCreateTestPermissions(t, app.DB)
+	var perms []models.Permission
+	for _, p := range models.DefaultPermissions() {
+		if p.Resource != models.ResourceCatalogs {
+			continue
+		}
+		perm := models.Permission{}
+		require.NoError(t, app.DB.
+			Where("resource = ? AND action = ?", p.Resource, p.Action).
+			Attrs(models.Permission{BaseModel: models.BaseModel{ID: uuid.New()}, Description: p.Description}).
+			FirstOrCreate(&perm, models.Permission{Resource: p.Resource, Action: p.Action}).Error)
+		perms = append(perms, perm)
+	}
+	require.Len(t, perms, 4)
+
+	role := testutil.CreateTestRole(t, app.DB, orgID, "catalog-manager", perms)
+	return testutil.CreateTestUser(t, app.DB, orgID, testutil.WithRoleID(&role.ID))
+}
+
 // --- ListCatalogs Tests ---
 
 func TestApp_ListCatalogs_Success(t *testing.T) {
@@ -163,7 +188,7 @@ func TestApp_ListCatalogs_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	createTestCatalog(t, app, org.ID, account.Name, "Catalog A")
@@ -196,7 +221,7 @@ func TestApp_ListCatalogs_Empty(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -220,7 +245,7 @@ func TestApp_ListCatalogs_FilterByWhatsAppAccount(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account1 := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 	account2 := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
@@ -251,7 +276,7 @@ func TestApp_ListCatalogs_WithProductCount(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Catalog with Products")
@@ -282,7 +307,7 @@ func TestApp_ListCatalogs_OrgIsolation(t *testing.T) {
 	app := newTestApp(t)
 	org1 := testutil.CreateTestOrganization(t, app.DB)
 	org2 := testutil.CreateTestOrganization(t, app.DB)
-	user2 := testutil.CreateTestUser(t, app.DB, org2.ID)
+	user2 := catalogTestUser(t, app, org2.ID)
 	account1 := testutil.CreateTestWhatsAppAccount(t, app.DB, org1.ID)
 
 	createTestCatalog(t, app, org1.ID, account1.Name, "Org1 Catalog")
@@ -313,10 +338,10 @@ func TestApp_CreateCatalog_Success(t *testing.T) {
 
 	app := newCatalogTestApp(t, mockServer)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := createCatalogTestAccount(t, app, org.ID)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":             "My Test Catalog",
 		"whatsapp_account": account.Name,
 	})
@@ -350,27 +375,27 @@ func TestApp_CreateCatalog_MissingFields(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	tests := []struct {
 		name string
-		body map[string]interface{}
+		body map[string]any
 	}{
 		{
 			name: "missing_name",
-			body: map[string]interface{}{
+			body: map[string]any{
 				"whatsapp_account": "some-account",
 			},
 		},
 		{
 			name: "missing_whatsapp_account",
-			body: map[string]interface{}{
+			body: map[string]any{
 				"name": "My Catalog",
 			},
 		},
 		{
 			name: "all_fields_empty",
-			body: map[string]interface{}{},
+			body: map[string]any{},
 		},
 	}
 
@@ -391,9 +416,9 @@ func TestApp_CreateCatalog_AccountNotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":             "My Catalog",
 		"whatsapp_account": "nonexistent-account",
 	})
@@ -409,7 +434,7 @@ func TestApp_CreateCatalog_Unauthorized(t *testing.T) {
 
 	app := newTestApp(t)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":             "My Catalog",
 		"whatsapp_account": "some-account",
 	})
@@ -427,7 +452,7 @@ func TestApp_GetCatalog_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Test Catalog")
@@ -465,7 +490,7 @@ func TestApp_GetCatalog_NotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -481,7 +506,7 @@ func TestApp_GetCatalog_InvalidID(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -498,7 +523,7 @@ func TestApp_GetCatalog_CrossOrgIsolation(t *testing.T) {
 	app := newTestApp(t)
 	org1 := testutil.CreateTestOrganization(t, app.DB)
 	org2 := testutil.CreateTestOrganization(t, app.DB)
-	user2 := testutil.CreateTestUser(t, app.DB, org2.ID)
+	user2 := catalogTestUser(t, app, org2.ID)
 	account1 := testutil.CreateTestWhatsAppAccount(t, app.DB, org1.ID)
 
 	catalog := createTestCatalog(t, app, org1.ID, account1.Name, "Org1 Catalog")
@@ -521,7 +546,7 @@ func TestApp_DeleteCatalog_Success(t *testing.T) {
 
 	app := newCatalogTestApp(t, mockServer)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := createCatalogTestAccount(t, app, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Catalog to Delete")
@@ -561,7 +586,7 @@ func TestApp_DeleteCatalog_NotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -577,7 +602,7 @@ func TestApp_DeleteCatalog_InvalidID(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -594,7 +619,7 @@ func TestApp_DeleteCatalog_CrossOrgIsolation(t *testing.T) {
 	app := newTestApp(t)
 	org1 := testutil.CreateTestOrganization(t, app.DB)
 	org2 := testutil.CreateTestOrganization(t, app.DB)
-	user2 := testutil.CreateTestUser(t, app.DB, org2.ID)
+	user2 := catalogTestUser(t, app, org2.ID)
 	account1 := testutil.CreateTestWhatsAppAccount(t, app.DB, org1.ID)
 
 	catalog := createTestCatalog(t, app, org1.ID, account1.Name, "Org1 Catalog")
@@ -621,7 +646,7 @@ func TestApp_ListCatalogProducts_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Test Catalog")
@@ -657,7 +682,7 @@ func TestApp_ListCatalogProducts_Empty(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Empty Catalog")
@@ -685,7 +710,7 @@ func TestApp_ListCatalogProducts_CatalogNotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -701,7 +726,7 @@ func TestApp_ListCatalogProducts_OnlyShowsProductsForCatalog(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	catalog1 := createTestCatalog(t, app, org.ID, account.Name, "Catalog 1")
@@ -741,12 +766,12 @@ func TestApp_CreateCatalogProduct_Success(t *testing.T) {
 
 	app := newCatalogTestApp(t, mockServer)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := createCatalogTestAccount(t, app, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Test Catalog")
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":        "New Product",
 		"description": "A great product",
 		"price":       2500,
@@ -792,12 +817,12 @@ func TestApp_CreateCatalogProduct_DefaultCurrency(t *testing.T) {
 
 	app := newCatalogTestApp(t, mockServer)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := createCatalogTestAccount(t, app, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Test Catalog")
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":  "Product Without Currency",
 		"price": 1000,
 	})
@@ -821,37 +846,37 @@ func TestApp_CreateCatalogProduct_MissingFields(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Test Catalog")
 
 	tests := []struct {
 		name string
-		body map[string]interface{}
+		body map[string]any
 	}{
 		{
 			name: "missing_name",
-			body: map[string]interface{}{
+			body: map[string]any{
 				"price": 1000,
 			},
 		},
 		{
 			name: "missing_price",
-			body: map[string]interface{}{
+			body: map[string]any{
 				"name": "Product Without Price",
 			},
 		},
 		{
 			name: "zero_price",
-			body: map[string]interface{}{
+			body: map[string]any{
 				"name":  "Product With Zero Price",
 				"price": 0,
 			},
 		},
 		{
 			name: "negative_price",
-			body: map[string]interface{}{
+			body: map[string]any{
 				"name":  "Product With Negative Price",
 				"price": -100,
 			},
@@ -876,9 +901,9 @@ func TestApp_CreateCatalogProduct_CatalogNotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":  "Product",
 		"price": 1000,
 	})
@@ -897,7 +922,7 @@ func TestApp_GetCatalogProduct_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Test Catalog")
@@ -931,7 +956,7 @@ func TestApp_GetCatalogProduct_NotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -947,7 +972,7 @@ func TestApp_GetCatalogProduct_InvalidID(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -964,7 +989,7 @@ func TestApp_GetCatalogProduct_CrossOrgIsolation(t *testing.T) {
 	app := newTestApp(t)
 	org1 := testutil.CreateTestOrganization(t, app.DB)
 	org2 := testutil.CreateTestOrganization(t, app.DB)
-	user2 := testutil.CreateTestUser(t, app.DB, org2.ID)
+	user2 := catalogTestUser(t, app, org2.ID)
 	account1 := testutil.CreateTestWhatsAppAccount(t, app.DB, org1.ID)
 
 	catalog := createTestCatalog(t, app, org1.ID, account1.Name, "Org1 Catalog")
@@ -988,13 +1013,13 @@ func TestApp_UpdateCatalogProduct_Success(t *testing.T) {
 
 	app := newCatalogTestApp(t, mockServer)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := createCatalogTestAccount(t, app, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Test Catalog")
 	product := createTestCatalogProduct(t, app, org.ID, catalog.ID, "Original Product", 1000)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name":        "Updated Product",
 		"description": "Updated description",
 		"price":       2500,
@@ -1038,14 +1063,14 @@ func TestApp_UpdateCatalogProduct_PartialUpdate(t *testing.T) {
 
 	app := newCatalogTestApp(t, mockServer)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := createCatalogTestAccount(t, app, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Test Catalog")
 	product := createTestCatalogProduct(t, app, org.ID, catalog.ID, "Original Product", 1000)
 
 	// Only update the name
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name": "Only Name Changed",
 	})
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1072,9 +1097,9 @@ func TestApp_UpdateCatalogProduct_NotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name": "Updated Name",
 	})
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1090,9 +1115,9 @@ func TestApp_UpdateCatalogProduct_InvalidID(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
-	req := testutil.NewJSONRequest(t, map[string]interface{}{
+	req := testutil.NewJSONRequest(t, map[string]any{
 		"name": "Updated Name",
 	})
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1111,7 +1136,7 @@ func TestApp_DeleteCatalogProduct_Success(t *testing.T) {
 
 	app := newCatalogTestApp(t, mockServer)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 	account := createCatalogTestAccount(t, app, org.ID)
 
 	catalog := createTestCatalog(t, app, org.ID, account.Name, "Test Catalog")
@@ -1145,7 +1170,7 @@ func TestApp_DeleteCatalogProduct_NotFound(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1161,7 +1186,7 @@ func TestApp_DeleteCatalogProduct_InvalidID(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := catalogTestUser(t, app, org.ID)
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1178,7 +1203,7 @@ func TestApp_DeleteCatalogProduct_CrossOrgIsolation(t *testing.T) {
 	app := newTestApp(t)
 	org1 := testutil.CreateTestOrganization(t, app.DB)
 	org2 := testutil.CreateTestOrganization(t, app.DB)
-	user2 := testutil.CreateTestUser(t, app.DB, org2.ID)
+	user2 := catalogTestUser(t, app, org2.ID)
 	account1 := testutil.CreateTestWhatsAppAccount(t, app.DB, org1.ID)
 
 	catalog := createTestCatalog(t, app, org1.ID, account1.Name, "Org1 Catalog")
@@ -1197,4 +1222,63 @@ func TestApp_DeleteCatalogProduct_CrossOrgIsolation(t *testing.T) {
 	var count int64
 	app.DB.Model(&models.CatalogProduct{}).Where("id = ?", product.ID).Count(&count)
 	assert.Equal(t, int64(1), count)
+}
+
+// --- Permission & Meta error Tests ---
+
+func TestApp_Catalogs_RequirePermission(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	// A user without any role holds no catalogs permission.
+	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	catalog := createTestCatalog(t, app, org.ID, "acct", "Locked Catalog")
+
+	listReq := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(listReq, org.ID, user.ID)
+	require.NoError(t, app.ListCatalogs(listReq))
+	assert.Equal(t, fasthttp.StatusForbidden, testutil.GetResponseStatusCode(listReq))
+
+	syncReq := testutil.NewJSONRequest(t, map[string]any{"whatsapp_account": "acct"})
+	testutil.SetAuthContext(syncReq, org.ID, user.ID)
+	require.NoError(t, app.SyncCatalogs(syncReq))
+	assert.Equal(t, fasthttp.StatusForbidden, testutil.GetResponseStatusCode(syncReq))
+
+	delReq := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(delReq, org.ID, user.ID)
+	testutil.SetPathParam(delReq, "id", catalog.ID.String())
+	require.NoError(t, app.DeleteCatalog(delReq))
+	assert.Equal(t, fasthttp.StatusForbidden, testutil.GetResponseStatusCode(delReq))
+
+	var count int64
+	app.DB.Model(&models.Catalog{}).Where("id = ?", catalog.ID).Count(&count)
+	assert.Equal(t, int64(1), count, "catalog must survive a forbidden delete")
+}
+
+func TestApp_CreateCatalog_SurfacesMetaError(t *testing.T) {
+	mockServer := newMockCatalogServer()
+	defer mockServer.close()
+	mockServer.returnError = true
+	mockServer.errorMessage = "Catalog management is not enabled for this business"
+
+	app := newCatalogTestApp(t, mockServer)
+	org := testutil.CreateTestOrganization(t, app.DB)
+	user := catalogTestUser(t, app, org.ID)
+	account := createCatalogTestAccount(t, app, org.ID)
+
+	req := testutil.NewJSONRequest(t, map[string]any{
+		"name":             "My Catalog",
+		"whatsapp_account": account.Name,
+	})
+	testutil.SetAuthContext(req, org.ID, user.ID)
+
+	require.NoError(t, app.CreateCatalog(req))
+	assert.Equal(t, fasthttp.StatusBadGateway, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+	assert.Contains(t, resp.Message, "Catalog management is not enabled for this business")
 }

@@ -290,9 +290,37 @@ func (a *App) RegisterOnboardingPhone(r *fastglue.Request) error {
 		return nil
 	}
 
-	waAccount, _, err := a.resolveOnboardingWhatsAppAccount(session)
+	waAccount, accountModel, err := a.resolveOnboardingWhatsAppAccount(session)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, err.Error(), nil, "")
+	}
+
+	isCoexistence := accountModel != nil && accountModel.IsSMB
+	if v, ok := a.getOnboardingStepState(session, onboardingStepPhoneSetup).Details["is_smb"].(bool); ok && v {
+		isCoexistence = true
+	}
+	if isCoexistence {
+		a.markOnboardingAccountCoexistence(session)
+		// Coexistence numbers are registered through the WhatsApp Business app;
+		// Meta rejects /register for them, so the step is complete as-is.
+		step := a.getOnboardingStepState(session, onboardingStepPhoneSetup)
+		step.Status = onboardingStateCompleted
+		step.Summary = "Number is connected from the WhatsApp Business app (Coexistence); Meta registration is not required."
+		step.UpdatedAt = nowRFC3339()
+		step.Details = mergeMaps(step.Details, map[string]any{
+			"registration_status": onboardingStateCompleted,
+			"is_smb":              true,
+		})
+		a.setOnboardingStepState(session, onboardingStepPhoneSetup, step)
+		session.CurrentStep = onboardingStepWebhooks
+		session.Status = onboardingStatusInProgress
+		session.LastError = ""
+		if err := a.DB.Save(session).Error; err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to save onboarding progress", nil, "")
+		}
+		return r.SendEnvelope(map[string]any{
+			"session": a.onboardingSessionToResponse(session),
+		})
 	}
 
 	if !isSixDigitPIN(req.Pin) {

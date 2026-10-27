@@ -78,7 +78,6 @@ const emit = defineEmits<{
 
 const tagsStore = useTagsStore()
 const authStore = useAuthStore()
-
 const collapsedSections = ref<Record<string, boolean>>({})
 const tagSelectorOpen = ref(false)
 const isUpdatingTags = ref(false)
@@ -95,11 +94,7 @@ const canEditTags = computed(() => authStore.hasPermission('contacts', 'write'))
 // Fetch tags on mount
 onMounted(async () => {
   if (tagsStore.tags.length === 0) {
-    try {
-      await tagsStore.fetchTags()
-    } catch (e) {
-      // Silently fail - tags just won't be available
-    }
+    try { await tagsStore.fetchTags() } catch { /* tags won't be available */ }
   }
 })
 

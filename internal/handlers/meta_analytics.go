@@ -21,23 +21,33 @@ const (
 
 	// Cache key prefix
 	metaAnalyticsCachePrefix = "meta:analytics:"
+
+	// A WABA's billing currency effectively never changes, so it is cached
+	// well beyond the analytics TTLs and keyed by WABA id rather than org.
+	metaWABACurrencyCachePrefix = "meta:waba:currency:"
+	metaWABACurrencyCacheTTL    = 24 * time.Hour
+
+	// defaultAnalyticsCurrency is what cost is reported in when the WABA's own
+	// currency cannot be determined. INR matches our main branch's fallback.
+	defaultAnalyticsCurrency = "INR"
 )
 
 // MetaAnalyticsRequest represents the request parameters for Meta analytics
 type MetaAnalyticsRequest struct {
-	AccountID     string `json:"account_id"`      // Optional: specific account ID or empty for all
-	AnalyticsType string `json:"analytics_type"`  // Required: analytics, pricing_analytics, template_analytics, call_analytics
-	Start         string `json:"start"`           // Required: YYYY-MM-DD format
-	End           string `json:"end"`             // Required: YYYY-MM-DD format
-	Granularity   string `json:"granularity"`     // Optional: HALF_HOUR, DAY, MONTH (default: DAY)
+	AccountID     string `json:"account_id"`     // Optional: specific account ID or empty for all
+	AnalyticsType string `json:"analytics_type"` // Required: analytics, pricing_analytics, template_analytics, call_analytics
+	Start         string `json:"start"`          // Required: YYYY-MM-DD format
+	End           string `json:"end"`            // Required: YYYY-MM-DD format
+	Granularity   string `json:"granularity"`    // Optional: HALF_HOUR, DAY, MONTH (default: DAY)
 }
 
 // MetaAnalyticsResponse represents the response for Meta analytics
 type MetaAnalyticsResponse struct {
-	AccountID    string                          `json:"account_id"`
-	AccountName  string                          `json:"account_name"`
-	Data         *whatsapp.MetaAnalyticsResponse `json:"data"`
-	TemplateNames map[string]string              `json:"template_names,omitempty"` // meta_template_id -> template name
+	AccountID     string                          `json:"account_id"`
+	AccountName   string                          `json:"account_name"`
+	Data          *whatsapp.MetaAnalyticsResponse `json:"data"`
+	TemplateNames map[string]string               `json:"template_names,omitempty"` // meta_template_id -> template name
+	Currency      string                          `json:"currency,omitempty"`       // ISO 4217 code the WABA is billed in
 }
 
 // GetMetaAnalytics fetches Meta WhatsApp analytics with Redis caching
@@ -81,6 +91,20 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "End date must be after start date", nil, "")
 	}
 
+	// Clamp the end date to the end of the current UTC day: a future end date
+	// (e.g. from a client-side timezone bug or a stale cached selection) would
+	// otherwise be sent straight to Meta's API, which rejects it and the handler
+	// falls back to returning null data for the account. The clamp target is a
+	// per-day constant rather than time.Now(), so endUnix stays stable across
+	// requests and the analytics cache key below keeps hitting.
+	todayEnd := endOfDay(time.Now().UTC().Truncate(24 * time.Hour))
+	if startDate.After(todayEnd) {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Start date cannot be in the future", nil, "")
+	}
+	if endDate.After(todayEnd) {
+		endDate = todayEnd
+	}
+
 	// Set default granularity (use DAY as standard input, will be normalized per endpoint)
 	if granularity == "" {
 		granularity = "DAY"
@@ -119,9 +143,10 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 		}
 	}
 
-	// Convert dates to Unix timestamps
+	// Convert dates to Unix timestamps. endDate already has end-of-day
+	// applied by parseDateRange, so no further adjustment is needed here.
 	startUnix := startDate.Unix()
-	endUnix := endDate.Add(24*time.Hour - time.Second).Unix() // End of day
+	endUnix := endDate.Unix()
 
 	// Get accounts to query
 	var accounts []models.WhatsAppAccount
@@ -141,7 +166,7 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 	}
 
 	if len(accounts) == 0 {
-		return r.SendEnvelope(map[string]interface{}{
+		return r.SendEnvelope(map[string]any{
 			"accounts": []MetaAnalyticsResponse{},
 			"message":  "No WhatsApp accounts found",
 		})
@@ -157,7 +182,7 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 		var cachedResponse []MetaAnalyticsResponse
 		if err := json.Unmarshal([]byte(cached), &cachedResponse); err == nil {
 			a.Log.Debug("Meta analytics cache hit", "cache_key", cacheKey)
-			return r.SendEnvelope(map[string]interface{}{
+			return r.SendEnvelope(map[string]any{
 				"accounts": cachedResponse,
 				"cached":   true,
 			})
@@ -167,11 +192,20 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 	// Cache miss - fetch from Meta API
 	a.Log.Debug("Meta analytics cache miss", "cache_key", cacheKey)
 
+	// Every analytics type except plain messaging reports cost, and each needs
+	// to know which currency Meta denominated it in.
+	needsCurrency := analyticsType != string(whatsapp.AnalyticsTypeMessaging)
+
 	var results []MetaAnalyticsResponse
 	for i := range accounts {
 		a.decryptAccountSecrets(&accounts[i])
 		account := accounts[i]
 		waAccount := a.toWhatsAppAccount(&account)
+
+		var currency string
+		if needsCurrency {
+			currency = a.getWABACurrency(ctx, waAccount)
+		}
 
 		req := &whatsapp.AnalyticsRequest{
 			Start:       startUnix,
@@ -220,6 +254,7 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 					AccountID:   account.ID.String(),
 					AccountName: account.Name,
 					Data:        nil,
+					Currency:    currency,
 				})
 				continue
 			}
@@ -241,6 +276,7 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 				AccountID:   account.ID.String(),
 				AccountName: account.Name,
 				Data:        nil,
+				Currency:    currency,
 			})
 			continue
 		}
@@ -317,6 +353,7 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 			AccountName:   account.Name,
 			Data:          data,
 			TemplateNames: templateNames,
+			Currency:      currency,
 		})
 	}
 
@@ -326,7 +363,7 @@ func (a *App) GetMetaAnalytics(r *fastglue.Request) error {
 		a.Redis.Set(ctx, cacheKey, cacheData, cacheTTL)
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"accounts": results,
 		"cached":   false,
 	}
@@ -373,7 +410,7 @@ func (a *App) ListMetaAccountsForAnalytics(r *fastglue.Request) error {
 		})
 	}
 
-	return r.SendEnvelope(map[string]interface{}{
+	return r.SendEnvelope(map[string]any{
 		"accounts": result,
 	})
 }
@@ -395,7 +432,7 @@ func (a *App) RefreshMetaAnalyticsCache(r *fastglue.Request) error {
 	pattern := fmt.Sprintf("%s%s:*", metaAnalyticsCachePrefix, orgID.String())
 	a.deleteKeysByPattern(ctx, pattern)
 
-	return r.SendEnvelope(map[string]interface{}{
+	return r.SendEnvelope(map[string]any{
 		"message": "Analytics cache cleared successfully",
 	})
 }
@@ -414,6 +451,35 @@ func (a *App) buildMetaAnalyticsCacheKey(orgID uuid.UUID, accountID, analyticsTy
 		end,
 		granularity,
 	)
+}
+
+// getWABACurrency returns the ISO 4217 currency the WhatsApp Business Account
+// is billed in, which is the currency Meta denominates analytics costs in.
+// The value is cached in Redis for a day.
+//
+// A lookup failure degrades to defaultAnalyticsCurrency (INR) rather than failing the whole analytics
+// request, and the fallback is deliberately not cached so a transient Graph
+// error does not pin the wrong currency for the full TTL.
+func (a *App) getWABACurrency(ctx context.Context, account *whatsapp.Account) string {
+	cacheKey := metaWABACurrencyCachePrefix + account.BusinessID
+
+	if cached, err := a.Redis.Get(ctx, cacheKey).Result(); err == nil && cached != "" {
+		return cached
+	}
+
+	info, err := a.WhatsApp.GetBusinessAccountInfo(ctx, account)
+	if err != nil || info.Currency == "" {
+		a.Log.Warn("Failed to resolve WABA currency, falling back to default",
+			"error", err,
+			"business_id", account.BusinessID,
+			"currency", defaultAnalyticsCurrency,
+		)
+		return defaultAnalyticsCurrency
+	}
+
+	a.Redis.Set(ctx, cacheKey, info.Currency, metaWABACurrencyCacheTTL)
+
+	return info.Currency
 }
 
 // getMetaAnalyticsCacheTTL returns the appropriate cache TTL based on granularity

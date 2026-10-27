@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,13 +19,36 @@ import (
 	"github.com/nikyjain/whatomate/pkg/whatsapp"
 )
 
+func redactURLForLog(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid_url>"
+	}
+
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return parsed.Path
+	}
+
+	return parsed.Scheme + "://" + parsed.Host + parsed.Path
+}
+
+func truncateLogValue(value string, maxLen int) string {
+	if len(value) <= maxLen {
+		return value
+	}
+
+	return value[:maxLen] + "...(truncated)"
+}
+
 // IncomingTextMessage represents a text, interactive, or media message from the webhook
 type IncomingTextMessage struct {
-	From      string `json:"from"`
-	ID        string `json:"id"`
-	Timestamp string `json:"timestamp"`
-	Type      string `json:"type"`
-	Text      *struct {
+	From       string `json:"from"`
+	FromUserID string `json:"from_user_id,omitempty"` // BSUID
+	To         string `json:"to,omitempty"`
+	ID         string `json:"id"`
+	Timestamp  string `json:"timestamp"`
+	Type       string `json:"type"`
+	Text       *struct {
 		Body string `json:"body"`
 	} `json:"text,omitempty"`
 	// Button is a template quick-reply reply (message type "button").
@@ -48,6 +72,12 @@ type IncomingTextMessage struct {
 			Body         string `json:"body"`
 			Name         string `json:"name"`
 		} `json:"nfm_reply,omitempty"`
+		CallPermissionReply *struct {
+			Response            string      `json:"response"`
+			IsPermanent         bool        `json:"is_permanent"`
+			ExpirationTimestamp json.Number `json:"expiration_timestamp,omitempty"`
+			ResponseSource      string      `json:"response_source"`
+		} `json:"call_permission_reply,omitempty"`
 	} `json:"interactive,omitempty"`
 	Image *struct {
 		ID       string `json:"id"`
@@ -128,7 +158,17 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 	}
 
 	// Get or create contact (always do this for all incoming messages)
-	contact, isNewContact, _ := contactutil.GetOrCreateContact(a.DB, account.OrganizationID, msg.From, profileName)
+	contact, isNewContact, err := contactutil.GetOrCreateContact(a.DB, account.OrganizationID, msg.From, profileName)
+	if err != nil {
+		a.Log.Error("Failed to get or create contact", "from", msg.From, "error", err)
+		return
+	}
+
+	// Store BSUID if provided and not already set
+	if msg.FromUserID != "" && contact.BSUID != msg.FromUserID {
+		a.DB.Model(contact).Update("bsuid", msg.FromUserID)
+		contact.BSUID = msg.FromUserID
+	}
 
 	// Dispatch webhook if new contact was created
 	if isNewContact {
@@ -141,149 +181,12 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 	}
 
 	// Get message content - handle text, button replies, list replies, and media
-	messageText := ""
-	messageType := msg.Type
-	buttonID := "" // Track button/list ID for conditional routing
-	var mediaInfo *MediaInfo
-
-	// Track flow response data for WhatsApp Flow forms
-	var flowResponseData map[string]interface{}
-
-	if msg.Type == "text" && msg.Text != nil {
-		messageText = msg.Text.Body
-	} else if msg.Type == "button" && msg.Button != nil {
-		// Template quick-reply reply (e.g. "Attending"/"Not Attending"). Use the
-		// visible text for keyword/button matching and the payload as the id.
-		messageText = msg.Button.Text
-		buttonID = msg.Button.Payload
-		messageType = "button_reply"
-	} else if msg.Type == "interactive" && msg.Interactive != nil {
-		// Handle button reply
-		if msg.Interactive.ButtonReply != nil {
-			messageText = msg.Interactive.ButtonReply.Title
-			buttonID = msg.Interactive.ButtonReply.ID
-			messageType = "button_reply"
-		}
-		// Handle list reply
-		if msg.Interactive.ListReply != nil {
-			messageText = msg.Interactive.ListReply.Title
-			buttonID = msg.Interactive.ListReply.ID
-			messageType = "button_reply"
-		}
-		// Handle WhatsApp Flow reply (nfm_reply)
-		if msg.Interactive.NFMReply != nil {
-			messageText = msg.Interactive.NFMReply.Body
-			messageType = "nfm_reply"
-			// Parse the response JSON to extract form data
-			if msg.Interactive.NFMReply.ResponseJSON != "" {
-				var responseData map[string]interface{}
-				if err := json.Unmarshal([]byte(msg.Interactive.NFMReply.ResponseJSON), &responseData); err != nil {
-					a.Log.Error("Failed to parse flow response JSON", "error", err, "response_json", msg.Interactive.NFMReply.ResponseJSON)
-				} else {
-					flowResponseData = responseData
-					a.Log.Info("Parsed WhatsApp Flow response", "data", flowResponseData)
-				}
-			}
-		}
-	} else if msg.Type == "image" && msg.Image != nil {
-		// Handle image message
-		messageText = msg.Image.Caption
-		mediaInfo = &MediaInfo{
-			MediaMimeType: msg.Image.MimeType,
-		}
-		// Download and save media locally
-		waAccount := a.toWhatsAppAccount(account)
-		if localPath, err := a.DownloadAndSaveMedia(context.Background(), msg.Image.ID, msg.Image.MimeType, waAccount); err != nil {
-			a.Log.Error("Failed to download image", "error", err, "media_id", msg.Image.ID)
-		} else {
-			mediaInfo.MediaURL = localPath
-		}
-	} else if msg.Type == "document" && msg.Document != nil {
-		// Handle document message
-		messageText = msg.Document.Caption
-		mediaInfo = &MediaInfo{
-			MediaMimeType: msg.Document.MimeType,
-			MediaFilename: msg.Document.Filename,
-		}
-		// Download and save media locally
-		waAccount := a.toWhatsAppAccount(account)
-		if localPath, err := a.DownloadAndSaveMedia(context.Background(), msg.Document.ID, msg.Document.MimeType, waAccount); err != nil {
-			a.Log.Error("Failed to download document", "error", err, "media_id", msg.Document.ID)
-		} else {
-			mediaInfo.MediaURL = localPath
-		}
-	} else if msg.Type == "video" && msg.Video != nil {
-		// Handle video message
-		messageText = msg.Video.Caption
-		mediaInfo = &MediaInfo{
-			MediaMimeType: msg.Video.MimeType,
-		}
-		// Download and save media locally
-		waAccount := a.toWhatsAppAccount(account)
-		if localPath, err := a.DownloadAndSaveMedia(context.Background(), msg.Video.ID, msg.Video.MimeType, waAccount); err != nil {
-			a.Log.Error("Failed to download video", "error", err, "media_id", msg.Video.ID)
-		} else {
-			mediaInfo.MediaURL = localPath
-		}
-	} else if msg.Type == "audio" && msg.Audio != nil {
-		// Handle audio message
-		mediaInfo = &MediaInfo{
-			MediaMimeType: msg.Audio.MimeType,
-		}
-		// Download and save media locally
-		waAccount := a.toWhatsAppAccount(account)
-		if localPath, err := a.DownloadAndSaveMedia(context.Background(), msg.Audio.ID, msg.Audio.MimeType, waAccount); err != nil {
-			a.Log.Error("Failed to download audio", "error", err, "media_id", msg.Audio.ID)
-		} else {
-			mediaInfo.MediaURL = localPath
-		}
-	} else if msg.Type == "sticker" && msg.Sticker != nil {
-		// Handle sticker message (treat like image)
-		mediaInfo = &MediaInfo{
-			MediaMimeType: msg.Sticker.MimeType,
-		}
-		// Download and save media locally
-		waAccount := a.toWhatsAppAccount(account)
-		if localPath, err := a.DownloadAndSaveMedia(context.Background(), msg.Sticker.ID, msg.Sticker.MimeType, waAccount); err != nil {
-			a.Log.Error("Failed to download sticker", "error", err, "media_id", msg.Sticker.ID)
-		} else {
-			mediaInfo.MediaURL = localPath
-		}
-	} else if msg.Type == "location" && msg.Location != nil {
-		// Handle location message - store as JSON in content
-		locationData := map[string]any{
-			"latitude":  msg.Location.Latitude,
-			"longitude": msg.Location.Longitude,
-		}
-		if msg.Location.Name != "" {
-			locationData["name"] = msg.Location.Name
-		}
-		if msg.Location.Address != "" {
-			locationData["address"] = msg.Location.Address
-		}
-		if jsonBytes, err := json.Marshal(locationData); err == nil {
-			messageText = string(jsonBytes)
-		}
-	} else if msg.Type == "contacts" && len(msg.Contacts) > 0 {
-		// Handle contacts message - store as JSON in content
-		contactsData := make([]map[string]any, 0, len(msg.Contacts))
-		for _, c := range msg.Contacts {
-			contact := map[string]any{
-				"name": c.Name.FormattedName,
-			}
-			if len(c.Phones) > 0 {
-				phones := make([]string, 0, len(c.Phones))
-				for _, p := range c.Phones {
-					phones = append(phones, p.Phone)
-				}
-				contact["phones"] = phones
-			}
-			contactsData = append(contactsData, contact)
-		}
-		if jsonBytes, err := json.Marshal(contactsData); err == nil {
-			messageText = string(jsonBytes)
-		}
-	}
+	extracted := a.extractMessageContent(context.Background(), msg, account)
+	messageText := extracted.Text
+	messageType := extracted.Type
+	buttonID := extracted.ButtonID
+	mediaInfo := extracted.Media
+	flowResponseData := extracted.FlowResponseData
 
 	defaultFlowCommand := a.applyDefaultContactFlow(contact, msg.Type, messageText)
 
@@ -404,9 +307,9 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 	if isNewSession && settings.DefaultResponse != "" {
 		a.Log.Info("New session - sending greeting message", "contact", contact.PhoneNumber)
 		if len(settings.GreetingButtons) > 0 {
-			greetingButtons := make([]map[string]interface{}, 0)
+			greetingButtons := make([]map[string]any, 0)
 			for _, btn := range settings.GreetingButtons {
-				if btnMap, ok := btn.(map[string]interface{}); ok {
+				if btnMap, ok := btn.(map[string]any); ok {
 					greetingButtons = append(greetingButtons, btnMap)
 				}
 			}
@@ -473,9 +376,9 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 	if settings.FallbackMessage != "" && !isNewSession {
 		a.Log.Info("Sending fallback message", "response", settings.FallbackMessage)
 		if len(settings.FallbackButtons) > 0 {
-			fallbackButtons := make([]map[string]interface{}, 0)
+			fallbackButtons := make([]map[string]any, 0)
 			for _, btn := range settings.FallbackButtons {
-				if btnMap, ok := btn.(map[string]interface{}); ok {
+				if btnMap, ok := btn.(map[string]any); ok {
 					fallbackButtons = append(fallbackButtons, btnMap)
 				}
 			}
@@ -502,7 +405,7 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 // KeywordResponse holds the response content and optional buttons
 type KeywordResponse struct {
 	Body         string
-	Buttons      []map[string]interface{}
+	Buttons      []map[string]any
 	ResponseType models.ResponseType // text, transfer
 }
 
@@ -570,10 +473,10 @@ func (a *App) matchKeywordRules(orgID uuid.UUID, accountName, messageText string
 				}
 
 				// Get buttons if present
-				if buttons, ok := rule.ResponseContent["buttons"].([]interface{}); ok && len(buttons) > 0 {
-					response.Buttons = make([]map[string]interface{}, 0, len(buttons))
+				if buttons, ok := rule.ResponseContent["buttons"].([]any); ok && len(buttons) > 0 {
+					response.Buttons = make([]map[string]any, 0, len(buttons))
 					for _, btn := range buttons {
-						if btnMap, ok := btn.(map[string]interface{}); ok {
+						if btnMap, ok := btn.(map[string]any); ok {
 							response.Buttons = append(response.Buttons, btnMap)
 						}
 					}
@@ -607,8 +510,8 @@ func (a *App) sendAndSaveTextMessage(account *models.WhatsAppAccount, contact *m
 // since WhatsApp doesn't allow mixing reply buttons and URL buttons in the same message.
 func (a *App) sendAndSaveInteractiveButtons(account *models.WhatsAppAccount, contact *models.Contact, bodyText string, buttons []map[string]interface{}, inputConfig ...models.JSONB) error {
 	// Separate reply buttons from CTA buttons (url / phone)
-	replyButtons := make([]map[string]interface{}, 0, len(buttons))
-	ctaButtons := make([]map[string]interface{}, 0)
+	replyButtons := make([]map[string]any, 0, len(buttons))
+	ctaButtons := make([]map[string]any, 0)
 	for _, btn := range buttons {
 		btnType, _ := btn["type"].(string)
 		switch btnType {
@@ -618,7 +521,7 @@ func (a *App) sendAndSaveInteractiveButtons(account *models.WhatsAppAccount, con
 			// Convert phone button to CTA URL with tel: scheme
 			phoneNumber, _ := btn["phone_number"].(string)
 			if phoneNumber != "" {
-				ctaButtons = append(ctaButtons, map[string]interface{}{
+				ctaButtons = append(ctaButtons, map[string]any{
 					"title": btn["title"],
 					"url":   "tel:" + phoneNumber,
 				})
@@ -1031,11 +934,11 @@ func (a *App) sendFlowInitialMedia(account *models.WhatsAppAccount, contact *mod
 	ctx := context.Background()
 	switch strings.ToLower(flow.InitialMediaType) {
 	case "video":
-		_, err = a.WhatsApp.SendVideoMessage(ctx, waAccount, contact.PhoneNumber, mediaID, flow.InitialMessage)
+		_, err = a.WhatsApp.SendVideoMessage(ctx, waAccount, contactRecipient(contact), mediaID, flow.InitialMessage)
 	case "document":
-		_, err = a.WhatsApp.SendDocumentMessage(ctx, waAccount, contact.PhoneNumber, mediaID, filename, flow.InitialMessage)
+		_, err = a.WhatsApp.SendDocumentMessage(ctx, waAccount, contactRecipient(contact), mediaID, filename, flow.InitialMessage)
 	default:
-		_, err = a.WhatsApp.SendImageMessage(ctx, waAccount, contact.PhoneNumber, mediaID, flow.InitialMessage)
+		_, err = a.WhatsApp.SendImageMessage(ctx, waAccount, contactRecipient(contact), mediaID, flow.InitialMessage)
 	}
 	return err
 }
@@ -1080,7 +983,7 @@ func (a *App) injectInitialRichStep(flow *models.ChatbotFlow) {
 }
 
 // processFlowResponse handles user response within a flow
-func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *models.ChatbotSession, contact *models.Contact, userInput string, buttonID string, flowResponseData map[string]interface{}) {
+func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *models.ChatbotSession, contact *models.Contact, userInput string, buttonID string, flowResponseData map[string]any) {
 	// Load the current flow from cache
 	flow, err := a.getChatbotFlowByIDCached(account.OrganizationID, *session.CurrentFlowID)
 	if err != nil {
@@ -1158,7 +1061,7 @@ func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *mode
 
 		// Check if buttonID or userInput matches any configured button
 		for i, btn := range currentStep.Buttons {
-			if btnMap, ok := btn.(map[string]interface{}); ok {
+			if btnMap, ok := btn.(map[string]any); ok {
 				btnID, _ := btnMap["id"].(string)
 				btnTitle, _ := btnMap["title"].(string)
 
@@ -1301,7 +1204,7 @@ func (a *App) processFlowResponse(account *models.WhatsAppAccount, session *mode
 	}
 
 	// Update session and send next step message (with skip check)
-	a.DB.Model(session).Updates(map[string]interface{}{
+	a.DB.Model(session).Updates(map[string]any{
 		"current_step": nextStep.StepName,
 		"step_retries": 0,
 	})
@@ -1333,7 +1236,7 @@ func (a *App) completeFlow(account *models.WhatsAppAccount, session *models.Chat
 
 	// Update session (keep current_flow_id for panel config reference)
 	now := time.Now()
-	a.DB.Model(session).Updates(map[string]interface{}{
+	a.DB.Model(session).Updates(map[string]any{
 		"current_step": "",
 		"status":       models.SessionStatusCompleted,
 		"completed_at": now,
@@ -1354,8 +1257,14 @@ func (a *App) sendFlowCompletionWebhook(flow *models.ChatbotFlow, session *model
 		return
 	}
 
+	// Substitution variables: the session data plus the sender number as
+	// {{phone_number}} when the flow did not collect its own phone_number.
+	// This is a copy, so session.SessionData (and the default payload's
+	// session_data) stays exactly as the flow collected it.
+	vars := templateVarsWithSenderPhone(session.SessionData, session.PhoneNumber)
+
 	// Replace variables in URL
-	webhookURL = processTemplate(webhookURL, session.SessionData)
+	webhookURL = processTemplate(webhookURL, vars)
 
 	// Get HTTP method (default: POST)
 	method := "POST"
@@ -1364,7 +1273,7 @@ func (a *App) sendFlowCompletionWebhook(flow *models.ChatbotFlow, session *model
 	}
 
 	// Build the payload
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"flow_id":      flow.ID.String(),
 		"flow_name":    flow.Name,
 		"session_id":   session.ID.String(),
@@ -1379,7 +1288,7 @@ func (a *App) sendFlowCompletionWebhook(flow *models.ChatbotFlow, session *model
 	var bodyReader io.Reader
 	if bodyTemplate, ok := config["body"].(string); ok && bodyTemplate != "" {
 		// Replace variables in body template
-		bodyWithVars := processTemplate(bodyTemplate, session.SessionData)
+		bodyWithVars := processTemplate(bodyTemplate, vars)
 		bodyReader = strings.NewReader(bodyWithVars)
 	} else {
 		// Use default payload
@@ -1403,10 +1312,10 @@ func (a *App) sendFlowCompletionWebhook(flow *models.ChatbotFlow, session *model
 	req.Header.Set("User-Agent", "Whatomate-Webhook/1.0")
 
 	// Add custom headers if configured
-	if headers, ok := config["headers"].(map[string]interface{}); ok {
+	if headers, ok := config["headers"].(map[string]any); ok {
 		for key, value := range headers {
 			if strVal, ok := value.(string); ok {
-				req.Header.Set(key, processTemplate(strVal, session.SessionData))
+				req.Header.Set(key, processTemplate(strVal, vars))
 			}
 		}
 	}
@@ -1440,7 +1349,7 @@ func (a *App) sendFlowCompletionWebhook(flow *models.ChatbotFlow, session *model
 // exitFlow ends a flow session (transfer, cancel, or error)
 func (a *App) exitFlow(session *models.ChatbotSession) {
 	now := time.Now()
-	a.DB.Model(session).Updates(map[string]interface{}{
+	a.DB.Model(session).Updates(map[string]any{
 		"current_step": "",
 		"step_retries": 0,
 		"status":       models.SessionStatusCompleted,
@@ -1453,7 +1362,7 @@ func (a *App) exitFlow(session *models.ChatbotSession) {
 
 // closeSession ends the chatbot session and clears contact tracking
 func (a *App) closeSession(session *models.ChatbotSession) {
-	a.DB.Model(session).Updates(map[string]interface{}{
+	a.DB.Model(session).Updates(map[string]any{
 		"status":       models.SessionStatusCompleted,
 		"completed_at": time.Now(),
 	})
@@ -1608,7 +1517,7 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 	case models.FlowStepTypeAPIFetch:
 		// Fetch response from external API (may include message + buttons)
 		// Pass the step message as template - it will be processed with API response data
-		apiResp, err := a.fetchApiResponse(step.ApiConfig, session.SessionData, step.Message)
+		apiResp, err := a.fetchApiResponse(step.ApiConfig, session, step.Message)
 		if err != nil {
 			a.Log.Error("Failed to fetch API response", "error", err, "step", step.StepName)
 			// Use fallback message if configured, otherwise use the step message
@@ -1627,9 +1536,7 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 
 			// Save mapped data to session for future steps
 			if apiResp.MappedData != nil {
-				for k, v := range apiResp.MappedData {
-					session.SessionData[k] = v
-				}
+				maps.Copy(session.SessionData, apiResp.MappedData)
 				a.DB.Model(session).Update("session_data", session.SessionData)
 			}
 
@@ -1650,9 +1557,9 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 		// Send interactive buttons message
 		message = processTemplate(step.Message, session.SessionData)
 		if len(step.Buttons) > 0 {
-			buttons := make([]map[string]interface{}, 0, len(step.Buttons))
+			buttons := make([]map[string]any, 0, len(step.Buttons))
 			for _, btn := range step.Buttons {
-				if btnMap, ok := btn.(map[string]interface{}); ok {
+				if btnMap, ok := btn.(map[string]any); ok {
 					buttons = append(buttons, btnMap)
 				}
 			}
@@ -1668,6 +1575,25 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 		a.logSessionMessage(session.ID, models.DirectionOutgoing, message, step.StepName)
 
 	case models.FlowStepTypeTransfer:
+		// Opt-in (BusinessHours.SkipTransferOutsideHours, default off):
+		// outside business hours, skip both the transfer-step message
+		// ("Connecting you to an agent...") AND the transfer itself and send
+		// only the out-of-hours message. Off keeps the original behaviour
+		// of always transferring.
+		settings, _ := a.getChatbotSettingsCached(account.OrganizationID, account.Name)
+		if settings != nil && settings.BusinessHours.SkipTransferOutsideHours &&
+			settings.BusinessHours.Enabled && len(settings.BusinessHours.Hours) > 0 {
+			if !a.isWithinBusinessHours(settings.BusinessHours.Hours) {
+				if settings.BusinessHours.OutOfHoursMessage != "" {
+					if err := a.sendAndSaveTextMessage(account, contact, settings.BusinessHours.OutOfHoursMessage); err != nil {
+						a.Log.Error("Failed to send out-of-hours message", "error", err, "contact", contact.PhoneNumber)
+					}
+				}
+				a.exitFlow(session)
+				return
+			}
+		}
+
 		// Transfer to team/agent queue
 		message = processTemplate(step.Message, session.SessionData)
 		if message != "" {
@@ -1738,7 +1664,7 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 			} else {
 				// Extract first screen name from screens array
 				if len(waFlow.Screens) > 0 {
-					if screenMap, ok := waFlow.Screens[0].(map[string]interface{}); ok {
+					if screenMap, ok := waFlow.Screens[0].(map[string]any); ok {
 						if screenID, ok := screenMap["id"].(string); ok {
 							firstScreen = screenID
 							a.Log.Debug("Found first screen from flow", "first_screen", firstScreen)
@@ -1747,8 +1673,8 @@ func (a *App) sendStepMessage(account *models.WhatsAppAccount, session *models.C
 				}
 				// If screens array is empty, try to get from flow_json
 				if firstScreen == "" && waFlow.FlowJSON != nil {
-					if screens, ok := waFlow.FlowJSON["screens"].([]interface{}); ok && len(screens) > 0 {
-						if screenMap, ok := screens[0].(map[string]interface{}); ok {
+					if screens, ok := waFlow.FlowJSON["screens"].([]any); ok && len(screens) > 0 {
+						if screenMap, ok := screens[0].(map[string]any); ok {
 							if screenID, ok := screenMap["id"].(string); ok {
 								firstScreen = screenID
 								a.Log.Debug("Found first screen from flow_json", "first_screen", firstScreen)
@@ -1789,6 +1715,7 @@ func (a *App) executeConfiguredAPI(apiConfig models.JSONB, replaceVar func(strin
 		return nil, 0, fmt.Errorf("API URL is required")
 	}
 	apiURL = replaceVar(apiURL)
+	logURL := redactURLForLog(apiURL)
 
 	method := "GET"
 	if m, ok := apiConfig["method"].(string); ok && m != "" {
@@ -1808,7 +1735,7 @@ func (a *App) executeConfiguredAPI(apiConfig models.JSONB, replaceVar func(strin
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	if headers, ok := apiConfig["headers"].(map[string]interface{}); ok {
+	if headers, ok := apiConfig["headers"].(map[string]any); ok {
 		for key, value := range headers {
 			if strVal, ok := value.(string); ok {
 				req.Header.Set(key, replaceVar(strVal))
@@ -1816,8 +1743,11 @@ func (a *App) executeConfiguredAPI(apiConfig models.JSONB, replaceVar func(strin
 		}
 	}
 
+	a.Log.Info("Executing configured API request", "method", method, "url", logURL)
+
 	resp, err := a.HTTPClient.Do(req)
 	if err != nil {
+		a.Log.Error("Configured API request failed", "method", method, "url", logURL, "error", err)
 		return nil, 0, fmt.Errorf("API request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -1825,7 +1755,26 @@ func (a *App) executeConfiguredAPI(apiConfig models.JSONB, replaceVar func(strin
 	limitReader := io.LimitReader(resp.Body, 1024*1024)
 	body, err := io.ReadAll(limitReader)
 	if err != nil {
+		a.Log.Error("Failed to read configured API response", "method", method, "url", logURL, "status_code", resp.StatusCode, "error", err)
 		return nil, 0, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		a.Log.Warn(
+			"Configured API request returned non-2xx",
+			"method", method,
+			"url", logURL,
+			"status_code", resp.StatusCode,
+			"response_preview", truncateLogValue(string(body), 300),
+		)
+	} else {
+		a.Log.Info(
+			"Configured API request completed",
+			"method", method,
+			"url", logURL,
+			"status_code", resp.StatusCode,
+			"response_bytes", len(body),
+		)
 	}
 
 	return body, resp.StatusCode, nil
@@ -1833,16 +1782,31 @@ func (a *App) executeConfiguredAPI(apiConfig models.JSONB, replaceVar func(strin
 
 type ApiResponse struct {
 	Message      string
-	Buttons      []map[string]interface{}
-	MappedData   map[string]interface{} // Data extracted via response_mapping
-	ResponseData map[string]interface{} // Full API response data
+	Buttons      []map[string]any
+	MappedData   map[string]any // Data extracted via response_mapping
+	ResponseData map[string]any // Full API response data
 }
 
 // fetchApiResponse fetches a response from an external API, supporting message + buttons
-// and response_mapping for storing API data in session variables
-func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB, messageTemplate string) (*ApiResponse, error) {
+// and response_mapping for storing API data in session variables.
+//
+// Mirrors fetchAPIContext in seeding implicit variables (phone_number) so flow-step
+// API templates can interpolate {{phone_number}} just like AI-context API templates.
+func (a *App) fetchApiResponse(apiConfig models.JSONB, session *models.ChatbotSession, messageTemplate string) (*ApiResponse, error) {
 	if apiConfig == nil {
 		return nil, fmt.Errorf("API config is empty")
+	}
+
+	// Copy so the sender number is only a substitution fallback: it never
+	// overwrites a flow-collected phone_number and is never persisted into
+	// the session.
+	sessionData := models.JSONB{}
+	if session != nil {
+		if session.SessionData == nil {
+			// Callers merge mapped API data into the session map afterwards.
+			session.SessionData = models.JSONB{}
+		}
+		sessionData = templateVarsWithSenderPhone(session.SessionData, session.PhoneNumber)
 	}
 
 	replaceVar := func(s string) string { return processTemplate(s, sessionData) }
@@ -1856,7 +1820,7 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB,
 	}
 
 	// Parse JSON response
-	var jsonResp map[string]interface{}
+	var jsonResp map[string]any
 	if err := json.Unmarshal(respBody, &jsonResp); err != nil {
 		// If not JSON, return raw response as message
 		return &ApiResponse{Message: string(respBody)}, nil
@@ -1868,7 +1832,7 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB,
 
 	// Process response_mapping if configured
 	// This maps API response fields to session variables for use in templates
-	if responseMapping, ok := apiConfig["response_mapping"].(map[string]interface{}); ok {
+	if responseMapping, ok := apiConfig["response_mapping"].(map[string]any); ok {
 		mappingStrings := make(map[string]string)
 		for varName, path := range responseMapping {
 			if pathStr, ok := path.(string); ok {
@@ -1878,9 +1842,7 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB,
 		result.MappedData = extractResponseMapping(jsonResp, mappingStrings)
 
 		// Merge mapped data into sessionData for template processing
-		for k, v := range result.MappedData {
-			sessionData[k] = v
-		}
+		maps.Copy(sessionData, result.MappedData)
 	}
 
 	// Process the message template with all available data (including mapped data)
@@ -1895,12 +1857,12 @@ func (a *App) fetchApiResponse(apiConfig models.JSONB, sessionData models.JSONB,
 	}
 
 	// Extract buttons if present - format: [{"id": "test", "value": "Test"}, ...]
-	if buttons, ok := jsonResp["buttons"].([]interface{}); ok && len(buttons) > 0 {
-		result.Buttons = make([]map[string]interface{}, 0, len(buttons))
+	if buttons, ok := jsonResp["buttons"].([]any); ok && len(buttons) > 0 {
+		result.Buttons = make([]map[string]any, 0, len(buttons))
 		for _, btn := range buttons {
-			if btnMap, ok := btn.(map[string]interface{}); ok {
+			if btnMap, ok := btn.(map[string]any); ok {
 				// Normalize button format: ensure we have "id" and "title"
-				normalizedBtn := make(map[string]interface{})
+				normalizedBtn := make(map[string]any)
 
 				// Handle "id" field
 				if id, ok := btnMap["id"].(string); ok {
@@ -2023,7 +1985,7 @@ func (a *App) fetchAPIContext(apiConfig models.JSONB, session *models.ChatbotSes
 
 	// Check for response_path to extract specific field
 	if responsePath, ok := apiConfig["response_path"].(string); ok && responsePath != "" {
-		var jsonResp map[string]interface{}
+		var jsonResp map[string]any
 		if err := json.Unmarshal(respBody, &jsonResp); err == nil {
 			if value := getNestedValue(jsonResp, responsePath); value != nil {
 				return formatValue(value), nil
@@ -2080,7 +2042,7 @@ func (a *App) generateOpenAIResponse(settings *models.ChatbotSettings, session *
 		"content": userMessage,
 	})
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"model":      settings.AI.Model,
 		"messages":   messages,
 		"max_tokens": settings.AI.MaxTokens,
@@ -2167,7 +2129,7 @@ func (a *App) generateAnthropicResponse(settings *models.ChatbotSettings, sessio
 		"content": userMessage,
 	})
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"model":      settings.AI.Model,
 		"messages":   messages,
 		"max_tokens": settings.AI.MaxTokens,
@@ -2249,7 +2211,7 @@ func (a *App) generateGoogleResponse(settings *models.ChatbotSettings, session *
 		settings.AI.Model, settings.AI.APIKey)
 
 	// Build contents array
-	contents := []map[string]interface{}{}
+	contents := []map[string]any{}
 
 	// Add conversation history if enabled
 	if settings.AI.IncludeHistory && session != nil {
@@ -2259,7 +2221,7 @@ func (a *App) generateGoogleResponse(settings *models.ChatbotSettings, session *
 			if msg.Direction == models.DirectionOutgoing {
 				role = "model"
 			}
-			contents = append(contents, map[string]interface{}{
+			contents = append(contents, map[string]any{
 				"role": role,
 				"parts": []map[string]string{
 					{"text": msg.Message},
@@ -2269,16 +2231,16 @@ func (a *App) generateGoogleResponse(settings *models.ChatbotSettings, session *
 	}
 
 	// Add current user message
-	contents = append(contents, map[string]interface{}{
+	contents = append(contents, map[string]any{
 		"role": "user",
 		"parts": []map[string]string{
 			{"text": userMessage},
 		},
 	})
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"contents": contents,
-		"generationConfig": map[string]interface{}{
+		"generationConfig": map[string]any{
 			"maxOutputTokens": settings.AI.MaxTokens,
 		},
 	}
@@ -2295,7 +2257,7 @@ func (a *App) generateGoogleResponse(settings *models.ChatbotSettings, session *
 
 	// Add system instruction if configured
 	if systemPrompt != "" {
-		payload["systemInstruction"] = map[string]interface{}{
+		payload["systemInstruction"] = map[string]any{
 			"parts": []map[string]string{
 				{"text": systemPrompt},
 			},
@@ -2303,7 +2265,7 @@ func (a *App) generateGoogleResponse(settings *models.ChatbotSettings, session *
 	}
 
 	if settings.AI.Temperature > 0 {
-		payload["generationConfig"].(map[string]interface{})["temperature"] = settings.AI.Temperature
+		payload["generationConfig"].(map[string]any)["temperature"] = settings.AI.Temperature
 	}
 
 	jsonPayload, err := json.Marshal(payload)
@@ -2417,19 +2379,19 @@ func (a *App) handleIncomingReaction(account *models.WhatsAppAccount, fromPhone,
 	contact, _, _ := contactutil.GetOrCreateContact(a.DB, account.OrganizationID, fromPhone, profileName)
 
 	// Parse existing reactions from Metadata
-	var metadata map[string]interface{}
+	var metadata map[string]any
 	if message.Metadata != nil {
 		metadata = message.Metadata
 	} else {
-		metadata = make(map[string]interface{})
+		metadata = make(map[string]any)
 	}
 
 	// Get or initialize reactions array
 	var reactions []Reaction
 	if reactionsRaw, ok := metadata["reactions"]; ok {
-		if reactionsArray, ok := reactionsRaw.([]interface{}); ok {
+		if reactionsArray, ok := reactionsRaw.([]any); ok {
 			for _, r := range reactionsArray {
-				if rMap, ok := r.(map[string]interface{}); ok {
+				if rMap, ok := r.(map[string]any); ok {
 					emoji, _ := rMap["emoji"].(string)
 					reactions = append(reactions, Reaction{
 						Emoji:     emoji,
@@ -2473,7 +2435,7 @@ func (a *App) handleIncomingReaction(account *models.WhatsAppAccount, fromPhone,
 }
 
 // Helper function to safely get string from map
-func getStringFromMap(m map[string]interface{}, key string) string {
+func getStringFromMap(m map[string]any, key string) string {
 	if v, ok := m[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -2566,16 +2528,28 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 		return nil
 	}
 
+	// Opt-in (ChatbotSettings.MarkBotHandledAsRead, default off): if the
+	// chatbot will handle this conversation (enabled + no active agent
+	// transfer), pre-mark the message as read so the contact-list unread
+	// badge doesn't briefly flash before the bot's reply arrives (upstream
+	// issue #280). Off keeps incoming messages unread until an agent opens
+	// the chat, which is also when read receipts go to the customer.
+	if a.chatbotMarksBotHandledRead(account.OrganizationID, account.Name) && a.willChatbotHandle(account, contact) {
+		a.DB.Model(&models.Message{}).Where("id = ?", message.ID).
+			Update("status", models.MessageStatusRead)
+		message.Status = models.MessageStatusRead
+	}
+
 	// Update contact's last message info
 	preview := content
 	if len(preview) > 100 {
 		preview = preview[:97] + "..."
 	}
-	if msgType != "text" {
+	if msgType != "text" && msgType != "button_reply" && msgType != "nfm_reply" {
 		preview = "[" + msgType + "]"
 	}
 
-	a.DB.Model(contact).Updates(map[string]interface{}{
+	a.DB.Model(contact).Updates(map[string]any{
 		"last_message_at":      now,
 		"last_message_preview": preview,
 		"is_read":              false,
@@ -2590,14 +2564,18 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 
 	// Dispatch webhook for incoming message
 	a.DispatchWebhook(account.OrganizationID, models.WebhookEventMessageIncoming, MessageEventData{
-		MessageID:       message.ID.String(),
-		ContactID:       contact.ID.String(),
-		ContactPhone:    contact.PhoneNumber,
-		ContactName:     contact.ProfileName,
-		MessageType:     models.MessageType(msgType),
-		Content:         content,
-		WhatsAppAccount: account.Name,
-		Direction:       models.DirectionIncoming,
+		MessageID:        message.ID.String(),
+		ContactID:        contact.ID.String(),
+		ContactPhone:     contact.PhoneNumber,
+		ContactName:      contact.ProfileName,
+		MessageType:      models.MessageType(msgType),
+		Content:          content,
+		MediaURL:         messageMediaURL(&message),
+		MediaMimeType:    message.MediaMimeType,
+		MediaFilename:    message.MediaFilename,
+		ReplyToMessageID: replyToMessageIDString(&message),
+		WhatsAppAccount:  account.Name,
+		Direction:        models.DirectionIncoming,
 	})
 
 	return &message
@@ -2719,7 +2697,7 @@ func (a *App) isWithinBusinessHours(businessHours models.JSONBArray) bool {
 	currentTime := now.Format("15:04")
 
 	for _, bh := range businessHours {
-		bhMap, ok := bh.(map[string]interface{})
+		bhMap, ok := bh.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -2762,7 +2740,7 @@ func (a *App) isWithinBusinessHours(businessHours models.JSONBArray) bool {
 }
 
 // shouldSkipStep evaluates a text expression like "(status == 'vip' OR amount > 100) AND name != ”"
-func (a *App) shouldSkipStep(step *models.ChatbotFlowStep, sessionData map[string]interface{}) bool {
+func (a *App) shouldSkipStep(step *models.ChatbotFlowStep, sessionData map[string]any) bool {
 	if step.SkipCondition == "" {
 		a.Log.Debug("No skip condition for step", "step", step.StepName)
 		return false
@@ -2774,7 +2752,7 @@ func (a *App) shouldSkipStep(step *models.ChatbotFlowStep, sessionData map[strin
 }
 
 // evaluateExpression handles parentheses, AND, OR, and single conditions
-func evaluateExpression(expr string, data map[string]interface{}) bool {
+func evaluateExpression(expr string, data map[string]any) bool {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return false
@@ -2853,7 +2831,7 @@ func splitByLogicOperator(expr, op string) []string {
 }
 
 // evaluateSingleCondition handles: phone != ” or age > 18 or status == 'confirmed'
-func evaluateSingleCondition(expr string, data map[string]interface{}) bool {
+func evaluateSingleCondition(expr string, data map[string]any) bool {
 	expr = strings.TrimSpace(expr)
 
 	// Handle boolean literals
@@ -2929,4 +2907,166 @@ func parseNumber(s string) (float64, error) {
 	var n float64
 	_, err := fmt.Sscanf(s, "%f", &n)
 	return n, err
+}
+
+// ExtractedMessage holds the derived content fields of a message.
+type ExtractedMessage struct {
+	Text             string
+	Type             string // may differ from msg.Type, e.g. "button_reply"
+	Media            *MediaInfo
+	ButtonID         string         // used by chatbot routing only
+	FlowResponseData map[string]any // used by chatbot routing only
+}
+
+// extractMessageContent walks an IncomingTextMessage and returns the derived
+// fields. Used by both the inbound and echo paths.
+func (a *App) extractMessageContent(ctx context.Context, msg IncomingTextMessage, account *models.WhatsAppAccount) ExtractedMessage {
+	extracted := ExtractedMessage{
+		Type: msg.Type,
+	}
+
+	if msg.Type == "text" && msg.Text != nil {
+		extracted.Text = msg.Text.Body
+	} else if msg.Type == "button" && msg.Button != nil {
+		// Template quick_reply button click — WhatsApp sends type "button"
+		extracted.Text = msg.Button.Text
+		extracted.ButtonID = msg.Button.Payload
+		extracted.Type = "button_reply"
+	} else if msg.Type == "interactive" && msg.Interactive != nil {
+		// Handle button reply
+		if msg.Interactive.ButtonReply != nil {
+			extracted.Text = msg.Interactive.ButtonReply.Title
+			extracted.ButtonID = msg.Interactive.ButtonReply.ID
+			extracted.Type = "button_reply"
+		}
+		// Handle list reply
+		if msg.Interactive.ListReply != nil {
+			extracted.Text = msg.Interactive.ListReply.Title
+			extracted.ButtonID = msg.Interactive.ListReply.ID
+			extracted.Type = "button_reply"
+		}
+		// Handle WhatsApp Flow reply (nfm_reply)
+		if msg.Interactive.NFMReply != nil {
+			extracted.Text = msg.Interactive.NFMReply.Body
+			extracted.Type = "nfm_reply"
+			// Parse the response JSON to extract form data
+			if msg.Interactive.NFMReply.ResponseJSON != "" {
+				var responseData map[string]any
+				if err := json.Unmarshal([]byte(msg.Interactive.NFMReply.ResponseJSON), &responseData); err != nil {
+					a.Log.Error("Failed to parse flow response JSON", "error", err, "response_json", msg.Interactive.NFMReply.ResponseJSON)
+				} else {
+					extracted.FlowResponseData = responseData
+					a.Log.Info("Parsed WhatsApp Flow response", "data", extracted.FlowResponseData)
+				}
+			}
+		}
+	} else if msg.Type == "image" && msg.Image != nil {
+		// Handle image message
+		extracted.Text = msg.Image.Caption
+		extracted.Media = &MediaInfo{
+			MediaMimeType: msg.Image.MimeType,
+		}
+		// Download and save media locally
+		waAccount := a.toWhatsAppAccount(account)
+		if localPath, err := a.DownloadAndSaveMedia(ctx, msg.Image.ID, msg.Image.MimeType, waAccount); err != nil {
+			a.Log.Error("Failed to download image", "error", err, "media_id", msg.Image.ID)
+		} else {
+			extracted.Media.MediaURL = localPath
+		}
+	} else if msg.Type == "document" && msg.Document != nil {
+		// Handle document message
+		extracted.Text = msg.Document.Caption
+		extracted.Media = &MediaInfo{
+			MediaMimeType: msg.Document.MimeType,
+			MediaFilename: msg.Document.Filename,
+		}
+		// Download and save media locally
+		waAccount := a.toWhatsAppAccount(account)
+		if localPath, err := a.DownloadAndSaveMedia(ctx, msg.Document.ID, msg.Document.MimeType, waAccount); err != nil {
+			a.Log.Error("Failed to download document", "error", err, "media_id", msg.Document.ID)
+		} else {
+			extracted.Media.MediaURL = localPath
+		}
+	} else if msg.Type == "video" && msg.Video != nil {
+		// Handle video message
+		extracted.Text = msg.Video.Caption
+		extracted.Media = &MediaInfo{
+			MediaMimeType: msg.Video.MimeType,
+		}
+		// Download and save media locally
+		waAccount := a.toWhatsAppAccount(account)
+		if localPath, err := a.DownloadAndSaveMedia(ctx, msg.Video.ID, msg.Video.MimeType, waAccount); err != nil {
+			a.Log.Error("Failed to download video", "error", err, "media_id", msg.Video.ID)
+		} else {
+			extracted.Media.MediaURL = localPath
+		}
+	} else if msg.Type == "audio" && msg.Audio != nil {
+		// Handle audio message
+		extracted.Media = &MediaInfo{
+			MediaMimeType: msg.Audio.MimeType,
+		}
+		// Download and save media locally
+		waAccount := a.toWhatsAppAccount(account)
+		if localPath, err := a.DownloadAndSaveMedia(ctx, msg.Audio.ID, msg.Audio.MimeType, waAccount); err != nil {
+			a.Log.Error("Failed to download audio", "error", err, "media_id", msg.Audio.ID)
+		} else {
+			extracted.Media.MediaURL = localPath
+		}
+	} else if msg.Type == "sticker" && msg.Sticker != nil {
+		// Handle sticker message (treat like image)
+		extracted.Media = &MediaInfo{
+			MediaMimeType: msg.Sticker.MimeType,
+		}
+		// Download and save media locally
+		waAccount := a.toWhatsAppAccount(account)
+		if localPath, err := a.DownloadAndSaveMedia(ctx, msg.Sticker.ID, msg.Sticker.MimeType, waAccount); err != nil {
+			a.Log.Error("Failed to download sticker", "error", err, "media_id", msg.Sticker.ID)
+		} else {
+			extracted.Media.MediaURL = localPath
+		}
+	} else if msg.Type == "location" && msg.Location != nil {
+		// Handle location message - store as JSON in content
+		locationData := map[string]any{
+			"latitude":  msg.Location.Latitude,
+			"longitude": msg.Location.Longitude,
+		}
+		if msg.Location.Name != "" {
+			locationData["name"] = msg.Location.Name
+		}
+		if msg.Location.Address != "" {
+			locationData["address"] = msg.Location.Address
+		}
+		if jsonBytes, err := json.Marshal(locationData); err == nil {
+			extracted.Text = string(jsonBytes)
+		}
+	} else if msg.Type == "contacts" && len(msg.Contacts) > 0 {
+		// Handle contacts message - store as JSON in content
+		contactsData := make([]map[string]any, 0, len(msg.Contacts))
+		for _, c := range msg.Contacts {
+			contactVal := map[string]any{
+				"name": c.Name.FormattedName,
+			}
+			if len(c.Phones) > 0 {
+				phones := make([]string, 0, len(c.Phones))
+				for _, p := range c.Phones {
+					phones = append(phones, p.Phone)
+				}
+				contactVal["phones"] = phones
+			}
+			contactsData = append(contactsData, contactVal)
+		}
+		if jsonBytes, err := json.Marshal(contactsData); err == nil {
+			extracted.Text = string(jsonBytes)
+		}
+	}
+
+	return extracted
+}
+
+// replyToMessageIDString renders a message's reply target for webhook payloads.
+func replyToMessageIDString(m *models.Message) string {
+	if m == nil || m.ReplyToMessageID == nil {
+		return ""
+	}
+	return m.ReplyToMessageID.String()
 }

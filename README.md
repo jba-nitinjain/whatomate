@@ -143,6 +143,16 @@ make build-prod
 
 See [configuration docs](https://shridarpatil.github.io/whatomate/getting-started/configuration/) for detailed setup options.
 
+Any `config.toml` key can be overridden with an environment variable named `WHATOMATE_<SECTION>__<KEY>`, using a **double underscore** between levels (single underscores stay part of the name):
+
+```bash
+export WHATOMATE_DATABASE__HOST=db.internal
+export WHATOMATE_WHATSAPP__APP_ID=123456789
+export WHATOMATE_DEFAULT_ADMIN__EMAIL=admin@example.com
+```
+
+The older single-underscore form (`WHATOMATE_DATABASE_HOST`) is still accepted for every known key so existing deployments keep their settings; a deprecation warning is printed at startup, and the `__` form wins when both are set. Rename to the `__` form when convenient.
+
 Rollbar can be enabled either in `config.toml` under `[rollbar]` or with plain environment variables:
 
 ```bash

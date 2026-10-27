@@ -1,5 +1,14 @@
 package models
 
+// AuditAction represents the type of audit action
+type AuditAction string
+
+const (
+	AuditActionCreated AuditAction = "created"
+	AuditActionUpdated AuditAction = "updated"
+	AuditActionDeleted AuditAction = "deleted"
+)
+
 // TeamRole represents a user's role within a specific team (not organizational role)
 type TeamRole string
 
@@ -31,6 +40,10 @@ const (
 	MessageTypeReaction    MessageType = "reaction"
 	MessageTypeLocation    MessageType = "location"
 	MessageTypeContact     MessageType = "contact"
+	// MessageTypeCall is a locally generated chat entry for a voice call —
+	// not a WhatsApp message type. Used to surface missed click-to-call calls
+	// in the conversation.
+	MessageTypeCall MessageType = "call"
 )
 
 // MessageStatus represents the delivery status of a message
@@ -204,6 +217,24 @@ const (
 	WebhookEventTransferCreated  WebhookEvent = "transfer.created"
 	WebhookEventTransferResumed  WebhookEvent = "transfer.resumed"
 	WebhookEventTransferAssigned WebhookEvent = "transfer.assigned"
+	WebhookEventLeadReceived     WebhookEvent = "lead.received"
+	WebhookEventLeadSent         WebhookEvent = "lead.sent"
+)
+
+// Lead status constants
+const (
+	StatusLeadReceived            = "received"
+	StatusLeadFetched             = "fetched"
+	StatusLeadRetry               = "retry"
+	StatusLeadSending             = "sending" // send in flight; never auto-reclaimed (at-most-once)
+	StatusLeadSent                = "sent"
+	StatusLeadStored              = "stored"
+	StatusLeadSkippedDuplicate    = "skipped_duplicate"
+	StatusLeadSkippedNoMapping    = "skipped_no_mapping"
+	StatusLeadSkippedInvalidPhone = "skipped_invalid_phone"
+	StatusLeadSkippedOptedOut     = "skipped_opted_out"
+	StatusLeadSkippedNoConsent    = "skipped_no_consent"
+	StatusLeadFailed              = "failed"
 )
 
 // ActionType represents custom action types

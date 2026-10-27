@@ -24,11 +24,14 @@ func TestRSVPModels_Migrate_And_CRUD(t *testing.T) {
 	}
 	require.NoError(t, db.Create(&event).Error)
 
+	// rsvp_responses.contact_id is a foreign key to contacts.
+	contact := testutil.CreateTestContactWith(t, db, org.ID, testutil.WithPhoneNumber("15551230000"))
+
 	resp := models.RSVPResponse{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		RSVPEventID:    event.ID,
 		OrganizationID: org.ID,
-		ContactID:      uuid.New(),
+		ContactID:      contact.ID,
 		PhoneNumber:    "15551230000",
 		Attendance:     models.RSVPAttendancePending,
 		Answers:        models.JSONB{},

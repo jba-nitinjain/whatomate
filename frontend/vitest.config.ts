@@ -2,9 +2,9 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 
-// Minimal unit-test config, separate from vite.config.ts's build-oriented
-// plugin list (compression etc. are not needed for tests). Shares the same
-// '@' alias so components under test resolve imports identically to the app.
+// Unit tests only. Playwright owns frontend/e2e/**; keeping `include` scoped to
+// src/ stops the two runners from picking up each other's *.spec.ts files.
+// Shares the '@' alias so components under test resolve imports like the app.
 export default defineConfig({
   plugins: [vue()],
   resolve: {

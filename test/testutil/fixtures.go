@@ -210,7 +210,7 @@ func CreateTestContact(t *testing.T, db *gorm.DB, orgID uuid.UUID) *models.Conta
 	contact := &models.Contact{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		OrganizationID: orgID,
-		PhoneNumber:    "+1234567890" + uniqueID[:4],
+		PhoneNumber:    "+1234567890" + uniqueID,
 		ProfileName:    "Test Contact " + uniqueID,
 		IsActive:       true,
 	}
@@ -243,7 +243,7 @@ func CreateTestContactWith(t *testing.T, db *gorm.DB, orgID uuid.UUID, opts ...C
 	contact := &models.Contact{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		OrganizationID: orgID,
-		PhoneNumber:    "+1234567890" + uniqueID[:4],
+		PhoneNumber:    "+1234567890" + uniqueID,
 		ProfileName:    "Test Contact " + uniqueID,
 		IsActive:       true,
 	}
@@ -428,14 +428,11 @@ type APIKeyFixture struct {
 func CreateTestAPIKeyFixture(t *testing.T, db *gorm.DB, f *APIKeyFixture) {
 	t.Helper()
 
-	require.NoError(t, db.Table("api_keys").Create(map[string]any{
-		"id":                 f.ID,
-		"organization_id":    f.OrganizationID,
-		"user_id":            f.UserID,
-		"name":               f.Name,
-		"key_prefix":         f.KeyPrefix,
-		"key_hash":           f.KeyHash,
-		"is_active":          f.IsActive,
-		"is_super_admin_key": f.IsSuperAdminKey,
-	}).Error)
+	// Raw INSERT: a map-based Create on a model-less table makes GORM try to
+	// read back the primary key via LastInsertId, which pgx does not support.
+	require.NoError(t, db.Exec(
+		`INSERT INTO api_keys (id, organization_id, user_id, name, key_prefix, key_hash, is_active, is_super_admin_key, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+		f.ID, f.OrganizationID, f.UserID, f.Name, f.KeyPrefix, f.KeyHash, f.IsActive, f.IsSuperAdminKey,
+	).Error)
 }

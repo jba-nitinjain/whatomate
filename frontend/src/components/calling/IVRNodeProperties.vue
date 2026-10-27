@@ -38,6 +38,16 @@ function updateConfig(key: string, value: any) {
   })
 }
 
+// Set multiple config keys in a single emit. Calling updateConfig twice in a
+// row loses the first change: the prop doesn't update synchronously after
+// emit, so the second call rebuilds from a stale props.node and clobbers it.
+function updateConfigEntries(entries: Record<string, any>) {
+  emit('update:node', {
+    ...props.node,
+    config: { ...props.node.config, ...entries }
+  })
+}
+
 function updateLabel(label: string) {
   emit('update:node', { ...props.node, label })
 }
@@ -66,8 +76,9 @@ async function handleFileSelect(event: Event) {
     const res = await ivrFlowsService.uploadAudio(file)
     const filename = res.data?.data?.filename
     if (filename) {
-      updateConfig('audio_file', filename)
-      updateConfig('greeting_text', undefined)
+      // Uploading a clip and TTS text are mutually exclusive; clear greeting_text
+      // so the backend doesn't TTS-regenerate and overwrite the uploaded audio_file.
+      updateConfigEntries({ audio_file: filename, greeting_text: undefined })
       toast.success('Audio uploaded')
     }
   } catch {
@@ -175,6 +186,53 @@ function updateHeaderValue(key: string, value: string) {
   updateConfig('headers', headers)
 }
 
+// Transfer callback helpers
+const callbackEvents = ['on_waiting', 'on_connect'] as const
+type CallbackEvent = typeof callbackEvents[number]
+
+const callbackLabels: Record<CallbackEvent, string> = {
+  on_waiting: 'On Waiting',
+  on_connect: 'On Connect',
+}
+
+function getCallbackConfig(event: CallbackEvent) {
+  return (config.value[event] as Record<string, any>) || {}
+}
+
+function updateCallbackField(event: CallbackEvent, field: string, value: any) {
+  const cb = { ...getCallbackConfig(event), [field]: value }
+  updateConfig(event, cb)
+}
+
+function addCallbackHeader(event: CallbackEvent) {
+  const cb = getCallbackConfig(event)
+  const headers = { ...(cb.headers || {}), '': '' }
+  updateCallbackField(event, 'headers', headers)
+}
+
+function removeCallbackHeader(event: CallbackEvent, key: string) {
+  const cb = getCallbackConfig(event)
+  const headers = { ...(cb.headers || {}) }
+  delete headers[key]
+  updateCallbackField(event, 'headers', headers)
+}
+
+function updateCallbackHeaderKey(event: CallbackEvent, oldKey: string, newKey: string) {
+  if (oldKey === newKey) return
+  const cb = getCallbackConfig(event)
+  const headers = { ...(cb.headers || {}) }
+  headers[newKey] = headers[oldKey]
+  delete headers[oldKey]
+  updateCallbackField(event, 'headers', headers)
+}
+
+function updateCallbackHeaderValue(event: CallbackEvent, key: string, value: string) {
+  const cb = getCallbackConfig(event)
+  const headers = { ...(cb.headers || {}) }
+  headers[key] = value
+  updateCallbackField(event, 'headers', headers)
+}
+
 // Goto flow targets
 const gotoFlowTargets = computed(() =>
   callingStore.ivrFlows.filter(f => f.id !== props.currentFlowId)
@@ -239,7 +297,7 @@ const greetingTab = computed(() =>
         <TabsContent value="text" class="mt-2">
           <Textarea
             :model-value="config.greeting_text || ''"
-            @update:model-value="(v: string) => updateConfig('greeting_text', v)"
+            @update:model-value="(v: string) => updateConfigEntries(v ? { greeting_text: v, audio_file: undefined } : { greeting_text: v })"
             placeholder="Enter text for TTS..."
             class="min-h-[60px] text-xs resize-none"
             :maxlength="500"
@@ -363,6 +421,68 @@ const greetingTab = computed(() =>
             </SelectItem>
           </SelectContent>
         </Select>
+      </div>
+
+      <!-- HTTP Callbacks per lifecycle event -->
+      <div class="space-y-2 mt-3">
+        <Label class="text-xs font-medium">HTTP Callbacks</Label>
+        <p class="text-[10px] text-muted-foreground">Configure API calls to your CRM at each transfer stage.</p>
+
+        <div v-for="event in callbackEvents" :key="event" class="border rounded-md">
+          <button class="w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium hover:bg-muted/50" @click="updateCallbackField(event, '_expanded', !getCallbackConfig(event)._expanded)">
+            <span>{{ callbackLabels[event] }}</span>
+            <span v-if="getCallbackConfig(event).url" class="text-[10px] text-emerald-500">Configured</span>
+          </button>
+
+          <div v-if="getCallbackConfig(event)._expanded" class="px-3 pb-3 space-y-1.5 border-t">
+            <div class="space-y-1 pt-2">
+              <Label class="text-[10px]">URL</Label>
+              <Input :model-value="getCallbackConfig(event).url || ''" @update:model-value="(v: string) => updateCallbackField(event, 'url', v)" placeholder="https://crm.example.com/api/call" class="h-7 text-xs font-mono" />
+            </div>
+            <div class="space-y-1">
+              <Label class="text-[10px]">Method</Label>
+              <Select :model-value="getCallbackConfig(event).method || 'POST'" @update:model-value="(v: any) => updateCallbackField(event, 'method', v)">
+                <SelectTrigger class="h-7 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="GET">GET</SelectItem>
+                  <SelectItem value="POST">POST</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="space-y-1">
+              <div class="flex items-center justify-between">
+                <Label class="text-[10px]">Headers</Label>
+                <Button variant="outline" size="sm" class="h-5 text-[10px] px-1.5" @click="addCallbackHeader(event)">
+                  <Plus class="h-2.5 w-2.5 mr-0.5" /> Add
+                </Button>
+              </div>
+              <div v-for="(val, key) in (getCallbackConfig(event).headers || {})" :key="String(key)" class="flex items-center gap-1">
+                <Input :model-value="String(key)" @update:model-value="(v: string) => updateCallbackHeaderKey(event, String(key), v)" placeholder="Key" class="h-6 text-[10px] flex-1" />
+                <Input :model-value="String(val)" @update:model-value="(v: string) => updateCallbackHeaderValue(event, String(key), v)" placeholder="Value" class="h-6 text-[10px] flex-1" />
+                <Button variant="ghost" size="icon" class="h-5 w-5" @click="removeCallbackHeader(event, String(key))">
+                  <Trash2 class="h-2.5 w-2.5 text-destructive" />
+                </Button>
+              </div>
+            </div>
+            <div v-if="(getCallbackConfig(event).method || 'POST') === 'POST'" class="space-y-1">
+              <Label class="text-[10px]">Body Template</Label>
+              <Textarea :model-value="getCallbackConfig(event).body_template || ''" @update:model-value="(v: string) => updateCallbackField(event, 'body_template', v)" :placeholder='`{"phone": "{{caller_phone}}", "transfer_id": "{{transfer_id}}"}`' class="min-h-[50px] text-[10px] font-mono resize-none" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Available variables reference -->
+      <div class="border rounded-md mt-2">
+        <button class="w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium hover:bg-muted/50" @click="updateConfig('_vars_expanded', !config._vars_expanded)">
+          <span>Available Variables</span>
+        </button>
+        <div v-if="config._vars_expanded" class="px-3 pb-2 border-t">
+          <div class="flex flex-wrap gap-1 pt-2">
+            <code v-for="v in ['caller_phone', 'contact_id', 'call_log_id', 'transfer_id', 'team_id', 'whatsapp_account', 'status', 'transferred_at', 'ivr_path', 'agent_id *', 'agent_email *', 'agent_name *', 'hold_duration **', 'talk_duration **']" :key="v" class="bg-muted px-1.5 py-0.5 rounded text-[10px] cursor-pointer hover:bg-muted/80" :title="v.includes('*') ? 'Available on connect/complete only' : ''">{{ v.replace(' *', '').replace(' **', '') }}</code>
+          </div>
+          <p class="text-[9px] text-muted-foreground mt-1.5">* on_connect/on_complete only &nbsp; ** on_complete only</p>
+        </div>
       </div>
     </template>
 

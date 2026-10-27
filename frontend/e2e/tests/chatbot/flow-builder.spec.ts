@@ -2,6 +2,11 @@ import { test, expect } from '@playwright/test'
 import { loginAsAdmin } from '../../helpers'
 import { ChatbotFlowBuilderPage } from '../../pages'
 
+// Covers this fork's step-based flow builder (steps list -> message type
+// palette in the centre panel -> Step Properties on the right). Reply-button
+// steps follow WhatsApp limits (max 3 reply buttons, or max 2 URL/phone CTA
+// buttons, never mixed); "List" steps use reply_mode=list with up to 10 rows.
+
 test.describe('Chatbot Flow Builder - Step Properties', () => {
   let builder: ChatbotFlowBuilderPage
 
@@ -22,6 +27,7 @@ test.describe('Chatbot Flow Builder - Step Properties', () => {
     await expect(builder.page.getByText('Message Type')).toBeVisible()
     await expect(builder.page.getByRole('button', { name: 'Text', exact: true })).toBeVisible()
     await expect(builder.page.getByRole('button', { name: 'Buttons', exact: true })).toBeVisible()
+    await expect(builder.page.getByRole('button', { name: 'List', exact: true })).toBeVisible()
     await expect(builder.page.getByRole('button', { name: 'API', exact: true })).toBeVisible()
     await expect(builder.page.getByRole('button', { name: 'Transfer', exact: true })).toBeVisible()
   })
@@ -69,7 +75,7 @@ test.describe('Chatbot Flow Builder - Buttons Message Type', () => {
   test('should add a reply button', async () => {
     await builder.addReplyButton.click()
     await expect(builder.getButtonTitleInput(0)).toBeVisible()
-    await expect(builder.buttonOptionsLabel).toContainText('1/10')
+    await expect(builder.buttonOptionsLabel).toContainText('1/3')
   })
 
   test('should add a URL button with /2 count', async () => {
@@ -90,7 +96,19 @@ test.describe('Chatbot Flow Builder - Buttons Message Type', () => {
     await builder.addReplyButton.click()
     await builder.addReplyButton.click()
     await builder.addReplyButton.click()
-    await expect(builder.buttonOptionsLabel).toContainText('3/10')
+    await expect(builder.buttonOptionsLabel).toContainText('3/3')
+  })
+
+  test('should cap reply buttons at 3 (WhatsApp reply-button limit)', async () => {
+    await builder.addReplyButton.click()
+    await builder.addReplyButton.click()
+    await builder.addReplyButton.click()
+    await expect(builder.addReplyButton).toBeDisabled()
+  })
+
+  test('should not show list picker fields in reply-button mode', async () => {
+    await expect(builder.listButtonTextLabel).toHaveCount(0)
+    await expect(builder.listSectionTitleLabel).toHaveCount(0)
   })
 
   test('should add multiple CTA buttons and show correct count', async () => {
@@ -123,9 +141,9 @@ test.describe('Chatbot Flow Builder - Buttons Message Type', () => {
 
   test('should remove a button', async () => {
     await builder.addReplyButton.click()
-    await expect(builder.buttonOptionsLabel).toContainText('1/10')
+    await expect(builder.buttonOptionsLabel).toContainText('1/3')
     await builder.getButtonDeleteButton(0).click()
-    await expect(builder.buttonOptionsLabel).toContainText('0/10')
+    await expect(builder.buttonOptionsLabel).toContainText('0/3')
   })
 
   test('should show button preview in WhatsApp preview panel', async () => {
@@ -173,5 +191,43 @@ test.describe('Chatbot Flow Builder - Switching Message Types', () => {
     await builder.selectMessageType('Transfer')
     await expect(builder.page.getByText(/Assign to Team/i)).toBeVisible()
     await expect(builder.buttonOptionsLabel).not.toBeVisible()
+  })
+})
+
+test.describe('Chatbot Flow Builder - List Reply Mode', () => {
+  let builder: ChatbotFlowBuilderPage
+
+  test.beforeEach(async ({ page }) => {
+    await loginAsAdmin(page)
+    builder = new ChatbotFlowBuilderPage(page)
+    await builder.gotoNew()
+    await builder.addStep()
+    await builder.selectStep(1)
+    await builder.selectMessageType('List')
+  })
+
+  test('should show button options with a 10-row limit', async () => {
+    await expect(builder.buttonOptionsLabel).toBeVisible()
+    await expect(builder.buttonOptionsLabel).toContainText('0/10')
+  })
+
+  test('should show list button text and section title fields', async () => {
+    await expect(builder.listButtonTextLabel).toBeVisible()
+    await expect(builder.listSectionTitleLabel).toBeVisible()
+  })
+
+  test('should allow more than 3 rows and show a row description input', async () => {
+    for (let i = 0; i < 4; i++) {
+      await builder.addReplyButton.click()
+    }
+    await expect(builder.buttonOptionsLabel).toContainText('4/10')
+    await expect(builder.addReplyButton).toBeEnabled()
+    await expect(builder.listRowDescriptionInputs).toHaveCount(4)
+  })
+
+  test('should switch back to reply buttons mode with a 3-button limit', async () => {
+    await builder.selectMessageType('Buttons')
+    await expect(builder.listButtonTextLabel).toHaveCount(0)
+    await expect(builder.buttonOptionsLabel).toContainText('0/3')
   })
 })

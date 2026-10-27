@@ -138,6 +138,37 @@ Positional example:
 }
 ```
 
+### Header text variable (`header_params`, optional)
+
+If the template has a TEXT header with a variable (Meta allows at most one), Whatomate sends its value in the header component. Supply it either way:
+
+- in `template_params` under the same name (`{"1": "ORD-9"}` for `Order {{1}}`, or `{"season": "Summer"}` for `Our {{season}} sale`) — this is how requests worked before and still works unchanged
+- or in `header_params`, which wins when both are set:
+
+```json
+{
+  "header_params": { "season": "Summer" }
+}
+```
+
+If the header variable is missing from both, the request is rejected with `400 Missing header parameter "<name>". Pass it in header_params or template_params.` Meta would reject such a send anyway, so this only turns a later delivery failure into an immediate, explicit error. A header with more than one variable returns `400 Template header text contains N variables; Meta allows at most 1`.
+
+### Button parameters (`button_params`, optional)
+
+Dynamic URL buttons are still filled from `template_params` (the URL's variable name, or `button_url_<index>` / `button_<index>`). Alternatively send `button_params`, keyed by the button's index in the template (`"0"` is the first button):
+
+```json
+{
+  "button_params": { "0": "abc123" }
+}
+```
+
+- for a URL button, the value replaces the URL variable; it also satisfies the missing-parameter check and takes precedence over `template_params` for that button
+- for a COPY_CODE (coupon) or OTP button, the value is sent as the code
+- AUTHENTICATION templates with an OTP button need nothing extra: when `button_params` is omitted, the code is taken from `template_params["1"]`
+
+For multipart requests, send `header_params` and `button_params` as JSON strings in text form fields.
+
 ### Header media
 
 If the template uses image, video, or document header media, you can send:
@@ -166,7 +197,7 @@ Notes:
 - with multipart requests, `header_media_filename` can be sent as a normal text form field
 - if `header_media_filename` is omitted for multipart, Whatomate uses the uploaded file part's filename
 - if `header_media_filename` is omitted for `header_media_url`, Whatomate uses the basename from the URL path, for example `campaign-brief.pdf` from `https://cdn.example.com/files/campaign-brief.pdf?download=1`
-- if `header_media_id` is used, Whatomate skips upload and uses the existing WhatsApp media ID; set the intended filename when that media is originally uploaded
+- if `header_media_id` is used, Whatomate skips upload and uses the existing WhatsApp media ID; pass `header_media_filename` to set the document name shown to the recipient
 
 ## Common Examples
 
@@ -577,6 +608,8 @@ Typical response:
 }
 ```
 
+When the template has header media that Whatomate downloaded or received as a file, the response also carries `media_url` (a Whatomate media path for the chat preview), `media_mime_type` and `media_filename`. These fields are omitted when empty, so existing parsers are unaffected.
+
 `"status": "pending"` means the request was accepted and queued — it does **not** mean the message has been sent. Use `status_callback_url` if you need to know the real outcome. Store the returned `id`; it is the `message_id` in every status callback.
 
 ## Error Cases
@@ -588,6 +621,10 @@ Common failures:
 - `400 Invalid contact_id`
 - `400 Invalid template_id`
 - `400 Missing template parameters: ...`
+- `400 Missing header parameter "<name>". Pass it in header_params or template_params.`
+- `400 Template header text contains N variables; Meta allows at most 1`
+- `400 Contact has opted out of marketing messages` (MARKETING-category templates only, when the contact has opted out of marketing via the WhatsApp "Stop promotions" preference reported by Meta, or a Lead Ads opt-out)
+- `400 Invalid header_params JSON` / `400 Invalid button_params JSON` (multipart only)
 - `400 WhatsApp account not found for phone_number_id`
 - `400 WhatsApp account not found`
 - `400 status_callback_url must start with http:// or https://`

@@ -15,10 +15,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PageHeader } from "@/components/shared";
+import { PageHeader, AuditLogPanel } from "@/components/shared";
 import ChatRepairPanel from "@/components/settings/ChatRepairPanel.vue";
 import LanguageSwitcher from "@/components/LanguageSwitcher.vue";
-import { useAuthStore } from "@/stores/auth";
+import { useAuthStore, type CallRingtone } from "@/stores/auth";
+import { previewRingtone } from "@/lib/ringtone";
 import { toast } from "vue-sonner";
 import {
   Settings,
@@ -36,6 +37,16 @@ import { usersService, organizationService } from "@/services/api";
 
 const { t } = useI18n();
 const authStore = useAuthStore();
+
+// The active org may be overridden by the X-Organization-ID header
+// (localStorage.selected_organization_id) when a super admin switches orgs.
+// That override is what the backend uses for scoping, so we must read it here
+// too — otherwise the activity log panel would query the user's default org
+// instead of the currently-active one.
+const orgID = computed(
+  () => localStorage.getItem('selected_organization_id') || authStore.organizationId,
+)
+const userID = computed(() => authStore.user?.id || '')
 
 const isSubmitting = ref(false);
 const isLoading = ref(true);
@@ -58,7 +69,8 @@ const notificationSettings = ref({
   email_notifications: true,
   new_message_alerts: true,
   campaign_updates: true,
-});
+  call_ringtone: 'ring' as CallRingtone
+})
 
 // Calling Settings
 const callingSettings = ref({
@@ -77,6 +89,17 @@ const holdMusicAudio = ref<HTMLAudioElement | null>(null);
 const ringbackAudio = ref<HTMLAudioElement | null>(null);
 const playingHoldMusic = ref(false);
 const playingRingback = ref(false);
+
+// Bump these keys to force the AuditLogPanel to remount and refetch after a save.
+// The backend writes audit entries asynchronously in a goroutine, so we delay
+// the remount slightly to give the write time to hit the DB before refetching.
+const generalLogKey = ref(0)
+const notificationLogKey = ref(0)
+const callingLogKey = ref(0)
+
+function refreshActivityLog(key: typeof generalLogKey) {
+  setTimeout(() => { key.value++ }, 500)
+}
 
 onMounted(async () => {
   try {
@@ -111,7 +134,8 @@ onMounted(async () => {
         email_notifications: user.settings.email_notifications ?? true,
         new_message_alerts: user.settings.new_message_alerts ?? true,
         campaign_updates: user.settings.campaign_updates ?? true,
-      };
+        call_ringtone: user.settings.call_ringtone ?? 'ring'
+      }
     }
   } catch (error) {
     console.error("Failed to load settings:", error);
@@ -131,6 +155,7 @@ async function saveGeneralSettings() {
       message_retention_days: generalSettings.value.message_retention_days || 0,
     });
     toast.success(t("settings.generalSaved"));
+    refreshActivityLog(generalLogKey);
   } catch (error) {
     toast.error(t("common.failedSave", { resource: t("resources.settings") }));
   } finally {
@@ -145,8 +170,13 @@ async function saveNotificationSettings() {
       email_notifications: notificationSettings.value.email_notifications,
       new_message_alerts: notificationSettings.value.new_message_alerts,
       campaign_updates: notificationSettings.value.campaign_updates,
-    });
-    toast.success(t("settings.notificationsSaved"));
+      call_ringtone: notificationSettings.value.call_ringtone
+    })
+    // Pull the saved settings back into the auth store so the ringtone picker
+    // takes effect on the next call without a reload.
+    await authStore.refreshUserData()
+    toast.success(t('settings.notificationsSaved'))
+    refreshActivityLog(notificationLogKey)
   } catch (error) {
     toast.error(
       t("common.failedSave", { resource: t("resources.notificationSettings") }),
@@ -165,6 +195,7 @@ async function saveCallingSettings() {
       transfer_timeout_secs: callingSettings.value.transfer_timeout_secs,
     });
     toast.success(t("settings.callingSaved"));
+    refreshActivityLog(callingLogKey);
   } catch (error) {
     toast.error(t("common.failedSave", { resource: t("resources.settings") }));
   } finally {
@@ -452,6 +483,9 @@ function togglePlayAudio(type: "hold_music" | "ringback") {
                 </div>
               </div>
             </div>
+            <div v-if="orgID" class="mt-4">
+              <AuditLogPanel :key="generalLogKey" resource-type="settings.general" :resource-id="orgID" />
+            </div>
           </TabsContent>
 
           <!-- Notification Settings Tab -->
@@ -520,6 +554,34 @@ function togglePlayAudio(type: "hold_music" | "ringback") {
                     "
                   />
                 </div>
+                <Separator class="bg-white/[0.08] light:bg-gray-200" />
+                <div class="flex items-center justify-between gap-4">
+                  <div>
+                    <p class="font-medium text-white light:text-gray-900">{{ $t('settings.callRingtone') }}</p>
+                    <p class="text-sm text-white/40 light:text-gray-500">{{ $t('settings.callRingtoneDesc') }}</p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <Select v-model="notificationSettings.call_ringtone">
+                      <SelectTrigger class="w-44 bg-white/[0.04] border-white/[0.1] text-white/70 light:bg-white light:border-gray-200 light:text-gray-700">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent class="bg-[#141416] border-white/[0.08] light:bg-white light:border-gray-200">
+                        <SelectItem value="ring" class="text-white/70 focus:bg-white/[0.08] focus:text-white light:text-gray-700 light:focus:bg-gray-100">{{ $t('settings.ringtoneRing') }}</SelectItem>
+                        <SelectItem value="beep" class="text-white/70 focus:bg-white/[0.08] focus:text-white light:text-gray-700 light:focus:bg-gray-100">{{ $t('settings.ringtoneBeep') }}</SelectItem>
+                        <SelectItem value="none" class="text-white/70 focus:bg-white/[0.08] focus:text-white light:text-gray-700 light:focus:bg-gray-100">{{ $t('settings.ringtoneNone') }}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      class="bg-white/[0.04] border-white/[0.1] text-white/70 hover:bg-white/[0.08] hover:text-white light:bg-white light:border-gray-200 light:text-gray-700 light:hover:bg-gray-50"
+                      :disabled="notificationSettings.call_ringtone === 'none'"
+                      @click="previewRingtone(notificationSettings.call_ringtone)"
+                    >
+                      <Play class="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
                 <div class="flex justify-end pt-4">
                   <Button
                     variant="outline"
@@ -536,6 +598,9 @@ function togglePlayAudio(type: "hold_music" | "ringback") {
                   </Button>
                 </div>
               </div>
+            </div>
+            <div v-if="userID" class="mt-4">
+              <AuditLogPanel :key="notificationLogKey" resource-type="settings.notification" :resource-id="userID" />
             </div>
           </TabsContent>
 
@@ -759,6 +824,9 @@ function togglePlayAudio(type: "hold_music" | "ringback") {
                   </Button>
                 </div>
               </div>
+            </div>
+            <div v-if="orgID" class="mt-4">
+              <AuditLogPanel :key="callingLogKey" resource-type="settings.calling" :resource-id="orgID" />
             </div>
           </TabsContent>
 

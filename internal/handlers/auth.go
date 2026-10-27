@@ -278,7 +278,7 @@ func (a *App) RefreshToken(r *fastglue.Request) error {
 	}
 
 	// Parse and validate refresh token
-	token, err := jwt.ParseWithClaims(refreshTokenStr, &middleware.JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(refreshTokenStr, &middleware.JWTClaims{}, func(token *jwt.Token) (any, error) {
 		return []byte(a.Config.JWT.Secret), nil
 	})
 
@@ -310,6 +310,25 @@ func (a *App) RefreshToken(r *fastglue.Request) error {
 
 	if !user.IsActive {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Account is disabled", nil, "")
+	}
+
+	// users.organization_id is only the home org, so carry forward the org this
+	// session was switched into — otherwise the first refresh silently reverts a
+	// switched session. Re-validate it: a member removed since the last refresh
+	// must drop back to their home org.
+	if claims.OrganizationID != uuid.Nil && claims.OrganizationID != user.OrganizationID {
+		if user.IsSuperAdmin {
+			var count int64
+			if err := a.DB.Table("organizations").Where("id = ?", claims.OrganizationID).Count(&count).Error; err == nil && count > 0 {
+				user.OrganizationID = claims.OrganizationID
+			}
+		} else {
+			var userOrg models.UserOrganization
+			if err := a.DB.Where("user_id = ? AND organization_id = ?", user.ID, claims.OrganizationID).First(&userOrg).Error; err == nil {
+				user.OrganizationID = claims.OrganizationID
+				user.RoleID = userOrg.RoleID
+			}
+		}
 	}
 
 	// Generate new tokens (rotation: new refresh token with new JTI)
@@ -428,10 +447,9 @@ func (a *App) SwitchOrg(r *fastglue.Request) error {
 		if err := a.DB.Where("user_id = ? AND organization_id = ?", userID, req.OrganizationID).First(&userOrg).Error; err != nil {
 			return r.SendErrorEnvelope(fasthttp.StatusForbidden, "You are not a member of this organization", nil, "")
 		}
-		// Use the role from the user_organizations table for the target org
-		if userOrg.RoleID != nil {
-			user.RoleID = userOrg.RoleID
-		}
+		// The target org's membership row is the only source of the role there;
+		// keeping the home-org role would carry its permissions across tenants.
+		user.RoleID = userOrg.RoleID
 	}
 
 	// Set the target org on the user for token generation
@@ -497,7 +515,7 @@ func (a *App) Logout(r *fastglue.Request) error {
 
 	if refreshTokenStr != "" {
 		// Parse the token to extract JTI (don't need to fully validate — just extract claims)
-		token, _ := jwt.ParseWithClaims(refreshTokenStr, &middleware.JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+		token, _ := jwt.ParseWithClaims(refreshTokenStr, &middleware.JWTClaims{}, func(token *jwt.Token) (any, error) {
 			return []byte(a.Config.JWT.Secret), nil
 		})
 		if token != nil {
@@ -537,8 +555,10 @@ func (a *App) GetWSToken(r *fastglue.Request) error {
 	if !ok {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-	orgID, ok := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	if !ok {
+	// The hub registers the client under this org and BroadcastToOrg fans out by
+	// it, so resolve the active org rather than trusting the JWT's default.
+	orgID, err := a.getOrgID(r)
+	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 

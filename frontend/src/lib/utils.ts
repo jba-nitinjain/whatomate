@@ -5,14 +5,29 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatDate(date: string | Date, options?: Intl.DateTimeFormatOptions): string {
+type DateInput = string | Date | null | undefined
+
+function toValidDate(date: DateInput): Date | null {
+  if (date === null || date === undefined || date === '') return null
   const d = typeof date === 'string' ? new Date(date) : date
-  return d.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    ...options
-  })
+  return isNaN(d.getTime()) ? null : d
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** Format calendar parts (month is 1-based) as dd/mm/yyyy. */
+export function formatDayMonthYear(year: number, month: number, day: number): string {
+  return `${pad2(day)}/${pad2(month)}/${year}`
+}
+
+/**
+ * Format a date for display as dd/mm/yyyy (local time).
+ * Store/transmit ISO; only format at display. Returns '' for empty/invalid input.
+ */
+export function formatDate(date: DateInput): string {
+  const d = toValidDate(date)
+  if (!d) return ''
+  return formatDayMonthYear(d.getFullYear(), d.getMonth() + 1, d.getDate())
 }
 
 export function formatTime(date: string | Date): string {
@@ -23,8 +38,18 @@ export function formatTime(date: string | Date): string {
   })
 }
 
-export function formatDateTime(date: string | Date): string {
-  return `${formatDate(date)} ${formatTime(date)}`
+/** Format a date-time for display as dd/mm/yyyy HH:mm (local time, 24-hour). */
+export function formatDateTime(date: DateInput): string {
+  const d = toValidDate(date)
+  if (!d) return ''
+  return `${formatDate(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+/** Format a date as dd/mm (local time) for compact chart axis labels. */
+export function formatDayMonth(date: DateInput): string {
+  const d = toValidDate(date)
+  if (!d) return ''
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`
 }
 
 export function truncate(str: string, length: number): string {
@@ -85,14 +110,9 @@ export function formatLabel(key: string): string {
     .replace(/\b\w/g, c => c.toUpperCase())
 }
 
-/** Format a date as dd/mm/yyyy for display. Store/transmit ISO; format only here. */
+/** Format a date as dd/mm/yyyy for display. Alias of formatDate, kept for existing callers. */
 export function formatDateDDMMYYYY(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date
-  if (isNaN(d.getTime())) return ''
-  const day = String(d.getDate()).padStart(2, '0')
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const year = d.getFullYear()
-  return `${day}/${month}/${year}`
+  return formatDate(date)
 }
 
 /** Format a date as dd/mm/yyyy HH:mm in IST (Asia/Kolkata) for display. */
@@ -107,3 +127,96 @@ export function formatDateTimeIST(date: string | Date): string {
   const g = (t: string) => parts.find(p => p.type === t)?.value || ''
   return `${g('day')}/${g('month')}/${g('year')} ${g('hour')}:${g('minute')}`
 }
+export function getQualityBadgeClass(rating: string): string {
+  if (!rating) return 'bg-gray-800 text-gray-400 light:bg-gray-100 light:text-gray-600'
+  switch (rating.toUpperCase()) {
+    case 'GREEN':
+    case 'HIGH':
+      return 'bg-green-950 text-green-400 border border-green-800/40 light:bg-green-100 light:text-green-800'
+    case 'YELLOW':
+    case 'MEDIUM':
+      return 'bg-yellow-950 text-yellow-400 border border-yellow-800/40 light:bg-yellow-100 light:text-yellow-800'
+    case 'RED':
+    case 'LOW':
+      return 'bg-red-950 text-red-400 border border-red-800/40 light:bg-red-100 light:text-red-800'
+    default:
+      return 'bg-gray-800 text-gray-400 light:bg-gray-100 light:text-gray-600'
+  }
+}
+
+export function getQualityRatingLabel(rating: string | undefined, t: (key: string) => string): string {
+  switch ((rating || '').toUpperCase()) {
+    case '':
+    case 'UNKNOWN':
+      return t('accounts.qualityUnknown')
+    case 'GREEN':
+    case 'HIGH':
+      return t('accounts.qualityGreen')
+    case 'YELLOW':
+    case 'MEDIUM':
+      return t('accounts.qualityYellow')
+    case 'RED':
+    case 'LOW':
+      return t('accounts.qualityRed')
+    default:
+      return rating || ''
+  }
+}
+
+export function getVerificationBadgeClass(status: string): string {
+  if (!status) return 'bg-gray-800 text-gray-400 light:bg-gray-100 light:text-gray-600'
+  switch (status.toUpperCase()) {
+    case 'VERIFIED':
+    case 'VERIFIED_CODE':
+      return 'bg-green-950 text-green-400 border border-green-800/40 light:bg-green-100 light:text-green-800'
+    case 'NOT_VERIFIED':
+      return 'bg-red-950 text-red-400 border border-red-800/40 light:bg-red-100 light:text-red-800'
+    case 'EXPIRED':
+      return 'bg-amber-950 text-amber-400 border border-amber-800/40 light:bg-amber-100 light:text-amber-800'
+    default:
+      return 'bg-gray-800 text-gray-400 light:bg-gray-100 light:text-gray-600'
+  }
+}
+
+export function getVerificationStatusLabel(status: string | undefined, t: (key: string) => string): string {
+  switch ((status || '').toUpperCase()) {
+    case 'VERIFIED':
+    case 'VERIFIED_CODE':
+      return t('accounts.statusVerified')
+    case 'NOT_VERIFIED':
+      return t('accounts.statusNotVerified')
+    case 'EXPIRED':
+      return t('accounts.statusExpired')
+    default:
+      return status || ''
+  }
+}
+
+export function formatLimitTier(
+  tier: string | undefined,
+  isSandbox: boolean | undefined,
+  t: (key: string) => string
+): string {
+  if (isSandbox) {
+    return t('accounts.limitTierSandbox')
+  }
+  if (!tier) {
+    return t('accounts.limitTierDefault')
+  }
+  const clean = tier.toUpperCase().replace('TIER_', '')
+  switch (clean) {
+    case '250':
+      return t('accounts.limitTier250')
+    case '2K':
+      return t('accounts.limitTier2K')
+    case '10K':
+      return t('accounts.limitTier10K')
+    case '100K':
+      return t('accounts.limitTier100K')
+    case 'UNLIMITED':
+      return t('accounts.limitTierUnlimited')
+    default:
+      return `${clean} msgs/day`
+  }
+}
+

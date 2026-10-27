@@ -61,13 +61,16 @@ test.describe('Messages Tab', () => {
     await expect(page.locator('input#timeout')).toBeVisible()
   })
 
-  test('should have add greeting button option', async ({ page }) => {
-    await expect(page.getByRole('button', { name: /Add Button/i }).first()).toBeVisible()
+  // The greeting and fallback editors now offer one control per allowed button
+  // type (reply and url) instead of a single generic "Add Button".
+  test('should have add greeting button options', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /^Reply$/i }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /^URL$/i }).first()).toBeVisible()
   })
 
-  test('should have add fallback button option', async ({ page }) => {
-    const addButtons = page.getByRole('button', { name: /Add Button/i })
-    await expect(addButtons.last()).toBeVisible()
+  test('should have add fallback button options', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /^Reply$/i }).last()).toBeVisible()
+    await expect(page.getByRole('button', { name: /^URL$/i }).last()).toBeVisible()
   })
 
   test('should fill greeting message', async ({ page }) => {
@@ -96,16 +99,19 @@ test.describe('Agents Tab', () => {
     await chatbotSettingsPage.expectAgentsTabVisible()
   })
 
+  // exact:true anchors on the toggle label and avoids matching the
+  // recent-activity / audit-log panel which renders entries like
+  // "Assign To Same Agent: false" (different casing + trailing colon).
   test('should have allow queue pickup toggle', async ({ page }) => {
-    await expect(page.getByText('Allow Agents to Pick from Queue')).toBeVisible()
+    await expect(page.getByText('Allow Agents to Pick from Queue', { exact: true })).toBeVisible()
   })
 
   test('should have assign to same agent toggle', async ({ page }) => {
-    await expect(page.getByText('Assign to Same Agent')).toBeVisible()
+    await expect(page.getByText('Assign to Same Agent', { exact: true })).toBeVisible()
   })
 
   test('should have current conversation only toggle', async ({ page }) => {
-    await expect(page.getByText('Agents See Current Conversation Only')).toBeVisible()
+    await expect(page.getByText('Agents See Current Conversation Only', { exact: true })).toBeVisible()
   })
 
   test('should toggle agent queue pickup', async ({ page }) => {

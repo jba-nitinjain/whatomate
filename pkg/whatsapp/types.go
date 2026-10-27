@@ -67,9 +67,9 @@ func ParseMetaAPIError(statusCode int, respBody []byte) error {
 		if apiErr.Error.ErrorUserMsg != "" {
 			errMsg += " - " + apiErr.Error.ErrorUserMsg
 		}
-		return fmt.Errorf("%s", errMsg)
+		return &GraphError{StatusCode: statusCode, Code: apiErr.Error.Code, Subcode: apiErr.Error.ErrorSubcode, msg: errMsg}
 	}
-	return fmt.Errorf("API returned status %d: %s", statusCode, string(respBody))
+	return &GraphError{StatusCode: statusCode, msg: fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody))}
 }
 
 // TemplateResponse represents response from template submission
@@ -77,14 +77,21 @@ type TemplateResponse struct {
 	ID string `json:"id"`
 }
 
+// MetaQualityScore represents quality score information from Meta
+type MetaQualityScore struct {
+	Score string `json:"score"`
+}
+
 // MetaTemplate represents a template fetched from Meta
 type MetaTemplate struct {
-	ID         string              `json:"id"`
-	Name       string              `json:"name"`
-	Language   string              `json:"language"`
-	Category   string              `json:"category"`
-	Status     string              `json:"status"`
-	Components []TemplateComponent `json:"components"`
+	ID            string              `json:"id"`
+	Name          string              `json:"name"`
+	Language      string              `json:"language"`
+	Category      string              `json:"category"`
+	Status        string              `json:"status"`
+	QualityRating string              `json:"quality_rating,omitempty"`
+	QualityScore  *MetaQualityScore   `json:"quality_score,omitempty"`
+	Components    []TemplateComponent `json:"components"`
 }
 
 // TemplateComponent represents a component of a template
@@ -96,13 +103,21 @@ type TemplateComponent struct {
 	Example *TemplateExample `json:"example,omitempty"`
 }
 
-// TemplateButton represents a button in a template
+// TemplateButton represents a button in a template.
+// FlowID uses json.Number because Meta returns it as a numeric ID.
 type TemplateButton struct {
-	Type        string `json:"type"`
-	Text        string `json:"text"`
-	URL         string `json:"url,omitempty"`
-	PhoneNumber string `json:"phone_number,omitempty"`
-	Example     any    `json:"example,omitempty"`
+	Type           string      `json:"type"`
+	Text           string      `json:"text"`
+	URL            string      `json:"url,omitempty"`
+	PhoneNumber    string      `json:"phone_number,omitempty"`
+	Example        any         `json:"example,omitempty"`
+	FlowID         json.Number `json:"flow_id,omitempty"`
+	FlowAction     string      `json:"flow_action,omitempty"`
+	NavigateScreen string      `json:"navigate_screen,omitempty"`
+	OTPType        string      `json:"otp_type,omitempty"`       // "COPY_CODE", "ONE_TAP", "ZERO_TAP"
+	AutofillText   string      `json:"autofill_text,omitempty"`  // For ONE_TAP OTP
+	PackageName    string      `json:"package_name,omitempty"`   // For ONE_TAP/ZERO_TAP OTP
+	SignatureHash  string      `json:"signature_hash,omitempty"` // For ONE_TAP/ZERO_TAP OTP
 }
 
 // TemplateExample represents example values for template variables

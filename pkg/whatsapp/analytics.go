@@ -10,9 +10,9 @@ import (
 
 // AnalyticsRequest represents parameters for fetching analytics from Meta API
 type AnalyticsRequest struct {
-	Start        int64    `json:"start"`        // Unix timestamp (seconds)
-	End          int64    `json:"end"`          // Unix timestamp (seconds)
-	Granularity  string   `json:"granularity"`  // "HALF_HOUR", "DAY", "MONTH"
+	Start        int64    `json:"start"`         // Unix timestamp (seconds)
+	End          int64    `json:"end"`           // Unix timestamp (seconds)
+	Granularity  string   `json:"granularity"`   // "HALF_HOUR", "DAY", "MONTH"
 	PhoneNumbers []string `json:"phone_numbers"` // Optional filter by phone numbers
 	TemplateIDs  []string `json:"template_ids"`  // Optional filter for template analytics
 	CountryCodes []string `json:"country_codes"` // Optional filter by country codes
@@ -486,4 +486,3 @@ func (c *Client) parseTemplateAnalyticsResponse(ctx context.Context, account *Ac
 
 	return response, nil
 }
-

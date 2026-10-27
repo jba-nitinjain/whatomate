@@ -184,11 +184,10 @@ func evaluateHeadcountContributor(c models.RSVPHeadcountContributor, answers mod
 
 // legacyHeadcountContributors reproduces the pre-configuration behaviour for events
 // that have none set: member attendance plus the spouse_attendance key that used to
-// be hardcoded at rsvp_tally.go:52.
-func legacyHeadcountContributors(attendanceField string) models.RSVPHeadcountContributors {
-	if strings.TrimSpace(attendanceField) == "" {
-		attendanceField = "attendance"
-	}
+// be hardcoded at rsvp_tally.go:52. The attendance-field argument is accepted for
+// call-site compatibility but not needed: attendance mode reads the response's
+// Attendance column directly.
+func legacyHeadcountContributors(_ string) models.RSVPHeadcountContributors {
 	return models.RSVPHeadcountContributors{
 		{
 			Label: "Member attendance",

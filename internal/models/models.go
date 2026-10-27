@@ -13,7 +13,7 @@ import (
 )
 
 // JSONB is a custom type for PostgreSQL JSONB columns
-type JSONB map[string]interface{}
+type JSONB map[string]any
 
 func (j JSONB) Value() (driver.Value, error) {
 	if j == nil {
@@ -22,7 +22,7 @@ func (j JSONB) Value() (driver.Value, error) {
 	return json.Marshal(j)
 }
 
-func (j *JSONB) Scan(value interface{}) error {
+func (j *JSONB) Scan(value any) error {
 	if value == nil {
 		*j = nil
 		return nil
@@ -35,7 +35,7 @@ func (j *JSONB) Scan(value interface{}) error {
 }
 
 // JSONBArray is a custom type for JSONB arrays
-type JSONBArray []interface{}
+type JSONBArray []any
 
 func (j JSONBArray) Value() (driver.Value, error) {
 	if j == nil {
@@ -44,7 +44,7 @@ func (j JSONBArray) Value() (driver.Value, error) {
 	return json.Marshal(j)
 }
 
-func (j *JSONBArray) Scan(value interface{}) error {
+func (j *JSONBArray) Scan(value any) error {
 	if value == nil {
 		*j = nil
 		return nil
@@ -66,7 +66,7 @@ func (s StringArray) Value() (driver.Value, error) {
 	return json.Marshal(s)
 }
 
-func (s *StringArray) Scan(value interface{}) error {
+func (s *StringArray) Scan(value any) error {
 	if value == nil {
 		*s = nil
 		return nil
@@ -185,10 +185,14 @@ type Team struct {
 	AssignmentStrategy  AssignmentStrategy `gorm:"size:50;default:'round_robin'" json:"assignment_strategy"` // round_robin, load_balanced, manual
 	PerAgentTimeoutSecs int                `gorm:"default:0" json:"per_agent_timeout_secs"`                  // 0 = use org/global default
 	IsActive            bool               `gorm:"default:true" json:"is_active"`
+	CreatedByID         *uuid.UUID         `gorm:"type:uuid" json:"created_by_id,omitempty"`
+	UpdatedByID         *uuid.UUID         `gorm:"type:uuid" json:"updated_by_id,omitempty"`
 
 	// Relations
 	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
 	Members      []TeamMember  `gorm:"foreignKey:TeamID" json:"members,omitempty"`
+	CreatedBy    *User         `gorm:"foreignKey:CreatedByID" json:"created_by,omitempty"`
+	UpdatedBy    *User         `gorm:"foreignKey:UpdatedByID" json:"updated_by,omitempty"`
 }
 
 func (Team) TableName() string {
@@ -316,10 +320,21 @@ type WhatsAppAccount struct {
 	AutoReadReceipt                bool      `gorm:"default:false" json:"auto_read_receipt"`
 	MarketingMessagesLiteOnboarded bool      `gorm:"default:false" json:"marketing_messages_lite_onboarded"`
 	MarketingMessagesLiteEnabled   bool      `gorm:"default:false" json:"marketing_messages_lite_enabled"`
-	Status                         string    `gorm:"size:20;default:'active'" json:"status"`
+	// BusinessCallingEnabled gates outbound voice_call interactive buttons.
+	// Set to true only after Meta enrolls this number in the WhatsApp Business
+	// Calling API. Used by the canned-response editor to disable the Call
+	// button option, and by the send path to refuse voice_call sends.
+	BusinessCallingEnabled bool       `gorm:"default:false" json:"business_calling_enabled"`
+	IsSMB                  bool       `gorm:"default:false" json:"is_smb"`
+	Status                 string     `gorm:"size:20;default:'active'" json:"status"`
+	Pin                    string     `gorm:"size:255" json:"-"` // 6-digit 2FA PIN (encrypted)
+	CreatedByID            *uuid.UUID `gorm:"type:uuid" json:"created_by_id,omitempty"`
+	UpdatedByID            *uuid.UUID `gorm:"type:uuid" json:"updated_by_id,omitempty"`
 
 	// Relations
 	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	CreatedBy    *User         `gorm:"foreignKey:CreatedByID" json:"created_by,omitempty"`
+	UpdatedBy    *User         `gorm:"foreignKey:UpdatedByID" json:"updated_by,omitempty"`
 }
 
 func (WhatsAppAccount) TableName() string {
@@ -368,9 +383,9 @@ func (a *WhatsAppAccount) ToWAAccount() *whatsapp.Account {
 	}
 }
 
-// DecryptSecrets decrypts the encrypted access token and app secret fields.
+// DecryptSecrets decrypts the encrypted access token, app secret, and pin fields.
 func (a *WhatsAppAccount) DecryptSecrets(encryptionKey string) {
-	crypto.DecryptFields(encryptionKey, &a.AccessToken, &a.AppSecret)
+	crypto.DecryptFields(encryptionKey, &a.AccessToken, &a.AppSecret, &a.Pin)
 }
 
 // Contact represents a WhatsApp contact/profile
@@ -388,6 +403,12 @@ type Contact struct {
 	Metadata           JSONB      `gorm:"type:jsonb;default:'{}'" json:"metadata"`
 	LastInboundAt      *time.Time `json:"last_inbound_at,omitempty"` // When customer last sent a message (for 24h window tracking)
 	IsActive           bool       `gorm:"default:true" json:"is_active"`
+
+	// Marketing opt-out (from Meta user_preferences webhook)
+	MarketingOptOut bool `gorm:"default:false" json:"marketing_opt_out"`
+
+	// Business-Scoped User ID (from Meta BSUID rollout)
+	BSUID string `gorm:"size:150;index" json:"bsuid,omitempty"`
 
 	// Chatbot SLA tracking
 	ChatbotLastMessageAt *time.Time `json:"chatbot_last_message_at,omitempty"` // When chatbot last sent a message
@@ -450,15 +471,25 @@ type Template struct {
 	Language        string     `gorm:"size:10;not null" json:"language"`
 	Category        string     `gorm:"size:50" json:"category"`                 // MARKETING, UTILITY, AUTHENTICATION
 	Status          string     `gorm:"size:20;default:'PENDING'" json:"status"` // PENDING, APPROVED, REJECTED
-	HeaderType      string     `gorm:"size:20" json:"header_type"`              // TEXT, IMAGE, DOCUMENT, VIDEO
+	QualityRating   string     `gorm:"size:50;default:'UNKNOWN'" json:"quality_rating"`
+	HeaderType      string     `gorm:"size:20" json:"header_type"` // TEXT, IMAGE, DOCUMENT, VIDEO
 	HeaderContent   string     `gorm:"type:text" json:"header_content"`
 	BodyContent     string     `gorm:"type:text;not null" json:"body_content"`
 	FooterContent   string     `gorm:"type:text" json:"footer_content"`
 	Buttons         JSONBArray `gorm:"type:jsonb;default:'[]'" json:"buttons"`
 	SampleValues    JSONBArray `gorm:"type:jsonb;default:'[]'" json:"sample_values"`
 
+	// Authentication template fields
+	AddSecurityRecommendation bool `gorm:"default:false" json:"add_security_recommendation"`
+	CodeExpirationMinutes     int  `gorm:"default:0" json:"code_expiration_minutes"`
+
+	CreatedByID *uuid.UUID `gorm:"type:uuid" json:"created_by_id,omitempty"`
+	UpdatedByID *uuid.UUID `gorm:"type:uuid" json:"updated_by_id,omitempty"`
+
 	// Relations
 	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	CreatedBy    *User         `gorm:"foreignKey:CreatedByID" json:"created_by,omitempty"`
+	UpdatedBy    *User         `gorm:"foreignKey:UpdatedByID" json:"updated_by,omitempty"`
 }
 
 func (Template) TableName() string {
@@ -528,4 +559,21 @@ type WidgetFilter struct {
 	Field    string `json:"field"`    // status, direction, type, etc.
 	Operator string `json:"operator"` // equals, not_equals, contains, gt, lt, gte, lte
 	Value    string `json:"value"`
+}
+
+// AuditLog represents a record-level audit trail entry
+type AuditLog struct {
+	ID             uuid.UUID   `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	OrganizationID uuid.UUID   `gorm:"type:uuid;index;not null" json:"organization_id"`
+	ResourceType   string      `gorm:"size:50;not null;index:idx_audit_resource" json:"resource_type"`
+	ResourceID     uuid.UUID   `gorm:"type:uuid;not null;index:idx_audit_resource" json:"resource_id"`
+	UserID         uuid.UUID   `gorm:"type:uuid;not null" json:"user_id"`
+	UserName       string      `gorm:"size:255;not null" json:"user_name"`
+	Action         AuditAction `gorm:"size:20;not null" json:"action"`
+	Changes        JSONBArray  `gorm:"type:jsonb;default:'[]'" json:"changes"`
+	CreatedAt      time.Time   `gorm:"autoCreateTime;index:idx_audit_resource" json:"created_at"`
+}
+
+func (AuditLog) TableName() string {
+	return "audit_logs"
 }

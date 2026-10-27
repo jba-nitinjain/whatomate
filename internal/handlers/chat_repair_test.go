@@ -18,7 +18,7 @@ func TestApp_PreviewChatRepairCandidates(t *testing.T) {
 	t.Run("super admin sees move candidate", func(t *testing.T) {
 		t.Parallel()
 
-		app := newTestApp(t)
+		app := newIsolatedTestApp(t)
 		homeOrg := testutil.CreateTestOrganization(t, app.DB)
 		targetOrg := testutil.CreateTestOrganization(t, app.DB)
 		adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)
@@ -69,7 +69,7 @@ func TestApp_PreviewChatRepairCandidates(t *testing.T) {
 	t.Run("non super admin is forbidden", func(t *testing.T) {
 		t.Parallel()
 
-		app := newTestApp(t)
+		app := newIsolatedTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
 		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
@@ -85,7 +85,7 @@ func TestApp_PreviewChatRepairCandidates(t *testing.T) {
 	t.Run("account evidence can resolve candidate without phone_number_id metadata", func(t *testing.T) {
 		t.Parallel()
 
-		app := newTestApp(t)
+		app := newIsolatedTestApp(t)
 		homeOrg := testutil.CreateTestOrganization(t, app.DB)
 		targetOrg := testutil.CreateTestOrganization(t, app.DB)
 		adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)
@@ -119,7 +119,7 @@ func TestApp_PreviewChatRepairCandidates(t *testing.T) {
 func TestApp_ApplyChatRepairCandidates(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	homeOrg := testutil.CreateTestOrganization(t, app.DB)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
 	adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)
@@ -160,7 +160,7 @@ func TestApp_ApplyChatRepairCandidates(t *testing.T) {
 func TestApp_ApplyChatRepairCandidates_ManualMerge(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t)
+	app := newIsolatedTestApp(t)
 	homeOrg := testutil.CreateTestOrganization(t, app.DB)
 	targetOrg := testutil.CreateTestOrganization(t, app.DB)
 	adminRole := testutil.CreateAdminRole(t, app.DB, homeOrg.ID)

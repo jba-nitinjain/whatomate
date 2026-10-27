@@ -48,7 +48,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
 		tpl := createTestTemplate(t, app, org.ID, account.Name)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 			"template_params": map[string]string{
@@ -73,7 +73,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		assert.Equal(t, account.Name, resp.Data.WhatsAppAccount)
 
 		// Verify rendered body content
-		contentMap, ok := resp.Data.Content.(map[string]interface{})
+		contentMap, ok := resp.Data.Content.(map[string]any)
 		require.True(t, ok)
 		assert.Equal(t, "Hello Alice! Your order ORD-42 has been confirmed.", contentMap["body"])
 
@@ -117,7 +117,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -132,7 +132,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
 
-		contentMap, ok := resp.Data.Content.(map[string]interface{})
+		contentMap, ok := resp.Data.Content.(map[string]any)
 		require.True(t, ok)
 		assert.Equal(t, "Welcome to our service!", contentMap["body"])
 	})
@@ -150,7 +150,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
 		tpl := createTestTemplate(t, app, org.ID, account.Name)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":  contact.ID.String(),
 			"template_id": tpl.ID.String(),
 			"template_params": map[string]string{
@@ -170,7 +170,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
 		assert.Equal(t, models.MessageTypeTemplate, resp.Data.MessageType)
 
-		contentMap, ok := resp.Data.Content.(map[string]interface{})
+		contentMap, ok := resp.Data.Content.(map[string]any)
 		require.True(t, ok)
 		assert.Equal(t, "Hello Bob! Your order ORD-99 has been confirmed.", contentMap["body"])
 	})
@@ -188,7 +188,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
 		tpl := createTestTemplate(t, app, org.ID, account.Name)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 			"account_name":  account.Name,
@@ -254,6 +254,38 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		assert.Equal(t, "919876543210", sentMsg["to"])
 	})
 
+	t.Run("existing contact account assignment is not overwritten", func(t *testing.T) {
+		t.Parallel()
+		mockServer := newMockWhatsAppServer()
+		defer mockServer.close()
+
+		app := newMsgTestApp(t, mockServer)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		homeAccount := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+		sendAccount := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+		tpl := createTestTemplate(t, app, org.ID, sendAccount.Name)
+		contact := testutil.CreateTestContactWith(t, app.DB, org.ID,
+			testutil.WithContactAccount(homeAccount.Name), testutil.WithPhoneNumber("919876500001"))
+
+		req := testutil.NewJSONRequest(t, map[string]interface{}{
+			"phone_number":    contact.PhoneNumber,
+			"phone_number_id": sendAccount.PhoneID,
+			"template_name":   tpl.Name,
+			"template_params": map[string]string{"name": "Eve", "order_id": "ORD-9"},
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+
+		require.NoError(t, app.SendTemplateMessage(req))
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+		app.WaitForBackgroundTasks()
+
+		var reloaded models.Contact
+		require.NoError(t, app.DB.First(&reloaded, contact.ID).Error)
+		assert.Equal(t, homeAccount.Name, reloaded.WhatsAppAccount)
+	})
+
 	t.Run("marketing template uses mm lite delivery route when enabled", func(t *testing.T) {
 		t.Parallel()
 		mockServer := newMockWhatsAppServer()
@@ -311,7 +343,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"template_name": "some_template",
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -329,7 +361,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id": contact.ID.String(),
 		})
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -347,7 +379,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": "nonexistent_template",
 		})
@@ -377,7 +409,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -400,7 +432,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		account := createTestAccount(t, app, org.ID)
 		tpl := createTestTemplate(t, app, org.ID, account.Name)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    uuid.New().String(),
 			"template_name": tpl.Name,
 		})
@@ -425,7 +457,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		tpl := createTestTemplate(t, app, org.ID, account.Name)
 
 		// Send without required params — template has {{name}} and {{order_id}}
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 			// no template_params
@@ -445,7 +477,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":  contact.ID.String(),
 			"template_id": "not-a-uuid",
 		})
@@ -474,7 +506,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    "not-a-uuid",
 			"template_name": tpl.Name,
 		})
@@ -506,7 +538,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -533,7 +565,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		// Contact belongs to org2
 		contact := testutil.CreateTestContact(t, app.DB, org2.ID)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -563,7 +595,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 			"account_name":  "nonexistent-account",
@@ -598,7 +630,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -608,9 +640,9 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify the response has all MessageResponse fields
-		var raw map[string]interface{}
+		var raw map[string]any
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &raw))
-		data := raw["data"].(map[string]interface{})
+		data := raw["data"].(map[string]any)
 
 		assert.NotEmpty(t, data["id"])
 		assert.NotEmpty(t, data["contact_id"])
@@ -645,13 +677,13 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 			Status:          string(models.TemplateStatusApproved),
 			BodyContent:     "Would you like to proceed?",
 			Buttons: models.JSONBArray{
-				map[string]interface{}{"type": "QUICK_REPLY", "text": "Yes"},
-				map[string]interface{}{"type": "QUICK_REPLY", "text": "No"},
+				map[string]any{"type": "QUICK_REPLY", "text": "Yes"},
+				map[string]any{"type": "QUICK_REPLY", "text": "No"},
 			},
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -662,23 +694,23 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
 
 		// Verify response includes interactive_data with buttons
-		var raw map[string]interface{}
+		var raw map[string]any
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &raw))
-		data := raw["data"].(map[string]interface{})
+		data := raw["data"].(map[string]any)
 
-		interactiveData, ok := data["interactive_data"].(map[string]interface{})
+		interactiveData, ok := data["interactive_data"].(map[string]any)
 		require.True(t, ok, "interactive_data should be present for template with buttons")
 		assert.Equal(t, "button", interactiveData["type"])
 
-		buttons, ok := interactiveData["buttons"].([]interface{})
+		buttons, ok := interactiveData["buttons"].([]any)
 		require.True(t, ok, "buttons should be an array")
 		assert.Len(t, buttons, 2)
 
-		btn0 := buttons[0].(map[string]interface{})
+		btn0 := buttons[0].(map[string]any)
 		assert.Equal(t, "QUICK_REPLY", btn0["type"])
 		assert.Equal(t, "Yes", btn0["text"])
 
-		btn1 := buttons[1].(map[string]interface{})
+		btn1 := buttons[1].(map[string]any)
 		assert.Equal(t, "No", btn1["text"])
 
 		// Verify persisted in DB
@@ -737,9 +769,12 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		require.Len(t, mockServer.sentMessages, 1)
 		templateData := mockServer.sentMessages[0]["template"].(map[string]interface{})
 		components := templateData["components"].([]interface{})
-		require.Len(t, components, 2)
+		// The body "Track your order" declares no variables, so no body
+		// component may be sent (Meta rejects extra body parameters with
+		// #132000); only the dynamic URL button component is expected.
+		require.Len(t, components, 1)
 
-		buttonComp := components[1].(map[string]interface{})
+		buttonComp := components[0].(map[string]interface{})
 		assert.Equal(t, "button", buttonComp["type"])
 		assert.Equal(t, "url", buttonComp["sub_type"])
 		assert.Equal(t, "0", buttonComp["index"])
@@ -835,7 +870,7 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		}
 		require.NoError(t, app.DB.Create(tpl).Error)
 
-		req := testutil.NewJSONRequest(t, map[string]interface{}{
+		req := testutil.NewJSONRequest(t, map[string]any{
 			"contact_id":    contact.ID.String(),
 			"template_name": tpl.Name,
 		})
@@ -845,12 +880,168 @@ func TestApp_SendTemplateMessage(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
 
-		var raw map[string]interface{}
+		var raw map[string]any
 		require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &raw))
-		data := raw["data"].(map[string]interface{})
+		data := raw["data"].(map[string]any)
 
 		// interactive_data should be absent (omitempty) or nil
 		_, hasInteractive := data["interactive_data"]
 		assert.False(t, hasInteractive, "interactive_data should not be present for template without buttons")
+	})
+}
+
+func TestApp_SendTemplateMessage_HeaderParams(t *testing.T) {
+	t.Parallel()
+
+	// --- TEXT header parameter (header_params field) ---
+
+	// createTestTemplateWithHeader builds an approved template with a TEXT
+	// header that has a {{var}} (named for clarity; positional is exercised
+	// separately by the unit tests on BuildTemplateComponents).
+	createTestTemplateWithHeader := func(t *testing.T, app *handlers.App, orgID uuid.UUID, accountName string) *models.Template {
+		t.Helper()
+		tpl := &models.Template{
+			BaseModel:       models.BaseModel{ID: uuid.New()},
+			OrganizationID:  orgID,
+			WhatsAppAccount: accountName,
+			Name:            "seasonal_" + uuid.New().String()[:8],
+			DisplayName:     "Seasonal Promo",
+			MetaTemplateID:  "meta-" + uuid.New().String()[:8],
+			Category:        "MARKETING",
+			Language:        "en",
+			Status:          string(models.TemplateStatusApproved),
+			HeaderType:      "TEXT",
+			HeaderContent:   "Our {{season}} sale",
+			BodyContent:     "Hi {{name}}, use code {{code}}.",
+		}
+		require.NoError(t, app.DB.Create(tpl).Error)
+		return tpl
+	}
+
+	t.Run("header_params forwards a TEXT header value to Meta", func(t *testing.T) {
+		t.Parallel()
+		mockServer := newMockWhatsAppServer()
+		defer mockServer.close()
+
+		app := newMsgTestApp(t, mockServer)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		account := createTestAccount(t, app, org.ID)
+		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
+		tpl := createTestTemplateWithHeader(t, app, org.ID, account.Name)
+
+		req := testutil.NewJSONRequest(t, map[string]any{
+			"contact_id":    contact.ID.String(),
+			"template_name": tpl.Name,
+			"header_params": map[string]string{"season": "Summer"},
+			"template_params": map[string]string{
+				"name": "Alice",
+				"code": "SAVE20",
+			},
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+
+		err := app.SendTemplateMessage(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		app.WaitForBackgroundTasks()
+
+		require.Len(t, mockServer.sentMessages, 1)
+		tplPayload := mockServer.sentMessages[0]["template"].(map[string]any)
+		components := tplPayload["components"].([]any)
+
+		// Find the header component and assert it carries the supplied value.
+		var headerComp map[string]any
+		for _, c := range components {
+			if m := c.(map[string]any); m["type"] == "header" {
+				headerComp = m
+				break
+			}
+		}
+		require.NotNil(t, headerComp, "expected a header component in the Meta payload")
+		params := headerComp["parameters"].([]any)
+		require.Len(t, params, 1)
+		p0 := params[0].(map[string]any)
+		assert.Equal(t, "text", p0["type"])
+		assert.Equal(t, "Summer", p0["text"])
+		assert.Equal(t, "season", p0["parameter_name"], "named templates include parameter_name")
+	})
+
+	t.Run("header_params falls back to template_params lookup", func(t *testing.T) {
+		t.Parallel()
+		mockServer := newMockWhatsAppServer()
+		defer mockServer.close()
+
+		app := newMsgTestApp(t, mockServer)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		account := createTestAccount(t, app, org.ID)
+		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
+		tpl := createTestTemplateWithHeader(t, app, org.ID, account.Name)
+
+		// header_params omitted entirely — value supplied in template_params
+		// under the same variable name. Convenient for named templates where
+		// the header variable name is unique.
+		req := testutil.NewJSONRequest(t, map[string]any{
+			"contact_id":    contact.ID.String(),
+			"template_name": tpl.Name,
+			"template_params": map[string]string{
+				"season": "Winter",
+				"name":   "Bob",
+				"code":   "SAVE15",
+			},
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+
+		err := app.SendTemplateMessage(req)
+		require.NoError(t, err)
+		assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+		app.WaitForBackgroundTasks()
+
+		require.Len(t, mockServer.sentMessages, 1)
+		tplPayload := mockServer.sentMessages[0]["template"].(map[string]any)
+		components := tplPayload["components"].([]any)
+
+		var headerComp map[string]any
+		for _, c := range components {
+			if m := c.(map[string]any); m["type"] == "header" {
+				headerComp = m
+				break
+			}
+		}
+		require.NotNil(t, headerComp)
+		params := headerComp["parameters"].([]any)
+		assert.Equal(t, "Winter", params[0].(map[string]any)["text"])
+	})
+
+	t.Run("missing header value 400s before reaching Meta", func(t *testing.T) {
+		t.Parallel()
+		// No mock — request should fail validation before any send.
+		app := newTestApp(t)
+		org := testutil.CreateTestOrganization(t, app.DB)
+		adminRole := testutil.CreateAdminRole(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithRoleID(&adminRole.ID))
+		account := testutil.CreateTestWhatsAppAccount(t, app.DB, org.ID)
+		contact := testutil.CreateTestContactWith(t, app.DB, org.ID, testutil.WithContactAccount(account.Name))
+		tpl := createTestTemplateWithHeader(t, app, org.ID, account.Name)
+
+		req := testutil.NewJSONRequest(t, map[string]any{
+			"contact_id":    contact.ID.String(),
+			"template_name": tpl.Name,
+			// header value missing in both maps
+			"template_params": map[string]string{
+				"name": "Alice",
+				"code": "SAVE20",
+			},
+		})
+		testutil.SetAuthContext(req, org.ID, user.ID)
+
+		err := app.SendTemplateMessage(req)
+		require.NoError(t, err)
+		testutil.AssertErrorResponse(t, req, fasthttp.StatusBadRequest, "header parameter")
 	})
 }

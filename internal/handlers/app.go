@@ -35,6 +35,8 @@ type App struct {
 	ScheduledCampaignCancel context.CancelFunc
 	RSVPReminderCancel      context.CancelFunc
 	ChatRetentionCancel     context.CancelFunc
+	LeadProcessor           interface{ Kick() }
+	LeadProcessorCancel     context.CancelFunc
 	// HTTPClient is a shared HTTP client with connection pooling for external API calls
 	HTTPClient *http.Client
 	// Assigner provides shared team-based agent assignment (used by both chat and call transfers)
@@ -137,6 +139,33 @@ func (a *App) ReadyCheck(r *fastglue.Request) error {
 	})
 }
 
+// GetEmbeddedSignupConfig returns public configuration values for the embedded signup flow
+func (a *App) GetEmbeddedSignupConfig(r *fastglue.Request) error {
+	orgID, err := a.getOrgID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	appID, _, configID, err := a.resolveMetaAppCreds(orgID)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to resolve credentials", nil, "")
+	}
+
+	type EmbeddedSignupConfig struct {
+		WhatsAppAppID      string `json:"whatsapp_app_id,omitempty"`
+		WhatsAppConfigID   string `json:"whatsapp_config_id,omitempty"`
+		WhatsAppAPIVersion string `json:"whatsapp_api_version,omitempty"`
+	}
+
+	config := EmbeddedSignupConfig{
+		WhatsAppAppID:      appID,
+		WhatsAppConfigID:   configID,
+		WhatsAppAPIVersion: a.Config.WhatsApp.APIVersion,
+	}
+
+	return r.SendEnvelope(config)
+}
+
 // StartCampaignStatsSubscriber starts listening for campaign stats updates from Redis pub/sub
 // and broadcasts them via WebSocket
 func (a *App) StartCampaignStatsSubscriber() error {
@@ -234,9 +263,26 @@ func (a *App) requirePermission(r *fastglue.Request, userID uuid.UUID, resource,
 	return nil
 }
 
+// requireAuth extracts the organization ID and user ID from the request and
+// verifies the user holds the given permission. On failure it writes the
+// appropriate error envelope (401 if unauthenticated, 403 if the permission is
+// missing) and returns errEnvelopeSent, so callers should `return nil` early.
+func (a *App) requireAuth(r *fastglue.Request, resource, action string) (orgID, userID uuid.UUID, err error) {
+	orgID, userID, err = a.getOrgAndUserID(r)
+	if err != nil {
+		_ = r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return uuid.Nil, uuid.Nil, errEnvelopeSent
+	}
+	if !a.HasPermission(userID, resource, action, orgID) {
+		_ = r.SendErrorEnvelope(fasthttp.StatusForbidden, "Insufficient permissions", nil, "")
+		return uuid.Nil, uuid.Nil, errEnvelopeSent
+	}
+	return orgID, userID, nil
+}
+
 // decodeRequest decodes a JSON request body into the provided struct.
 // Returns nil on success, otherwise sends a 400 error envelope and returns errEnvelopeSent.
-func (a *App) decodeRequest(r *fastglue.Request, v interface{}) error {
+func (a *App) decodeRequest(r *fastglue.Request, v any) error {
 	if err := r.Decode(v, "json"); err != nil {
 		_ = r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Invalid request body", nil, "")
 		return errEnvelopeSent

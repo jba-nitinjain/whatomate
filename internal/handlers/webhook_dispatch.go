@@ -15,25 +15,28 @@ import (
 	"github.com/nikyjain/whatomate/internal/models"
 )
 
-
 // OutboundWebhookPayload represents the structure sent to external webhook endpoints
 type OutboundWebhookPayload struct {
-	Event     string      `json:"event"`
-	Timestamp time.Time   `json:"timestamp"`
-	Data      interface{} `json:"data"`
+	Event     string    `json:"event"`
+	Timestamp time.Time `json:"timestamp"`
+	Data      any       `json:"data"`
 }
 
 // MessageEventData represents data for message events
 type MessageEventData struct {
-	MessageID       string             `json:"message_id"`
-	ContactID       string             `json:"contact_id"`
-	ContactPhone    string             `json:"contact_phone"`
-	ContactName     string             `json:"contact_name"`
-	MessageType     models.MessageType `json:"message_type"`
-	Content         string             `json:"content"`
-	WhatsAppAccount string             `json:"whatsapp_account"`
-	Direction       models.Direction   `json:"direction,omitempty"`
-	SentByUserID    string             `json:"sent_by_user_id,omitempty"`
+	MessageID        string             `json:"message_id"`
+	ContactID        string             `json:"contact_id"`
+	ContactPhone     string             `json:"contact_phone"`
+	ContactName      string             `json:"contact_name"`
+	MessageType      models.MessageType `json:"message_type"`
+	Content          string             `json:"content"`
+	MediaURL         string             `json:"media_url,omitempty"` // base-path-relative path to the media endpoint, not the storage path
+	MediaMimeType    string             `json:"media_mime_type,omitempty"`
+	MediaFilename    string             `json:"media_filename,omitempty"`
+	ReplyToMessageID string             `json:"reply_to_message_id,omitempty"`
+	WhatsAppAccount  string             `json:"whatsapp_account"`
+	Direction        models.Direction   `json:"direction,omitempty"`
+	SentByUserID     string             `json:"sent_by_user_id,omitempty"`
 }
 
 // ContactEventData represents data for contact events
@@ -61,7 +64,7 @@ type TransferEventData struct {
 const maxConcurrentWebhooks = 10
 
 // DispatchWebhook sends an event to all matching webhooks for the organization
-func (a *App) DispatchWebhook(orgID uuid.UUID, eventType models.WebhookEvent, data interface{}) {
+func (a *App) DispatchWebhook(orgID uuid.UUID, eventType models.WebhookEvent, data any) {
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
@@ -72,7 +75,7 @@ func (a *App) DispatchWebhook(orgID uuid.UUID, eventType models.WebhookEvent, da
 	}()
 }
 
-func (a *App) dispatchWebhookAsync(ctx context.Context, orgID uuid.UUID, eventType string, data interface{}) {
+func (a *App) dispatchWebhookAsync(ctx context.Context, orgID uuid.UUID, eventType string, data any) {
 	// Find all active webhooks for this org that subscribe to this event (use cache)
 	webhooks, err := a.getWebhooksCached(orgID)
 	if err != nil {
@@ -118,7 +121,7 @@ func containsEvent(events models.StringArray, event string) bool {
 	return false
 }
 
-func (a *App) sendWebhook(ctx context.Context, webhook models.Webhook, eventType string, data interface{}) {
+func (a *App) sendWebhook(ctx context.Context, webhook models.Webhook, eventType string, data any) {
 	payload := OutboundWebhookPayload{
 		Event:     eventType,
 		Timestamp: time.Now().UTC(),

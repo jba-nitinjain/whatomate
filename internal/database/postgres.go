@@ -49,7 +49,7 @@ func NewPostgres(cfg *config.DatabaseConfig, debug bool) (*gorm.DB, error) {
 // MigrationModel holds model info for migration progress
 type MigrationModel struct {
 	Name  string
-	Model interface{}
+	Model any
 }
 
 // GetMigrationModels returns all models to migrate with their names
@@ -116,6 +116,12 @@ func GetMigrationModels() []MigrationModel {
 		{"IVRFlow", &models.IVRFlow{}},
 		{"CallTransfer", &models.CallTransfer{}},
 		{"CallPermission", &models.CallPermission{}},
+
+		// Lead Ads
+		{"LeadSource", &models.LeadSource{}},
+		{"LeadFormMapping", &models.LeadFormMapping{}},
+		{"Lead", &models.Lead{}},
+		{"AuditLog", &models.AuditLog{}},
 	}
 }
 
@@ -230,6 +236,18 @@ func repeatChar(char string, n int) string {
 	return result
 }
 
+// dropInvalidMessagesUnreadIndexSQL removes an INVALID idx_messages_contact_unread
+// left behind by an interrupted CREATE INDEX CONCURRENTLY.
+const dropInvalidMessagesUnreadIndexSQL = `DO $$
+BEGIN
+	IF EXISTS (
+		SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+		WHERE c.relname = 'idx_messages_contact_unread' AND NOT i.indisvalid
+	) THEN
+		EXECUTE 'DROP INDEX idx_messages_contact_unread';
+	END IF;
+END $$`
+
 // getIndexes returns all index creation SQL statements
 func getIndexes() []string {
 	return []string{
@@ -243,6 +261,14 @@ func getIndexes() []string {
 		// Indexes
 		`CREATE INDEX IF NOT EXISTS idx_messages_contact_created ON messages(contact_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
+		// Partial index for per-contact unread counts in the contact list.
+		// messages is the largest table, so build it CONCURRENTLY (each
+		// statement here runs on its own, outside a transaction) to avoid
+		// blocking writes during the upgrade. A previously interrupted
+		// concurrent build leaves an INVALID index that IF NOT EXISTS would
+		// skip forever, so drop such a leftover first.
+		dropInvalidMessagesUnreadIndexSQL,
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_messages_contact_unread ON messages(contact_id) WHERE direction = 'incoming' AND status <> 'read' AND deleted_at IS NULL`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_org_phone ON contacts(organization_id, phone_number)`,
 		`CREATE INDEX IF NOT EXISTS idx_contacts_assigned_read ON contacts(assigned_user_id, is_read)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_phone_status ON chatbot_sessions(organization_id, phone_number, status)`,
@@ -290,6 +316,19 @@ func getIndexes() []string {
 		// IVR flows
 		`CREATE INDEX IF NOT EXISTS idx_ivr_flows_org_active ON ivr_flows(organization_id, whatsapp_account, is_active)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_ivr_flows_org_call_start ON ivr_flows(organization_id, whatsapp_account) WHERE is_call_start = true AND is_active = true AND deleted_at IS NULL`,
+		// Lead Ads: partial unique indexes over live rows so a soft-deleted page
+		// or form mapping can be reconnected. Drop the full unique indexes an early
+		// build of the feature created from GORM tags.
+		`DROP INDEX IF EXISTS idx_lead_src_org_page`,
+		`DROP INDEX IF EXISTS idx_lead_sources_webhook_verify_token`,
+		`DROP INDEX IF EXISTS idx_lfm_src_form`,
+		// Leads must never block hard deletes of messages/contacts/templates.
+		`ALTER TABLE leads DROP CONSTRAINT IF EXISTS fk_leads_contact`,
+		`ALTER TABLE leads DROP CONSTRAINT IF EXISTS fk_leads_message`,
+		`ALTER TABLE lead_form_mappings DROP CONSTRAINT IF EXISTS fk_lead_form_mappings_template`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_lead_sources_page_live ON lead_sources(page_id) WHERE deleted_at IS NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_lead_sources_verify_token_live ON lead_sources(webhook_verify_token) WHERE deleted_at IS NULL AND webhook_verify_token <> ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_lead_form_mappings_source_form_live ON lead_form_mappings(lead_source_id, form_id) WHERE deleted_at IS NULL`,
 	}
 }
 
@@ -455,6 +494,16 @@ func SeedSystemRolesForAllOrgs(db *gorm.DB) error {
 	// Fix any system roles that don't have permissions linked
 	if err := FixSystemRolePermissions(db); err != nil {
 		return fmt.Errorf("failed to fix role permissions: %w", err)
+	}
+
+	// Grant permissions introduced after an org was created to its admin role
+	if err := SyncAdminRolePermissions(db); err != nil {
+		return fmt.Errorf("failed to sync admin role permissions: %w", err)
+	}
+
+	// One-time grant of catalog permissions to existing manager roles
+	if err := GrantCatalogPermissionsToManagers(db); err != nil {
+		return fmt.Errorf("failed to grant catalog permissions to managers: %w", err)
 	}
 
 	// Migrate existing users from old role column to new role_id
@@ -722,7 +771,7 @@ func SeedDefaultWidgetsForOrg(db *gorm.DB, orgID, userID uuid.UUID) error {
 		{"Chatbot Sessions", "Active chatbot conversation sessions", "sessions", "number", "purple", nil, 3, 6, 0, 3, 3},
 		{"Total Campaigns", "Number of bulk message campaigns", "campaigns", "number", "orange", nil, 4, 9, 0, 3, 3},
 		{"Recent Messages", "Latest conversations from your contacts", "messages", "table", "", nil, 5, 0, 3, 6, 8},
-		{"Quick Actions", "Common tasks and shortcuts", "shortcuts", "shortcuts", "", models.JSONB{"shortcuts": []interface{}{"chat", "campaigns", "templates", "chatbot"}}, 6, 6, 3, 6, 8},
+		{"Quick Actions", "Common tasks and shortcuts", "shortcuts", "shortcuts", "", models.JSONB{"shortcuts": []any{"chat", "campaigns", "templates", "chatbot"}}, 6, 6, 3, 6, 8},
 	}
 
 	for _, wd := range defaultWidgetsData {

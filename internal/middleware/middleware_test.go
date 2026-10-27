@@ -49,9 +49,9 @@ func TestCORS(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		origin       string
-		wantOrigin   string
+		name       string
+		origin     string
+		wantOrigin string
 	}{
 		{
 			name:       "with origin header",
@@ -276,19 +276,19 @@ func TestRequirePermission(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
+		name          string
 		hasPermission bool
-		wantAllowed bool
+		wantAllowed   bool
 	}{
 		{
-			name:        "user with permission allowed",
+			name:          "user with permission allowed",
 			hasPermission: true,
-			wantAllowed: true,
+			wantAllowed:   true,
 		},
 		{
-			name:        "user without permission denied",
+			name:          "user without permission denied",
 			hasPermission: false,
-			wantAllowed: false,
+			wantAllowed:   false,
 		},
 	}
 
@@ -339,10 +339,10 @@ func TestRequireAnyPermission(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
-		allowedPerms   map[string]bool
-		checkPerms     []string
-		wantAllowed    bool
+		name         string
+		allowedPerms map[string]bool
+		checkPerms   []string
+		wantAllowed  bool
 	}{
 		{
 			name:         "user with first permission allowed",
@@ -498,7 +498,7 @@ func TestJWTClaims(t *testing.T) {
 	require.NoError(t, err)
 
 	// Parse token back
-	parsedToken, err := jwt.ParseWithClaims(tokenString, &middleware.JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+	parsedToken, err := jwt.ParseWithClaims(tokenString, &middleware.JWTClaims{}, func(token *jwt.Token) (any, error) {
 		return []byte(testJWTSecret), nil
 	})
 	require.NoError(t, err)
@@ -582,7 +582,7 @@ func TestAuthWithDB_APIKey_SuperAdminKey_OmitsOrgContext(t *testing.T) {
 	org := testutil.CreateTestOrganization(t, db)
 	admin := testutil.CreateTestUser(t, db, org.ID, testutil.WithEmail(testutil.UniqueEmail("mw-super-admin")), testutil.WithSuperAdmin())
 
-	plainKey := "whm_" + strings.Repeat("a", 32)
+	plainKey := "whm_" + strings.ReplaceAll(uuid.NewString(), "-", "") // unique per run: lookup is by key prefix
 	hash, err := bcrypt.GenerateFromPassword([]byte(plainKey), bcrypt.DefaultCost)
 	require.NoError(t, err)
 
@@ -616,7 +616,7 @@ func TestAuthWithDB_APIKey_OrgScopedKey_SetsOrgContext(t *testing.T) {
 	org := testutil.CreateTestOrganization(t, db)
 	user := testutil.CreateTestUser(t, db, org.ID, testutil.WithEmail(testutil.UniqueEmail("mw-org-key")))
 
-	plainKey := "whm_" + strings.Repeat("b", 32)
+	plainKey := "whm_" + strings.ReplaceAll(uuid.NewString(), "-", "") // unique per run: lookup is by key prefix
 	hash, err := bcrypt.GenerateFromPassword([]byte(plainKey), bcrypt.DefaultCost)
 	require.NoError(t, err)
 

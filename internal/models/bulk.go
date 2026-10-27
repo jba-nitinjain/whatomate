@@ -37,11 +37,13 @@ type BulkMessageCampaign struct {
 	// recipient into when they tap through (e.g. an RSVP follow-up's chosen
 	// flow). Unset for campaign types with no follow-up flow of their own.
 	FlowID *uuid.UUID `gorm:"type:uuid" json:"flow_id,omitempty"`
+	UpdatedByID          *uuid.UUID     `gorm:"type:uuid" json:"updated_by_id,omitempty"`
 
 	// Relations
 	Organization *Organization          `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
 	Template     *Template              `gorm:"foreignKey:TemplateID" json:"template,omitempty"`
 	Creator      *User                  `gorm:"foreignKey:CreatedBy" json:"creator,omitempty"`
+	UpdatedBy    *User                  `gorm:"foreignKey:UpdatedByID" json:"updated_by,omitempty"`
 	Recipients   []BulkMessageRecipient `gorm:"foreignKey:CampaignID" json:"recipients,omitempty"`
 }
 
@@ -52,10 +54,15 @@ func (BulkMessageCampaign) TableName() string {
 // BulkMessageRecipient represents a recipient in a bulk message campaign
 type BulkMessageRecipient struct {
 	BaseModel
-	CampaignID        uuid.UUID     `gorm:"type:uuid;index;not null" json:"campaign_id"`
-	PhoneNumber       string        `gorm:"size:50;not null" json:"phone_number"`
-	RecipientName     string        `gorm:"size:255" json:"recipient_name"`
-	TemplateParams    JSONB         `gorm:"type:jsonb;default:'{}'" json:"template_params"`
+	CampaignID     uuid.UUID `gorm:"type:uuid;index;not null" json:"campaign_id"`
+	PhoneNumber    string    `gorm:"size:50;not null" json:"phone_number"`
+	RecipientName  string    `gorm:"size:255" json:"recipient_name"`
+	TemplateParams JSONB     `gorm:"type:jsonb;default:'{}'" json:"template_params"`
+	// Header parameter values for TEXT-header templates with a {{var}}. Meta
+	// indexes positional vars per component, so header {{1}} and body {{1}}
+	// are separate values — keeping them in a dedicated map avoids that
+	// collision. Empty when the template has no header variable.
+	HeaderParams      JSONB         `gorm:"type:jsonb;default:'{}'" json:"header_params"`
 	Status            MessageStatus `gorm:"size:20;default:'pending'" json:"status"` // pending, sent, delivered, read, failed
 	WhatsAppMessageID string        `gorm:"column:whats_app_message_id;size:100;index" json:"whatsapp_message_id,omitempty"`
 	MessageID         *uuid.UUID    `gorm:"type:uuid" json:"message_id,omitempty"`

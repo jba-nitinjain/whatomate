@@ -87,6 +87,27 @@ function onRefreshComplete(success: boolean) {
   refreshSubscribers = [];
 }
 
+// refreshAccessToken posts to /auth/refresh. The refresh token is single-use
+// with rotation, so two tabs refreshing at once would have the loser's token
+// rejected as "revoked" and get logged out. The Web Locks API serializes the
+// refresh across all same-origin tabs: each tab refreshes in turn using the
+// cookie rotated by the previous holder, so every refresh succeeds instead of
+// racing. The in-tab `isRefreshing` mutex still dedupes concurrent 401s within
+// a single tab. Falls back to a plain request where Web Locks is unavailable
+// (older browsers / insecure contexts).
+async function refreshAccessToken(): Promise<void> {
+  const doRefresh = () =>
+    axios.post(`${API_BASE_URL}/auth/refresh`, {}, { withCredentials: true })
+
+  if (navigator.locks?.request) {
+    await navigator.locks.request('whm-token-refresh', async () => {
+      await doRefresh()
+    })
+  } else {
+    await doRefresh()
+  }
+}
+
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
@@ -124,12 +145,9 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        // Browser sends whm_refresh cookie automatically via withCredentials
-        await axios.post(
-          `${API_BASE_URL}/auth/refresh`,
-          {},
-          { withCredentials: true },
-        );
+        // Browser sends whm_refresh cookie automatically via withCredentials.
+        // Serialized across tabs via Web Locks to avoid single-use-token races.
+        await refreshAccessToken()
 
         // Cookies are updated by the server response — notify waiting requests
         onRefreshComplete(true);
@@ -164,31 +182,17 @@ export const authService = {
 };
 
 export const usersService = {
-  list: (params?: { search?: string; page?: number; limit?: number }) =>
-    api.get("/users", { params }),
-  create: (data: {
-    email: string;
-    password: string;
-    full_name: string;
-    role_id?: string;
-  }) => api.post("/users", data),
-  update: (
-    id: string,
-    data: {
-      email?: string;
-      password?: string;
-      full_name?: string;
-      role_id?: string;
-      is_active?: boolean;
-    },
-  ) => api.put(`/users/${id}`, data),
+  list: (params?: { search?: string; page?: number; limit?: number; role_id?: string; online_only?: boolean }) =>
+    api.get('/users', { params }),
+  get: (id: string) => api.get(`/users/${id}`),
+  create: (data: { email: string; password: string; full_name: string; role_id?: string }) =>
+    api.post('/users', data),
+  update: (id: string, data: { email?: string; password?: string; full_name?: string; role_id?: string; is_active?: boolean }) =>
+    api.put(`/users/${id}`, data),
   delete: (id: string) => api.delete(`/users/${id}`),
-  me: () => api.get("/me"),
-  updateSettings: (data: {
-    email_notifications: boolean;
-    new_message_alerts: boolean;
-    campaign_updates: boolean;
-  }) => api.put("/me/settings", data),
+  me: () => api.get('/me'),
+  updateSettings: (data: { email_notifications: boolean; new_message_alerts: boolean; campaign_updates: boolean; call_ringtone?: string }) =>
+    api.put('/me/settings', data),
   changePassword: (data: { current_password: string; new_password: string }) =>
     api.put("/me/password", data),
   updateAvailability: (isAvailable: boolean) =>
@@ -198,9 +202,12 @@ export const usersService = {
 
 export const apiKeysService = {
   list: (params?: { search?: string; page?: number; limit?: number }) =>
-    api.get<{ api_keys: any[]; total?: number }>("/api-keys", { params }),
+    api.get<{ api_keys: any[]; total?: number }>('/api-keys', { params }),
+  get: (id: string) => api.get(`/api-keys/${id}`),
   create: (data: { name: string; expires_at?: string; organization_id?: string; is_super_admin_key?: boolean }) =>
-    api.post("/api-keys", data),
+    api.post('/api-keys', data),
+  update: (id: string, data: { is_active?: boolean }) =>
+    api.put(`/api-keys/${id}`, data),
   delete: (id: string) => api.delete(`/api-keys/${id}`),
 };
 
@@ -504,7 +511,8 @@ export const contactsService = {
   updateTags: (id: string, tags: string[]) =>
     api.put(`/contacts/${id}/tags`, { tags }),
   getSessionData: (id: string) => api.get(`/contacts/${id}/session-data`),
-};
+  markRead: (id: string) => api.post(`/contacts/${encodeURIComponent(id)}/mark-read`)
+}
 
 // Generic Import/Export Service
 export interface ExportColumn {
@@ -582,35 +590,35 @@ export const dataService = {
 };
 
 export const messagesService = {
-  list: (
-    contactId: string,
-    params?: {
-      page?: number;
-      limit?: number;
-      before_id?: string;
-      account?: string;
-    },
-  ) => api.get(`/contacts/${contactId}/messages`, { params }),
+  list: (contactId: string, params?: { page?: number; limit?: number; before_id?: string; account?: string }) =>
+    api.get(`/contacts/${contactId}/messages`, { params }),
   reprocess: (messageId: string) =>
     api.post(`/chat/messages/${messageId}/reprocess`),
   send: (
     contactId: string,
     data: {
-      type: string;
-      content: any;
-      reply_to_message_id?: string;
-      whatsapp_account?: string;
+      type: string
+      content: any
+      reply_to_message_id?: string
+      whatsapp_account?: string
+      // Interactive payload. Mirrors backend InteractiveContent.
+      interactive?: {
+        type: 'button' | 'cta_url' | 'list' | 'voice_call' | 'flow'
+        body: string
+        buttons?: Array<{ id: string; title: string }>
+        button_text?: string
+        url?: string
+        // voice_call only
+        display_text?: string
+        ttl_minutes?: number
+        // flow only
+        flow_id?: string
+        first_screen?: string
+        header?: string
+      }
     },
   ) => api.post(`/contacts/${contactId}/messages`, data),
-  sendTemplate: (
-    contactId: string,
-    data: {
-      template_name: string;
-      template_params?: Record<string, string>;
-      account_name?: string;
-    },
-    headerFile?: File,
-  ) => {
+  sendTemplate: (contactId: string, data: { template_name: string; template_params?: Record<string, string>; header_params?: Record<string, string>; button_params?: Record<string, string>; account_name?: string }, headerFile?: File) => {
     if (headerFile) {
       const formData = new FormData();
       formData.append("contact_id", contactId);
@@ -620,6 +628,12 @@ export const messagesService = {
           "template_params",
           JSON.stringify(data.template_params),
         );
+      }
+      if (data.header_params) {
+        formData.append('header_params', JSON.stringify(data.header_params))
+      }
+      if (data.button_params) {
+        formData.append('button_params', JSON.stringify(data.button_params))
       }
       if (data.account_name) {
         formData.append("account_name", data.account_name);
@@ -677,15 +691,10 @@ export const flowsService = {
 };
 
 export const campaignsService = {
-  list: (params?: {
-    status?: string;
-    from?: string;
-    to?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) => api.get("/campaigns", { params }),
-  create: (data: any) => api.post("/campaigns", data),
+  list: (params?: { status?: string; from?: string; to?: string; search?: string; page?: number; limit?: number }) =>
+    api.get('/campaigns', { params }),
+  get: (id: string) => api.get(`/campaigns/${id}`),
+  create: (data: any) => api.post('/campaigns', data),
   update: (id: string, data: any) => api.put(`/campaigns/${id}`, data),
   delete: (id: string) => api.delete(`/campaigns/${id}`),
   start: (id: string) => api.post(`/campaigns/${id}/start`),
@@ -730,10 +739,10 @@ export const chatbotService = {
 
   // Keywords
   listKeywords: (params?: { search?: string; page?: number; limit?: number }) =>
-    api.get<{ rules: any[]; total?: number }>("/chatbot/keywords", { params }),
-  createKeyword: (data: any) => api.post("/chatbot/keywords", data),
-  updateKeyword: (id: string, data: any) =>
-    api.put(`/chatbot/keywords/${id}`, data),
+    api.get<{ rules: any[]; total?: number }>('/chatbot/keywords', { params }),
+  getKeyword: (id: string) => api.get(`/chatbot/keywords/${id}`),
+  createKeyword: (data: any) => api.post('/chatbot/keywords', data),
+  updateKeyword: (id: string, data: any) => api.put(`/chatbot/keywords/${id}`, data),
   deleteKeyword: (id: string) => api.delete(`/chatbot/keywords/${id}`),
 
   // Flows
@@ -752,17 +761,11 @@ export const chatbotService = {
   deleteFlow: (id: string) => api.delete(`/chatbot/flows/${id}`),
 
   // AI Contexts
-  listAIContexts: (params?: {
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) =>
-    api.get<{ contexts: any[]; total?: number }>("/chatbot/ai-contexts", {
-      params,
-    }),
-  createAIContext: (data: any) => api.post("/chatbot/ai-contexts", data),
-  updateAIContext: (id: string, data: any) =>
-    api.put(`/chatbot/ai-contexts/${id}`, data),
+  listAIContexts: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ contexts: any[]; total?: number }>('/chatbot/ai-contexts', { params }),
+  getAIContext: (id: string) => api.get(`/chatbot/ai-contexts/${id}`),
+  createAIContext: (data: any) => api.post('/chatbot/ai-contexts', data),
+  updateAIContext: (id: string, data: any) => api.put(`/chatbot/ai-contexts/${id}`, data),
   deleteAIContext: (id: string) => api.delete(`/chatbot/ai-contexts/${id}`),
 
   // Agent Transfers
@@ -794,46 +797,47 @@ export const chatbotService = {
     }),
 };
 
+export interface CannedResponseButton {
+  id: string
+  title: string
+  type?: 'reply' | 'url' | 'phone' | 'voice_call' | 'flow'
+  url?: string
+  phone_number?: string
+  ttl_minutes?: number
+  flow_id?: string
+  screen?: string
+}
+
 export interface CannedResponse {
-  id: string;
-  name: string;
-  shortcut: string;
-  content: string;
-  category: string;
-  is_active: boolean;
-  usage_count: number;
-  created_at: string;
-  updated_at: string;
+  id: string
+  name: string
+  shortcut: string
+  content: string
+  category: string
+  is_active: boolean
+  usage_count: number
+  buttons?: CannedResponseButton[]
+  created_at: string
+  updated_at: string
+}
+
+interface CannedResponseUpsertPayload {
+  name?: string
+  shortcut?: string
+  content?: string
+  category?: string
+  is_active?: boolean
+  buttons?: CannedResponseButton[]
 }
 
 export const cannedResponsesService = {
-  list: (params?: {
-    category?: string;
-    search?: string;
-    active_only?: string;
-    page?: number;
-    limit?: number;
-  }) =>
-    api.get<{ canned_responses: CannedResponse[]; total?: number }>(
-      "/canned-responses",
-      { params },
-    ),
-  create: (data: {
-    name: string;
-    shortcut?: string;
-    content: string;
-    category?: string;
-  }) => api.post("/canned-responses", data),
-  update: (
-    id: string,
-    data: {
-      name?: string;
-      shortcut?: string;
-      content?: string;
-      category?: string;
-      is_active?: boolean;
-    },
-  ) => api.put(`/canned-responses/${id}`, data),
+  list: (params?: { category?: string; search?: string; active_only?: string; page?: number; limit?: number }) =>
+    api.get<{ canned_responses: CannedResponse[]; total?: number }>('/canned-responses', { params }),
+  get: (id: string) => api.get<CannedResponse>(`/canned-responses/${id}`),
+  create: (data: CannedResponseUpsertPayload & { name: string; content: string }) =>
+    api.post('/canned-responses', data),
+  update: (id: string, data: CannedResponseUpsertPayload) =>
+    api.put(`/canned-responses/${id}`, data),
   delete: (id: string) => api.delete(`/canned-responses/${id}`),
   use: (id: string) => api.post(`/canned-responses/${id}/use`),
 };
@@ -950,10 +954,11 @@ interface MetaAnalyticsData {
 }
 
 export interface MetaAnalyticsResponse {
-  account_id: string;
-  account_name: string;
-  data: MetaAnalyticsData | null;
-  template_names?: Record<string, string>; // meta_template_id -> template name
+  account_id: string
+  account_name: string
+  data: MetaAnalyticsData | null
+  template_names?: Record<string, string> // meta_template_id -> template name
+  currency?: string // ISO 4217 code the WABA is billed in, from Meta
 }
 
 export const metaAnalyticsService = {
@@ -1121,12 +1126,41 @@ export interface Organization {
   created_at: string;
 }
 
+// A user's membership in the current organisation. `user_id` is the key the
+// update/remove endpoints expect; `is_default` marks the member's home org.
+export interface OrganizationMember {
+  id: string;
+  user_id: string;
+  organization_id: string;
+  role_id?: string;
+  role_name?: string;
+  is_default: boolean;
+  email: string;
+  full_name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface OrganizationMembersResponse {
+  members: OrganizationMember[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 export const organizationsService = {
   list: () => api.get<{ organizations: Organization[] }>("/organizations"),
   create: (data: { name: string }) => api.post("/organizations", data),
+  getCurrent: () => api.get<Organization>("/organizations/current"),
   // Members
+  listMembers: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<OrganizationMembersResponse>("/organizations/members", { params }),
   addMember: (data: { user_id?: string; email?: string; role_id?: string }) =>
     api.post("/organizations/members", data),
+  updateMemberRole: (userId: string, roleId: string) =>
+    api.put(`/organizations/members/${userId}`, { role_id: roleId }),
+  removeMember: (userId: string) =>
+    api.delete(`/organizations/members/${userId}`),
 };
 
 export interface Webhook {
@@ -1148,15 +1182,20 @@ export interface WebhookEvent {
 }
 
 export interface Team {
-  id: string;
-  name: string;
-  description: string;
-  assignment_strategy: "round_robin" | "load_balanced" | "manual";
-  per_agent_timeout_secs: number;
-  is_active: boolean;
-  member_count: number;
-  created_at: string;
-  updated_at: string;
+  id: string
+  name: string
+  description: string
+  assignment_strategy: 'round_robin' | 'load_balanced' | 'manual'
+  per_agent_timeout_secs: number
+  is_active: boolean
+  member_count: number
+  members?: TeamMember[]
+  created_by_id?: string
+  created_by_name?: string
+  updated_by_id?: string
+  updated_by_name?: string
+  created_at: string
+  updated_at: string
 }
 
 export interface TeamMember {
@@ -1209,6 +1248,84 @@ export const teamsService = {
   removeMember: (teamId: string, userId: string) =>
     api.delete(`/teams/${teamId}/members/${userId}`),
 };
+
+// Audit Logs
+export interface AuditLogChange {
+  field: string
+  old_value: any
+  new_value: any
+}
+
+export interface AuditLogEntry {
+  id: string
+  resource_type: string
+  resource_id: string
+  user_id: string
+  user_name: string
+  action: 'created' | 'updated' | 'deleted'
+  changes: AuditLogChange[]
+  created_at: string
+}
+
+export const auditLogsService = {
+  get: (id: string) =>
+    api.get<AuditLogEntry>(`/audit-logs/${id}`),
+  list: (params?: {
+    resource_type?: string
+    resource_id?: string
+    user_id?: string
+    action?: string
+    from?: string
+    to?: string
+    page?: number
+    limit?: number
+  }) =>
+    api.get<{ audit_logs: AuditLogEntry[]; total: number }>('/audit-logs', { params }),
+}
+
+export type ChatbotSessionStatus = 'active' | 'completed' | 'cancelled' | 'timeout'
+
+export interface ChatbotSessionMessage {
+  id: string
+  session_id: string
+  direction: 'incoming' | 'outgoing'
+  message: string
+  step_name: string
+  created_at: string
+}
+
+export interface ChatbotSession {
+  id: string
+  contact_id: string
+  whatsapp_account: string
+  phone_number: string
+  status: ChatbotSessionStatus
+  current_flow_id?: string
+  current_step: string
+  step_retries: number
+  session_data: Record<string, unknown>
+  started_at: string
+  last_activity_at: string
+  completed_at?: string
+  flow_name: string
+  message_count: number
+  contact?: { id: string; profile_name?: string; phone_number: string }
+  messages?: ChatbotSessionMessage[]
+}
+
+export const chatbotSessionsService = {
+  list: (params?: {
+    status?: string
+    flow_id?: string
+    search?: string
+    from?: string
+    to?: string
+    page?: number
+    limit?: number
+  }) =>
+    api.get<{ sessions: ChatbotSession[]; total: number }>('/chatbot/sessions', { params }),
+  get: (id: string) => api.get<ChatbotSession>(`/chatbot/sessions/${id}`),
+}
 
 export const webhooksService = {
   list: (params?: { search?: string; page?: number; limit?: number }) =>
@@ -1372,6 +1489,69 @@ export const tagsService = {
   delete: (name: string) => api.delete(`/tags/${encodeURIComponent(name)}`),
 };
 
+// Product Catalogs (WhatsApp Commerce)
+export interface CatalogProduct {
+  id: string;
+  meta_product_id: string;
+  name: string;
+  description: string;
+  /** Price in minor units (e.g. cents / paise) */
+  price: number;
+  currency: string;
+  url: string;
+  image_url: string;
+  retailer_id: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Catalog {
+  id: string;
+  meta_catalog_id: string;
+  whatsapp_account: string;
+  name: string;
+  is_active: boolean;
+  product_count: number;
+  products?: CatalogProduct[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CatalogProductPayload {
+  name: string;
+  description?: string;
+  price: number;
+  currency: string;
+  url?: string;
+  image_url?: string;
+  retailer_id?: string;
+}
+
+export interface CatalogSyncResult {
+  message: string;
+  synced: number;
+  total: number;
+}
+
+export const catalogsService = {
+  list: (params?: { whatsapp_account?: string }) =>
+    api.get<{ catalogs: Catalog[] }>("/catalogs", { params }),
+  get: (id: string) => api.get<Catalog>(`/catalogs/${id}`),
+  create: (data: { name: string; whatsapp_account: string }) =>
+    api.post<Catalog>("/catalogs", data),
+  delete: (id: string) => api.delete(`/catalogs/${id}`),
+  sync: (whatsappAccount: string) =>
+    api.post<CatalogSyncResult>("/catalogs/sync", { whatsapp_account: whatsappAccount }),
+  listProducts: (catalogId: string) =>
+    api.get<{ products: CatalogProduct[] }>(`/catalogs/${catalogId}/products`),
+  createProduct: (catalogId: string, data: CatalogProductPayload) =>
+    api.post<CatalogProduct>(`/catalogs/${catalogId}/products`, data),
+  updateProduct: (productId: string, data: CatalogProductPayload) =>
+    api.put<CatalogProduct>(`/products/${productId}`, data),
+  deleteProduct: (productId: string) => api.delete(`/products/${productId}`),
+};
+
 // Conversation Notes
 export interface ConversationNote {
   id: string;
@@ -1479,6 +1659,46 @@ export interface IVRFlowData {
   entry_node: string;
 }
 
+// v2 Node-based Chatbot Flow types. Mirrors IVR's graph shape with a
+// chat-specific node-type union. Only types listed in the union are
+// implemented today; others land in Phase 3.
+export type ChatNodeType =
+  | 'start'
+  | 'message'
+  | 'buttons'
+  | 'end'
+  | 'prompt'
+  | 'api_call'
+  | 'condition'
+  | 'timing'
+  | 'set_variable'
+  | 'ai_response'
+  | 'transfer'
+  | 'webhook'
+  | 'goto_flow'
+  | 'whatsapp_flow'
+
+export interface ChatNode {
+  id: string
+  type: ChatNodeType
+  label: string
+  position: IVRNodePosition
+  config: Record<string, any>
+}
+
+export interface ChatEdge {
+  from: string
+  to: string
+  condition: string
+}
+
+export interface ChatFlowGraph {
+  version: 2
+  nodes: ChatNode[]
+  edges: ChatEdge[]
+  entry_node: string
+}
+
 export interface IVRFlow {
   id: string;
   organization_id: string;
@@ -1502,7 +1722,7 @@ export interface CallTransfer {
   caller_phone: string;
   contact_id: string;
   whatsapp_account: string;
-  status: "waiting" | "connected" | "completed" | "abandoned" | "no_answer";
+  status: "waiting" | "connecting" | "connected" | "completed" | "abandoned" | "no_answer";
   team_id?: string;
   agent_id?: string;
   initiating_agent_id?: string;
@@ -1593,7 +1813,11 @@ export const callLogsService = {
   get: (id: string) => api.get<CallLog>(`/call-logs/${id}`),
   getRecordingURL: (id: string) =>
     api.get<{ url: string; duration: number }>(`/call-logs/${id}/recording`),
-};
+  hold: (id: string) =>
+    api.post<{ status: string }>(`/call-logs/${id}/hold`),
+  resume: (id: string) =>
+    api.post<{ status: string }>(`/call-logs/${id}/resume`),
+}
 
 export const callTransfersService = {
   list: (params?: { status?: string; page?: number; limit?: number }) =>
@@ -1709,6 +1933,42 @@ export const rsvpService = {
   sendFollowUp: (id: string, data: { audience: string; answer_key?: string; flow_id: string; template_id: string; template_params?: Record<string, string>; staging_id?: string; staging_filename?: string; response_ids?: string[] }) =>
     api.post(`/rsvp-events/${id}/followup/send`, data),
   exportUrl: (id: string) => `${api.defaults.baseURL}/rsvp-events/${id}/export`,
+};
+
+export const leadSourcesService = {
+  list: () => api.get('/lead-sources'),
+  get: (id: string) => api.get(`/lead-sources/${id}`),
+  create: (data: any) => api.post('/lead-sources', data),
+  update: (id: string, data: any) => api.put(`/lead-sources/${id}`, data),
+  delete: (id: string) => api.delete(`/lead-sources/${id}`),
+  subscribe: (id: string) => api.post(`/lead-sources/${id}/subscribe`),
+  test: (id: string) => api.post(`/lead-sources/${id}/test`),
+  forms: (id: string) => api.get(`/lead-sources/${id}/forms`),
+  sync: (id: string, data: { form_id?: string; since?: string; send?: boolean }) =>
+    api.post(`/lead-sources/${id}/sync`, data),
+  mappings: (id: string) => api.get(`/lead-sources/${id}/mappings`),
+  createMapping: (id: string, data: any) => api.post(`/lead-sources/${id}/mappings`, data),
+  updateMapping: (mappingId: string, data: any) => api.put(`/lead-mappings/${mappingId}`, data),
+  deleteMapping: (mappingId: string) => api.delete(`/lead-mappings/${mappingId}`),
+  preview: (mappingId: string, data?: { lead_id?: string }) => api.post(`/lead-mappings/${mappingId}/preview`, data || {}),
+};
+
+export const leadsService = {
+  list: (params?: {
+    source_id?: string;
+    form_id?: string;
+    status?: string;
+    phone?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+  }) => api.get('/leads', { params }),
+  get: (id: string) => api.get(`/leads/${id}`),
+  retry: (id: string) => api.post(`/leads/${id}/retry`),
+  send: (id: string) => api.post(`/leads/${id}/send`),
+  delete: (id: string, purge?: boolean) => api.delete(`/leads/${id}`, { params: { purge: !!purge } }),
+  stats: () => api.get('/leads/stats'),
 };
 
 export default api;

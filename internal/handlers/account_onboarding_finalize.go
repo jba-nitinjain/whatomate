@@ -97,33 +97,52 @@ func (a *App) buildOnboardingReadiness(session *models.WhatsAppOnboardingSession
 	return readiness
 }
 
+const (
+	accountConnectionFieldsLegacy = "display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier"
+	accountConnectionFields       = accountConnectionFieldsLegacy + ",whatsapp_business_manager_messaging_limit"
+)
+
+// getAccountPhoneFields GETs the account's phone-number node with fields.
+func (a *App) getAccountPhoneFields(account *models.WhatsAppAccount, fields string) (int, []byte, error) {
+	requestURL := fmt.Sprintf("%s/%s/%s?fields=%s",
+		a.Config.WhatsApp.BaseURL, account.APIVersion, account.PhoneID, fields)
+	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+account.AccessToken)
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	return resp.StatusCode, body, err
+}
+
 func (a *App) runAccountConnectionCheck(account *models.WhatsAppAccount) (*accountConnectionCheck, error) {
 	if err := a.validateAccountCredentials(account.PhoneID, account.BusinessID, account.AccessToken, account.APIVersion); err != nil {
 		return &accountConnectionCheck{
 			Success: false,
-			Error:   "Account credential validation failed. Check your access token and phone ID.",
+			Error:   fmt.Sprintf("Account credential validation failed: %s", err.Error()),
 		}, nil
 	}
 
-	requestURL := fmt.Sprintf("%s/%s/%s?fields=display_phone_number,verified_name,code_verification_status,account_mode,quality_rating,messaging_limit_tier",
-		a.Config.WhatsApp.BaseURL, account.APIVersion, account.PhoneID)
-	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
-	if err != nil {
-		return nil, err
+	// Request the newer portfolio messaging-limit field too; if Meta rejects
+	// it as an unknown field, retry once with main's original field list so
+	// the connection check never fails because of it.
+	statusCode, body, err := a.getAccountPhoneFields(account, accountConnectionFields)
+	if err == nil && whatsapp.IsUnknownFieldResponse(statusCode, body) {
+		a.Log.Warn("Meta rejected extended connection-check fields, retrying with legacy list", "phone_id", account.PhoneID)
+		statusCode, body, err = a.getAccountPhoneFields(account, accountConnectionFieldsLegacy)
 	}
-	req.Header.Set("Authorization", "Bearer "+account.AccessToken)
-
-	resp, err := a.HTTPClient.Do(req)
 	if err != nil {
 		return &accountConnectionCheck{
 			Success: false,
 			Error:   "Failed to connect to WhatsApp API",
 		}, nil
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
+	if statusCode != http.StatusOK {
 		return &accountConnectionCheck{
 			Success: false,
 			Error:   "API error",
@@ -140,12 +159,28 @@ func (a *App) runAccountConnectionCheck(account *models.WhatsAppAccount) (*accou
 	verifiedName, _ := result["verified_name"].(string)
 	isTestNumber := accountMode == "SANDBOX" || strings.EqualFold(verifiedName, "Test Number")
 
+	// Resolve messaging limit tier, falling back to the newer portfolio-based
+	// field and then to the WABA when the deprecated field is missing.
+	messagingLimitTier := toString(result["messaging_limit_tier"])
+	if messagingLimitTier == "" {
+		messagingLimitTier = toString(result["whatsapp_business_manager_messaging_limit"])
+	}
+	if messagingLimitTier == "" && account.BusinessID != "" {
+		wabaURL := fmt.Sprintf("%s/%s/%s?fields=whatsapp_business_manager_messaging_limit",
+			a.Config.WhatsApp.BaseURL, account.APIVersion, account.BusinessID)
+		if wabaResult, wabaStatus, wabaErr := a.fetchMetaJSON(wabaURL, account.AccessToken); wabaErr == nil && wabaStatus == http.StatusOK {
+			messagingLimitTier = toString(wabaResult["whatsapp_business_manager_messaging_limit"])
+		} else if wabaErr != nil {
+			a.Log.Warn("WABA messaging limit fallback failed", "waba_id", account.BusinessID, "error", wabaErr)
+		}
+	}
+
 	check := &accountConnectionCheck{
 		Success:                true,
 		DisplayPhoneNumber:     toString(result["display_phone_number"]),
 		VerifiedName:           verifiedName,
 		QualityRating:          toString(result["quality_rating"]),
-		MessagingLimitTier:     toString(result["messaging_limit_tier"]),
+		MessagingLimitTier:     messagingLimitTier,
 		CodeVerificationStatus: verificationStatus,
 		AccountMode:            accountMode,
 		IsTestNumber:           isTestNumber,

@@ -46,17 +46,11 @@ const router = createRouter({
           meta: { permission: 'analytics' }
         },
         {
-          path: 'chat',
-          name: 'chat',
-          component: () => import('@/views/chat/ChatView.vue'),
-          meta: { permission: 'chat' }
-        },
-        {
-          path: 'chat/:contactId',
+          path: 'chat/:contactId?',
           name: 'chat-conversation',
           component: () => import('@/views/chat/ChatView.vue'),
           props: true,
-          meta: { permission: 'chat' }
+          meta: { permission: 'chat', stableKey: true }
         },
         {
           path: 'profile',
@@ -69,6 +63,24 @@ const router = createRouter({
           name: 'templates',
           component: () => import('@/views/settings/TemplatesView.vue'),
           meta: { permission: 'templates' }
+        },
+        {
+          path: 'templates/:id',
+          name: 'template-detail',
+          component: () => import('@/views/settings/TemplateDetailView.vue'),
+          meta: { permission: 'templates' }
+        },
+        {
+          path: 'catalogs',
+          name: 'catalogs',
+          component: () => import('@/views/catalogs/CatalogsView.vue'),
+          meta: { permission: 'catalogs' }
+        },
+        {
+          path: 'catalogs/:id',
+          name: 'catalog-detail',
+          component: () => import('@/views/catalogs/CatalogDetailView.vue'),
+          meta: { permission: 'catalogs' }
         },
         {
           path: 'flows',
@@ -107,6 +119,12 @@ const router = createRouter({
           meta: { permission: 'rsvp' }
         },
         {
+          path: 'campaigns/:id',
+          name: 'campaign-detail',
+          component: () => import('@/views/settings/CampaignDetailView.vue'),
+          meta: { permission: 'campaigns' }
+        },
+        {
           path: 'chatbot',
           name: 'chatbot',
           component: () => import('@/views/chatbot/ChatbotView.vue'),
@@ -120,6 +138,12 @@ const router = createRouter({
           path: 'chatbot/keywords',
           name: 'chatbot-keywords',
           component: () => import('@/views/chatbot/KeywordsView.vue'),
+          meta: { permission: 'chatbot.keywords' }
+        },
+        {
+          path: 'chatbot/keywords/:id',
+          name: 'keyword-detail',
+          component: () => import('@/views/chatbot/KeywordDetailView.vue'),
           meta: { permission: 'chatbot.keywords' }
         },
         {
@@ -145,6 +169,24 @@ const router = createRouter({
           name: 'chatbot-ai',
           component: () => import('@/views/chatbot/AIContextsView.vue'),
           meta: { permission: 'chatbot.ai' }
+        },
+        {
+          path: 'chatbot/ai/:id',
+          name: 'ai-context-detail',
+          component: () => import('@/views/chatbot/AIContextDetailView.vue'),
+          meta: { permission: 'chatbot.ai' }
+        },
+        {
+          path: 'chatbot/sessions',
+          name: 'chatbot-sessions',
+          component: () => import('@/views/chatbot/ChatbotSessionsView.vue'),
+          meta: { permission: 'flows.chatbot' }
+        },
+        {
+          path: 'chatbot/sessions/:id',
+          name: 'chatbot-session-detail',
+          component: () => import('@/views/chatbot/ChatbotSessionDetailView.vue'),
+          meta: { permission: 'flows.chatbot' }
         },
         {
           path: 'chatbot/transfers',
@@ -183,15 +225,36 @@ const router = createRouter({
           meta: { permission: 'accounts' }
         },
         {
+          path: 'settings/accounts/:id',
+          name: 'account-detail',
+          component: () => import('@/views/settings/AccountDetailView.vue'),
+          meta: { permission: 'accounts' }
+        },
+        {
           path: 'settings/canned-responses',
           name: 'canned-responses',
           component: () => import('@/views/settings/CannedResponsesView.vue'),
           meta: { permission: 'canned_responses' }
         },
         {
+          path: 'settings/canned-responses/:id',
+          name: 'canned-response-detail',
+          component: () => import('@/views/settings/CannedResponseDetailView.vue'),
+          // stableKey reuses the component instance when :id flips from "new"
+          // to the new UUID after create, so the locally-set response (and the
+          // resulting Save-button reactivity) survives the route change.
+          meta: { permission: 'canned_responses', stableKey: true }
+        },
+        {
           path: 'settings/contacts',
           name: 'contacts',
           component: () => import('@/views/settings/ContactsView.vue'),
+          meta: { permission: 'contacts' }
+        },
+        {
+          path: 'settings/contacts/:id',
+          name: 'contact-detail',
+          component: () => import('@/views/settings/ContactDetailView.vue'),
           meta: { permission: 'contacts' }
         },
         {
@@ -207,9 +270,21 @@ const router = createRouter({
           meta: { permission: 'users' }
         },
         {
+          path: 'settings/users/:id',
+          name: 'user-detail',
+          component: () => import('@/views/settings/UserDetailView.vue'),
+          meta: { permission: 'users' }
+        },
+        {
           path: 'settings/roles',
           name: 'roles',
           component: () => import('@/views/settings/RolesView.vue'),
+          meta: { permission: 'roles' }
+        },
+        {
+          path: 'settings/roles/:id',
+          name: 'role-detail',
+          component: () => import('@/views/settings/RoleDetailView.vue'),
           meta: { permission: 'roles' }
         },
         {
@@ -219,9 +294,21 @@ const router = createRouter({
           meta: { permission: 'teams' }
         },
         {
+          path: 'settings/teams/:id',
+          name: 'team-detail',
+          component: () => import('@/views/settings/TeamDetailView.vue'),
+          meta: { permission: 'teams' }
+        },
+        {
           path: 'settings/api-keys',
           name: 'api-keys',
           component: () => import('@/views/settings/APIKeysView.vue'),
+          meta: { permission: 'api_keys' }
+        },
+        {
+          path: 'settings/api-keys/:id',
+          name: 'api-key-detail',
+          component: () => import('@/views/settings/APIKeyDetailView.vue'),
           meta: { permission: 'api_keys' }
         },
         {
@@ -231,16 +318,58 @@ const router = createRouter({
           meta: { permission: 'webhooks' }
         },
         {
+          path: 'settings/webhooks/:id',
+          name: 'webhook-detail',
+          component: () => import('@/views/settings/WebhookDetailView.vue'),
+          meta: { permission: 'webhooks' }
+        },
+        {
+          path: 'settings/organization-members',
+          name: 'organization-members',
+          component: () => import('@/views/settings/OrganizationMembersView.vue'),
+          meta: { permission: 'organizations' }
+        },
+        {
           path: 'settings/sso',
           name: 'sso-settings',
           component: () => import('@/views/settings/SSOSettingsView.vue'),
           meta: { permission: 'settings.sso' }
         },
         {
+          path: 'leads',
+          name: 'leads',
+          component: () => import('@/views/LeadsView.vue'),
+          meta: { permission: 'lead_ads' }
+        },
+        {
+          path: 'settings/lead-ads',
+          name: 'lead-sources',
+          component: () => import('@/views/settings/LeadSourcesView.vue'),
+          meta: { permission: 'lead_ads' }
+        },
+        {
+          path: 'settings/lead-ads/:id',
+          name: 'lead-source-detail',
+          component: () => import('@/views/settings/LeadSourceDetailView.vue'),
+          meta: { permission: 'lead_ads' }
+        },
+        {
           path: 'settings/custom-actions',
           name: 'custom-actions',
           component: () => import('@/views/settings/CustomActionsView.vue'),
           meta: { permission: 'custom_actions' }
+        },
+        {
+          path: 'settings/audit-logs',
+          name: 'audit-logs',
+          component: () => import('@/views/settings/AuditLogsView.vue'),
+          meta: { permission: 'audit_logs' }
+        },
+        {
+          path: 'settings/audit-logs/:id',
+          name: 'audit-log-detail',
+          component: () => import('@/views/settings/AuditLogDetailView.vue'),
+          meta: { permission: 'audit_logs' }
         },
         {
           path: 'calling',
@@ -290,14 +419,18 @@ const navigationOrder = [
     { path: '/chatbot', permission: 'settings.chatbot' },
     { path: '/chatbot/keywords', permission: 'chatbot.keywords' },
     { path: '/chatbot/flows', permission: 'flows.chatbot' },
-    { path: '/chatbot/ai', permission: 'chatbot.ai' }
+    { path: '/chatbot/ai', permission: 'chatbot.ai' },
+    { path: '/chatbot/sessions', permission: 'flows.chatbot' }
   ]},
   { path: '/chatbot/transfers', permission: 'transfers' },
   { path: '/analytics/agents', permission: 'analytics.agents' },
   { path: '/analytics/meta-insights', permission: 'analytics' },
   { path: '/templates', permission: 'templates' },
+  { path: '/catalogs', permission: 'catalogs' },
   { path: '/flows', permission: 'flows.whatsapp' },
   { path: '/campaigns', permission: 'campaigns' },
+  { path: '/rsvp', permission: 'rsvp' },
+  { path: '/leads', permission: 'lead_ads' },
   { path: '/calling/logs', permission: 'call_logs', childPaths: [
     { path: '/calling/logs', permission: 'call_logs' },
     { path: '/calling/ivr-flows', permission: 'ivr_flows' },
@@ -307,15 +440,18 @@ const navigationOrder = [
     { path: '/settings', permission: 'settings.general' },
     { path: '/settings/chatbot', permission: 'settings.chatbot' },
     { path: '/settings/accounts', permission: 'accounts' },
+    { path: '/settings/lead-ads', permission: 'lead_ads' },
     { path: '/settings/canned-responses', permission: 'canned_responses' },
     { path: '/settings/tags', permission: 'tags' },
     { path: '/settings/teams', permission: 'teams' },
     { path: '/settings/users', permission: 'users' },
+    { path: '/settings/organization-members', permission: 'organizations' },
     { path: '/settings/roles', permission: 'roles' },
     { path: '/settings/api-keys', permission: 'api_keys' },
     { path: '/settings/webhooks', permission: 'webhooks' },
     { path: '/settings/custom-actions', permission: 'custom_actions' },
-    { path: '/settings/sso', permission: 'settings.sso' }
+    { path: '/settings/sso', permission: 'settings.sso' },
+    { path: '/settings/audit-logs', permission: 'audit_logs' }
   ]}
 ]
 
@@ -343,14 +479,15 @@ function getFirstAccessibleRoute(authStore: ReturnType<typeof useAuthStore>): st
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore()
 
+  // Hydrate the store from localStorage before any route decision — an authenticated user hitting /login must be redirected away.
+  if (!authStore.isAuthenticated && (to.meta.requiresAuth !== false || to.name === 'login' || to.name === 'register')) {
+    authStore.restoreSession()
+  }
+
   // Check if route requires auth
   if (to.meta.requiresAuth !== false) {
     if (!authStore.isAuthenticated) {
-      // Try to restore session from localStorage
-      const restored = authStore.restoreSession()
-      if (!restored) {
-        return next({ name: 'login', query: { redirect: to.fullPath } })
-      }
+      return next({ name: 'login', query: { redirect: to.fullPath } })
     }
 
     // Check permission-based access

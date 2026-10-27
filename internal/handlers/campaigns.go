@@ -60,15 +60,21 @@ type CampaignResponse struct {
 	ScheduledAt         *time.Time            `json:"scheduled_at,omitempty"`
 	StartedAt           *time.Time            `json:"started_at,omitempty"`
 	CompletedAt         *time.Time            `json:"completed_at,omitempty"`
+	CreatedByName       string                `json:"created_by_name,omitempty"`
+	UpdatedByName       string                `json:"updated_by_name,omitempty"`
 	CreatedAt           time.Time             `json:"created_at"`
 	UpdatedAt           time.Time             `json:"updated_at"`
 }
 
 // RecipientRequest represents recipient import request
 type RecipientRequest struct {
-	PhoneNumber    string                 `json:"phone_number" validate:"required"`
-	RecipientName  string                 `json:"recipient_name"`
-	TemplateParams map[string]interface{} `json:"template_params"`
+	PhoneNumber    string         `json:"phone_number" validate:"required"`
+	RecipientName  string         `json:"recipient_name"`
+	TemplateParams map[string]any `json:"template_params"`
+	// HeaderParams carries the value for a TEXT-header variable (max 1 per
+	// Meta), keyed by the variable's name. Kept separate from TemplateParams
+	// so a positional header {{1}} doesn't collide with body {{1}}.
+	HeaderParams map[string]any `json:"header_params"`
 }
 
 type CampaignRecipientImportRequest struct {
@@ -156,12 +162,7 @@ func (a *App) ListCampaigns(r *fastglue.Request) error {
 		}
 	}
 
-	return r.SendEnvelope(map[string]interface{}{
-		"campaigns": response,
-		"total":     total,
-		"page":      pg.Page,
-		"limit":     pg.Limit,
-	})
+	return r.SendEnvelope(listEnvelope("campaigns", response, total, pg))
 }
 
 // CreateCampaign implements campaign creation
@@ -202,6 +203,7 @@ func (a *App) CreateCampaign(r *fastglue.Request) error {
 		Status:          models.CampaignStatusDraft,
 		ScheduledAt:     req.ScheduledAt,
 		CreatedBy:       userID,
+		UpdatedByID:     &userID,
 	}
 
 	if campaign.HeaderMediaURL != "" {
@@ -217,6 +219,9 @@ func (a *App) CreateCampaign(r *fastglue.Request) error {
 		a.Log.Error("Failed to create campaign", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create campaign", nil, "")
 	}
+
+	a.logAudit(orgID, userID,
+		"campaign", campaign.ID, models.AuditActionCreated, nil, &campaign)
 
 	a.Log.Info("Campaign created", "campaign_id", campaign.ID, "name", campaign.Name)
 
@@ -236,6 +241,7 @@ func (a *App) CreateCampaign(r *fastglue.Request) error {
 		TotalRecipients:     campaign.TotalRecipients,
 		SentCount:           campaign.SentCount,
 		DeliveredCount:      campaign.DeliveredCount,
+		ReadCount:           campaign.ReadCount,
 		FailedCount:         campaign.FailedCount,
 		ScheduledAt:         campaign.ScheduledAt,
 		CreatedAt:           campaign.CreatedAt,
@@ -258,6 +264,8 @@ func (a *App) GetCampaign(r *fastglue.Request) error {
 	var campaign models.BulkMessageCampaign
 	if err := a.DB.Where("id = ? AND organization_id = ?", id, orgID).
 		Preload("Template").
+		Preload("Creator").
+		Preload("UpdatedBy").
 		First(&campaign).Error; err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Campaign not found", nil, "")
 	}
@@ -277,6 +285,7 @@ func (a *App) GetCampaign(r *fastglue.Request) error {
 		TotalRecipients:     campaign.TotalRecipients,
 		SentCount:           campaign.SentCount,
 		DeliveredCount:      campaign.DeliveredCount,
+		ReadCount:           campaign.ReadCount,
 		FailedCount:         campaign.FailedCount,
 		ScheduledAt:         campaign.ScheduledAt,
 		StartedAt:           campaign.StartedAt,
@@ -287,13 +296,19 @@ func (a *App) GetCampaign(r *fastglue.Request) error {
 	if campaign.Template != nil {
 		response.TemplateName = campaign.Template.Name
 	}
+	if campaign.Creator != nil {
+		response.CreatedByName = campaign.Creator.FullName
+	}
+	if campaign.UpdatedBy != nil {
+		response.UpdatedByName = campaign.UpdatedBy.FullName
+	}
 
 	return r.SendEnvelope(response)
 }
 
 // UpdateCampaign implements campaign update
 func (a *App) UpdateCampaign(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
@@ -315,6 +330,8 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 	if campaign.Status != models.CampaignStatusDraft {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Can only update draft campaigns", nil, "")
 	}
+
+	oldCampaign := *campaign
 
 	var req CampaignRequest
 	if err := a.decodeRequest(r, &req); err != nil {
@@ -344,9 +361,10 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 	}
 
 	// Update fields
-	updates := map[string]interface{}{
-		"name":         req.Name,
-		"scheduled_at": req.ScheduledAt,
+	updates := map[string]any{
+		"name":          req.Name,
+		"scheduled_at":  req.ScheduledAt,
+		"updated_by_id": userID,
 	}
 
 	if req.TemplateID != "" {
@@ -383,7 +401,10 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 	}
 
 	// Reload campaign
-	a.DB.Where("id = ?", id).Preload("Template").First(campaign)
+	a.DB.Where("id = ?", id).Preload("Template").Preload("Creator").Preload("UpdatedBy").First(campaign)
+
+	a.logAudit(orgID, userID,
+		"campaign", campaign.ID, models.AuditActionUpdated, &oldCampaign, campaign)
 
 	response := CampaignResponse{
 		ID:                  campaign.ID,
@@ -400,6 +421,7 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 		TotalRecipients:     campaign.TotalRecipients,
 		SentCount:           campaign.SentCount,
 		DeliveredCount:      campaign.DeliveredCount,
+		ReadCount:           campaign.ReadCount,
 		FailedCount:         campaign.FailedCount,
 		ScheduledAt:         campaign.ScheduledAt,
 		CreatedAt:           campaign.CreatedAt,
@@ -407,6 +429,12 @@ func (a *App) UpdateCampaign(r *fastglue.Request) error {
 	}
 	if campaign.Template != nil {
 		response.TemplateName = campaign.Template.Name
+	}
+	if campaign.Creator != nil {
+		response.CreatedByName = campaign.Creator.FullName
+	}
+	if campaign.UpdatedBy != nil {
+		response.UpdatedByName = campaign.UpdatedBy.FullName
 	}
 
 	return r.SendEnvelope(response)
@@ -456,6 +484,13 @@ func (a *App) downloadCampaignHeaderMedia(ctx context.Context, headerMediaURL st
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+
+	// Callers may pass a *fasthttp.RequestCtx, whose Done() is only valid
+	// while a live server owns it (it nil-derefs in tests and after the
+	// handler returns). Detach from its cancellation and bound the download
+	// with our own timeout instead.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
+	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, headerMediaURL, nil)
 	if err != nil {
@@ -508,7 +543,7 @@ func campaignHeaderMediaFilename(rawURL string) string {
 
 // DeleteCampaign implements campaign deletion
 func (a *App) DeleteCampaign(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
@@ -543,9 +578,12 @@ func (a *App) DeleteCampaign(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to delete campaign", nil, "")
 	}
 
+	a.logAudit(orgID, userID,
+		"campaign", id, models.AuditActionDeleted, campaign, nil)
+
 	a.Log.Info("Campaign deleted", "campaign_id", id)
 
-	return r.SendEnvelope(map[string]interface{}{
+	return r.SendEnvelope(map[string]any{
 		"message": "Campaign deleted successfully",
 	})
 }
@@ -681,6 +719,7 @@ func (a *App) enqueueCampaignRecipients(ctx context.Context, campaign *models.Bu
 			PhoneNumber:    recipient.PhoneNumber,
 			RecipientName:  recipient.RecipientName,
 			TemplateParams: recipient.TemplateParams,
+			HeaderParams:   recipient.HeaderParams,
 		}
 	}
 
@@ -733,7 +772,7 @@ func (a *App) PauseCampaign(r *fastglue.Request) error {
 
 	a.Log.Info("Campaign paused", "campaign_id", id)
 
-	return r.SendEnvelope(map[string]interface{}{
+	return r.SendEnvelope(map[string]any{
 		"message": "Campaign paused",
 		"status":  models.CampaignStatusPaused,
 	})
@@ -774,7 +813,7 @@ func (a *App) CancelCampaign(r *fastglue.Request) error {
 
 	a.Log.Info("Campaign cancelled", "campaign_id", id)
 
-	return r.SendEnvelope(map[string]interface{}{
+	return r.SendEnvelope(map[string]any{
 		"message": "Campaign cancelled",
 		"status":  models.CampaignStatusCancelled,
 	})
@@ -927,6 +966,7 @@ func (a *App) RetryFailed(r *fastglue.Request) error {
 			PhoneNumber:    recipient.PhoneNumber,
 			RecipientName:  recipient.RecipientName,
 			TemplateParams: recipient.TemplateParams,
+			HeaderParams:   recipient.HeaderParams,
 		}
 	}
 
@@ -1035,6 +1075,7 @@ func (a *App) ResendCampaign(r *fastglue.Request) error {
 			PhoneNumber:    phone,
 			RecipientName:  strings.TrimSpace(recipient.RecipientName),
 			TemplateParams: recipient.TemplateParams,
+			HeaderParams:   recipient.HeaderParams,
 			Status:         models.MessageStatusPending,
 		})
 	}
@@ -1071,7 +1112,7 @@ func (a *App) ResendCampaign(r *fastglue.Request) error {
 
 // ImportRecipients implements adding recipients to a campaign
 func (a *App) ImportRecipients(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
@@ -1138,6 +1179,7 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 			PhoneNumber:    phone,
 			RecipientName:  strings.TrimSpace(rec.RecipientName),
 			TemplateParams: rec.TemplateParams,
+			HeaderParams:   rec.HeaderParams,
 		}
 	}
 
@@ -1174,6 +1216,7 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 			PhoneNumber:    rec.PhoneNumber,
 			RecipientName:  rec.RecipientName,
 			TemplateParams: models.JSONB(rec.TemplateParams),
+			HeaderParams:   models.JSONB(rec.HeaderParams),
 			Status:         models.MessageStatusPending,
 		})
 	}
@@ -1199,7 +1242,20 @@ func (a *App) ImportRecipients(r *fastglue.Request) error {
 
 	a.Log.Info("Recipients added to campaign", "campaign_id", id, "count", len(recipients))
 
-	return r.SendEnvelope(map[string]interface{}{
+	// Log recipient addition as audit
+	phoneNumbers := make([]string, len(req.Recipients))
+	for i, rec := range req.Recipients {
+		phoneNumbers[i] = rec.PhoneNumber
+	}
+	a.logAudit(orgID, userID,
+		"campaign", id, models.AuditActionUpdated, nil, nil,
+		map[string]any{
+			"field":     "recipients_added",
+			"old_value": nil,
+			"new_value": fmt.Sprintf("%d recipients added", len(req.Recipients)),
+		})
+
+	return r.SendEnvelope(map[string]any{
 		"message":          "Recipients added successfully",
 		"added_count":      len(recipients),
 		"total_recipients": totalCount,
@@ -1239,7 +1295,7 @@ func (a *App) GetCampaignRecipients(r *fastglue.Request) error {
 		}
 	}
 
-	return r.SendEnvelope(map[string]interface{}{
+	return r.SendEnvelope(map[string]any{
 		"recipients": recipients,
 		"total":      len(recipients),
 	})
@@ -1455,6 +1511,7 @@ func (a *App) enqueueImportedCampaignRecipients(ctx context.Context, campaign *m
 			PhoneNumber:    recipient.PhoneNumber,
 			RecipientName:  recipient.RecipientName,
 			TemplateParams: recipient.TemplateParams,
+			HeaderParams:   recipient.HeaderParams,
 		}
 	}
 
@@ -1553,7 +1610,7 @@ func (a *App) loadCampaignImportContacts(orgID uuid.UUID, contactIDs []string, t
 
 // DeleteCampaignRecipient deletes a single recipient from a campaign
 func (a *App) DeleteCampaignRecipient(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, userID, err := a.getOrgAndUserID(r)
 	if err != nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
@@ -1578,7 +1635,11 @@ func (a *App) DeleteCampaignRecipient(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "Can only delete recipients from draft campaigns", nil, "")
 	}
 
-	// Verify recipient belongs to campaign and delete
+	// Load recipient for audit before deleting
+	var recipient models.BulkMessageRecipient
+	a.DB.Where("id = ? AND campaign_id = ?", recipientUUID, campaignUUID).First(&recipient)
+
+	// Delete recipient
 	result := a.DB.Where("id = ? AND campaign_id = ?", recipientUUID, campaignUUID).Delete(&models.BulkMessageRecipient{})
 	if result.Error != nil {
 		a.Log.Error("Failed to delete recipient", "error", result.Error)
@@ -1592,7 +1653,15 @@ func (a *App) DeleteCampaignRecipient(r *fastglue.Request) error {
 	// Update campaign recipient count
 	a.DB.Model(campaign).Update("total_recipients", gorm.Expr("total_recipients - 1"))
 
-	return r.SendEnvelope(map[string]interface{}{
+	a.logAudit(orgID, userID,
+		"campaign", campaignUUID, models.AuditActionUpdated, nil, nil,
+		map[string]any{
+			"field":     "recipient_removed",
+			"old_value": recipient.PhoneNumber,
+			"new_value": nil,
+		})
+
+	return r.SendEnvelope(map[string]any{
 		"message": "Recipient deleted successfully",
 	})
 }
@@ -1881,7 +1950,7 @@ func (a *App) ServeCampaignMedia(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "No media found", nil, "")
 	}
 
-	data, contentType, err := a.readCampaignMediaFile(r.RequestCtx, campaign)
+	data, contentType, err := a.readCampaignMediaFile(context.WithoutCancel(r.RequestCtx), campaign)
 	if err != nil {
 		status := fasthttp.StatusInternalServerError
 		message := "Failed to read file"
@@ -2217,7 +2286,7 @@ func (a *App) recalculateCampaignStats(campaignID uuid.UUID) {
 	}
 
 	if err := a.DB.Model(&models.BulkMessageCampaign{}).Where("id = ?", campaignID).
-		Updates(map[string]interface{}{
+		Updates(map[string]any{
 			"sent_count":      stats.Sent,
 			"delivered_count": stats.Delivered,
 			"read_count":      stats.Read,

@@ -22,7 +22,7 @@ type CustomRole struct {
 	OrganizationID uuid.UUID    `gorm:"type:uuid;index;not null" json:"organization_id"`
 	Name           string       `gorm:"size:100;not null" json:"name"`
 	Description    string       `gorm:"size:500" json:"description"`
-	IsSystem       bool         `gorm:"default:false" json:"is_system"` // true for default admin/manager/agent
+	IsSystem       bool         `gorm:"default:false" json:"is_system"`  // true for default admin/manager/agent
 	IsDefault      bool         `gorm:"default:false" json:"is_default"` // default role for new users in org
 	Permissions    []Permission `gorm:"many2many:role_permissions;" json:"permissions"`
 
@@ -46,36 +46,48 @@ func (RolePermission) TableName() string {
 
 // PermissionResource constants for available resources
 const (
-	ResourceUsers           = "users"
-	ResourceTeams           = "teams"
-	ResourceRoles           = "roles"
-	ResourceSettingsGeneral = "settings.general"
-	ResourceSettingsChatbot = "settings.chatbot"
-	ResourceSettingsSSO     = "settings.sso"
-	ResourceAccounts        = "accounts"
-	ResourceTemplates       = "templates"
-	ResourceFlowsWhatsApp   = "flows.whatsapp"
-	ResourceFlowsChatbot    = "flows.chatbot"
-	ResourceCampaigns       = "campaigns"
-	ResourceRSVP            = "rsvp"
-	ResourceChatbotKeywords = "chatbot.keywords"
-	ResourceChatbotAI       = "chatbot.ai"
-	ResourceChat            = "chat"
-	ResourceChatAssign      = "chat.assign"
-	ResourceContacts        = "contacts"
-	ResourceTags            = "tags"
-	ResourceAnalytics       = "analytics"
-	ResourceAnalyticsAgents = "analytics.agents"
-	ResourceTransfers       = "transfers"
-	ResourceWebhooks        = "webhooks"
-	ResourceAPIKeys         = "api_keys"
-	ResourceCannedResponses = "canned_responses"
-	ResourceCustomActions   = "custom_actions"
-	ResourceOrganizations   = "organizations"
-	ResourceCallLogs        = "call_logs"
-	ResourceIVRFlows        = "ivr_flows"
-	ResourceCallTransfers   = "call_transfers"
-	ResourceOutgoingCalls   = "outgoing_calls"
+	ResourceUsers                = "users"
+	ResourceTeams                = "teams"
+	ResourceRoles                = "roles"
+	ResourceSettingsGeneral      = "settings.general"
+	ResourceSettingsChatbot      = "settings.chatbot"
+	ResourceSettingsSSO          = "settings.sso"
+	ResourceSettingsCalling      = "settings.calling"
+	ResourceSettingsNotification = "settings.notification"
+	// Chatbot sub-resources — used only as audit_log resource_type values
+	// for per-tab activity feeds, not checked by the permission system.
+	ResourceSettingsChatbotMessages = "settings.chatbot.messages"
+	ResourceSettingsChatbotAgents   = "settings.chatbot.agents"
+	ResourceSettingsChatbotHours    = "settings.chatbot.hours"
+	ResourceSettingsChatbotSLA      = "settings.chatbot.sla"
+	ResourceSettingsChatbotAI       = "settings.chatbot.ai"
+	ResourceAccounts                = "accounts"
+	ResourceTemplates               = "templates"
+	ResourceFlowsWhatsApp           = "flows.whatsapp"
+	ResourceFlowsChatbot            = "flows.chatbot"
+	ResourceCampaigns               = "campaigns"
+	ResourceRSVP                    = "rsvp"
+	ResourceChatbotKeywords         = "chatbot.keywords"
+	ResourceChatbotAI               = "chatbot.ai"
+	ResourceChat                    = "chat"
+	ResourceChatAssign              = "chat.assign"
+	ResourceContacts                = "contacts"
+	ResourceTags                    = "tags"
+	ResourceAnalytics               = "analytics"
+	ResourceAnalyticsAgents         = "analytics.agents"
+	ResourceTransfers               = "transfers"
+	ResourceWebhooks                = "webhooks"
+	ResourceAPIKeys                 = "api_keys"
+	ResourceCannedResponses         = "canned_responses"
+	ResourceCustomActions           = "custom_actions"
+	ResourceOrganizations           = "organizations"
+	ResourceCallLogs                = "call_logs"
+	ResourceIVRFlows                = "ivr_flows"
+	ResourceCallTransfers           = "call_transfers"
+	ResourceOutgoingCalls           = "outgoing_calls"
+	ResourceAuditLogs               = "audit_logs"
+	ResourceLeadAds                 = "lead_ads"
+	ResourceCatalogs                = "catalogs"
 )
 
 // PermissionAction constants for available actions
@@ -159,6 +171,7 @@ func DefaultPermissions() []Permission {
 		// Chatbot AI
 		{Resource: ResourceChatbotAI, Action: ActionRead, Description: "View AI contexts"},
 		{Resource: ResourceChatbotAI, Action: ActionWrite, Description: "Create and edit AI contexts"},
+		{Resource: ResourceChatbotAI, Action: ActionDelete, Description: "Delete AI contexts"},
 
 		// Chat
 		{Resource: ResourceChat, Action: ActionRead, Description: "View chat conversations"},
@@ -229,6 +242,21 @@ func DefaultPermissions() []Permission {
 		// Outgoing Calls
 		{Resource: ResourceOutgoingCalls, Action: ActionRead, Description: "View outgoing call status"},
 		{Resource: ResourceOutgoingCalls, Action: ActionWrite, Description: "Initiate outgoing calls"},
+
+		// Lead Ads
+		{Resource: ResourceLeadAds, Action: ActionRead, Description: "View lead ads and sources"},
+		{Resource: ResourceLeadAds, Action: ActionWrite, Description: "Create and edit lead sources and mappings"},
+		{Resource: ResourceLeadAds, Action: ActionDelete, Description: "Delete lead sources and mappings"},
+		{Resource: ResourceLeadAds, Action: ActionExecute, Description: "Sync, retry and trigger leads"},
+		{Resource: ResourceLeadAds, Action: ActionExport, Description: "Export leads"},
+		// Audit Logs
+		{Resource: ResourceAuditLogs, Action: ActionRead, Description: "View audit logs"},
+
+		// Product Catalogs
+		{Resource: ResourceCatalogs, Action: ActionRead, Description: "View product catalogs and products"},
+		{Resource: ResourceCatalogs, Action: ActionWrite, Description: "Create catalogs and add or edit products"},
+		{Resource: ResourceCatalogs, Action: ActionDelete, Description: "Delete catalogs and products"},
+		{Resource: ResourceCatalogs, Action: ActionSync, Description: "Sync catalogs from Meta"},
 	}
 }
 
@@ -258,7 +286,7 @@ func SystemRolePermissions() map[string][]string {
 		"rsvp:read", "rsvp:write", "rsvp:delete", "rsvp:execute", "rsvp:export",
 		// Chatbot
 		"chatbot.keywords:read", "chatbot.keywords:write", "chatbot.keywords:delete",
-		"chatbot.ai:read", "chatbot.ai:write",
+		"chatbot.ai:read", "chatbot.ai:write", "chatbot.ai:delete",
 		// Chat
 		"chat:read", "chat:write", "chat.assign:write",
 		// Contacts
@@ -282,10 +310,16 @@ func SystemRolePermissions() map[string][]string {
 		"ivr_flows:read", "ivr_flows:write", "ivr_flows:delete",
 		"call_transfers:read", "call_transfers:write",
 		"outgoing_calls:read", "outgoing_calls:write",
+		// Lead Ads
+		"lead_ads:read", "lead_ads:write", "lead_ads:delete", "lead_ads:execute", "lead_ads:export",
+		// Product Catalogs
+		"catalogs:read", "catalogs:write", "catalogs:delete", "catalogs:sync",
 	}
 
 	agentPermissions := []string{
 		"rsvp:read",
+		// Accounts (read only)
+		"accounts:read",
 		// Chat
 		"chat:read", "chat:write",
 		// Contacts (read only)

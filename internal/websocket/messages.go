@@ -21,12 +21,12 @@ const (
 	TypePong          = "pong"
 
 	// Agent transfer types
-	TypeAgentTransfer        = "agent_transfer"
-	TypeAgentTransferResume  = "agent_transfer_resume"
-	TypeAgentTransferAssign  = "agent_transfer_assign"
-	TypeTransferEscalation = "transfer_escalation"
-	TypeTransferExpired    = "transfer_expired"
-	TypeTransferEscalated  = "transfer_escalated"
+	TypeAgentTransfer       = "agent_transfer"
+	TypeAgentTransferResume = "agent_transfer_resume"
+	TypeAgentTransferAssign = "agent_transfer_assign"
+	TypeTransferEscalation  = "transfer_escalation"
+	TypeTransferExpired     = "transfer_expired"
+	TypeTransferEscalated   = "transfer_escalated"
 
 	// Campaign types
 	TypeCampaignStatsUpdate = "campaign_stats_update"
@@ -45,12 +45,16 @@ const (
 	TypeCallEnded    = "call_ended"
 
 	// Call transfer types
-	TypeCallTransferWaiting   = "call_transfer_waiting"
-	TypeCallTransferConnected = "call_transfer_connected"
-	TypeCallTransferCompleted = "call_transfer_completed"
-	TypeCallTransferAbandoned = "call_transfer_abandoned"
-	TypeCallTransferNoAnswer    = "call_transfer_no_answer"
+	TypeCallTransferWaiting    = "call_transfer_waiting"
+	TypeCallTransferConnected  = "call_transfer_connected"
+	TypeCallTransferCompleted  = "call_transfer_completed"
+	TypeCallTransferAbandoned  = "call_transfer_abandoned"
+	TypeCallTransferNoAnswer   = "call_transfer_no_answer"
 	TypeCallTransferReassigned = "call_transfer_reassigned"
+
+	// Call hold types
+	TypeCallHold    = "call_hold"
+	TypeCallResumed = "call_resumed"
 
 	// Outgoing call types
 	TypeOutgoingCallInitiated = "outgoing_call_initiated"
@@ -61,6 +65,9 @@ const (
 
 	// Call permission types
 	TypeCallPermissionUpdate = "call_permission_update"
+
+	// Lead Ads types
+	TypeLeadUpdate = "lead_update"
 )
 
 // BroadcastMessage represents a message to be broadcast to clients

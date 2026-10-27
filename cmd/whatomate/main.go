@@ -133,6 +133,13 @@ func runServer(args []string) {
 		lo.Warn("Debug mode is enabled in production! This may expose sensitive information.")
 	}
 
+	// Require explicit CORS origins in production
+	// Upstream makes this fatal; we only warn so existing production deployments
+	// that never set allowed_origins keep booting after an upgrade.
+	if cfg.App.Environment == "production" && cfg.Server.AllowedOrigins == "" {
+		lo.Warn("server.allowed_origins is not set in production; set it (e.g. \"https://app.example.com\") to restrict CORS")
+	}
+
 	// Set log level based on environment
 	if cfg.App.Environment == "production" {
 		lo = logf.New(logf.Opts{
@@ -157,6 +164,9 @@ func runServer(args []string) {
 		if err := database.RunMigrationWithProgress(db, &cfg.DefaultAdmin); err != nil {
 			lo.Fatal("Migration failed", "error", err)
 		}
+		// NOTE: upstream's handlers.BackfillChatbotFlowGraph is intentionally NOT
+		// run here. This fork keeps the step-based chatbot engine (ChatbotFlowStep)
+		// as the runtime for all flows and RSVP; the v2 graph runner is dormant.
 	}
 
 	// Connect to Redis
@@ -297,6 +307,14 @@ func runServer(args []string) {
 	go slaProcessor.Start(slaCtx)
 	lo.Info("SLA processor started")
 
+	// Start Lead processor
+	leadProcessor := handlers.NewLeadProcessor(app, 15*time.Second)
+	leadCtx, leadCancel := context.WithCancel(context.Background())
+	app.LeadProcessor = leadProcessor
+	app.LeadProcessorCancel = leadCancel
+	go leadProcessor.Start(leadCtx)
+	lo.Info("Lead processor started")
+
 	// Start message retention cleanup worker (runs once at startup, then every 24 h)
 	go worker.StartMessageRetentionWorker(db, lo)
 	lo.Info("Message retention worker started")
@@ -355,6 +373,12 @@ func runServer(args []string) {
 	slaCancel()
 	slaProcessor.Stop()
 	lo.Info("SLA processor stopped")
+
+	// Stop Lead processor
+	lo.Info("Stopping Lead processor...")
+	leadCancel()
+	leadProcessor.Stop()
+	lo.Info("Lead processor stopped")
 
 	// Stop workers first
 	if workerCancel != nil {
@@ -498,6 +522,8 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/health", app.HealthCheck)
 	g.GET("/ready", app.ReadyCheck)
 
+	g.GET("/api/embedded-signup/config", app.GetEmbeddedSignupConfig)
+
 	// Auth routes (public, optionally rate-limited)
 	if cfg.RateLimit.Enabled {
 		window := time.Duration(cfg.RateLimit.WindowSeconds) * time.Second
@@ -544,6 +570,8 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	// Webhook routes (public - for Meta)
 	g.GET("/api/webhook", app.WebhookVerify)
 	g.POST("/api/webhook", app.WebhookHandler)
+	g.GET("/api/webhook/leadgen", app.LeadWebhookVerify)
+	g.POST("/api/webhook/leadgen", app.LeadWebhookHandler)
 	g.GET("/public/campaigns/{id}/media/{filename}", app.ServePublicCampaignMedia)
 	g.GET("/public/flow-media/{filename}", app.ServePublicFlowMedia)
 
@@ -561,7 +589,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 		// Skip auth for public routes
 		if path == "/health" || path == "/ready" ||
 			path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/auth/refresh" ||
-			path == "/api/auth/logout" || path == "/api/webhook" || path == "/ws" {
+			path == "/api/auth/logout" || path == "/api/webhook" || path == "/api/webhook/leadgen" || path == "/ws" {
 			return r
 		}
 		// Skip auth for SSO routes (they handle their own auth via state tokens)
@@ -578,6 +606,37 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 		}
 		return r
 	})
+
+	// Global rate limit on all /api/ routes, keyed by user ID (or IP if unauthenticated).
+	// Runs after auth so the user identity is available.
+	if cfg.RateLimit.Enabled {
+		apiMax := cfg.RateLimit.APIMaxRequests
+		if apiMax == 0 {
+			apiMax = 200
+		}
+		apiWindow := cfg.RateLimit.APIWindowSeconds
+		if apiWindow == 0 {
+			apiWindow = 60
+		}
+		apiRL := middleware.UserAwareRateLimit(middleware.RateLimitOpts{
+			Redis:      rdb,
+			Log:        lo,
+			Max:        apiMax,
+			Window:     time.Duration(apiWindow) * time.Second,
+			KeyPrefix:  "api_global",
+			TrustProxy: cfg.RateLimit.TrustProxy,
+		})
+		g.Before(func(r *fastglue.Request) *fastglue.Request {
+			path := string(r.RequestCtx.Path())
+			if len(path) > 4 && path[:4] == "/api" {
+				if isRateLimitExemptProviderCallback(path) || isRateLimitExemptIntegrationRequest(r, path) {
+					return r
+				}
+				return apiRL(r)
+			}
+			return r
+		})
+	}
 
 	// Role-based access control middleware
 	g.Before(func(r *fastglue.Request) *fastglue.Request {
@@ -617,7 +676,9 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 
 	// API Keys (admin only - enforced by middleware)
 	g.GET("/api/api-keys", app.ListAPIKeys)
+	g.GET("/api/api-keys/{id}", app.GetAPIKey)
 	g.POST("/api/api-keys", app.CreateAPIKey)
+	g.PUT("/api/api-keys/{id}", app.UpdateAPIKey)
 	g.DELETE("/api/api-keys/{id}", app.DeleteAPIKey)
 	g.GET("/api/admin/chat-repair", app.PreviewChatRepairCandidates)
 	g.POST("/api/admin/chat-repair/scan", app.ScanChatRepairCandidates)
@@ -638,9 +699,11 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/accounts/onboarding/sessions/{id}/validate-webhook", app.ValidateOnboardingWebhook)
 	g.POST("/api/accounts/onboarding/sessions/{id}/subscribe-webhooks", app.SubscribeOnboardingWebhooks)
 	g.POST("/api/accounts/onboarding/sessions/{id}/finalize", app.FinalizeWhatsAppOnboarding)
+	g.POST("/api/accounts/exchange-token", app.ExchangeToken) // Embedded signup
 	g.GET("/api/accounts/{id}", app.GetAccount)
 	g.PUT("/api/accounts/{id}", app.UpdateAccount)
 	g.DELETE("/api/accounts/{id}", app.DeleteAccount)
+	g.POST("/api/accounts/{id}/register", app.RegisterPhoneNumber) // Embedded signup manual/2fa registration
 	g.POST("/api/accounts/{id}/test", app.TestAccountConnection)
 	g.POST("/api/accounts/{id}/subscribe", app.SubscribeApp)
 	g.GET("/api/accounts/{id}/phone-status", app.GetAccountPhoneStatus)
@@ -678,6 +741,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/contacts/{id}/messages", app.GetMessages)
 	g.POST("/api/contacts/{id}/messages", app.SendMessage)
 	g.DELETE("/api/contacts/{id}/messages/{message_id}", app.DeleteMessage)
+	g.POST("/api/contacts/{id}/mark-read", app.MarkContactRead)
 	g.POST("/api/contacts/{id}/messages/{message_id}/reaction", app.SendReaction)
 	g.POST("/api/messages", app.SendMessage) // Legacy route
 	g.POST("/api/messages/external", app.CreateExternalMessage)
@@ -814,6 +878,10 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/teams/{id}/members", app.AddTeamMember)
 	g.DELETE("/api/teams/{id}/members/{member_user_id}", app.RemoveTeamMember)
 
+	// Audit Logs
+	g.GET("/api/audit-logs", app.ListAuditLogs)
+	g.GET("/api/audit-logs/{id}", app.GetAuditLog)
+
 	// Canned Responses
 	g.GET("/api/canned-responses", app.ListCannedResponses)
 	g.POST("/api/canned-responses", app.CreateCannedResponse)
@@ -909,6 +977,10 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/call-transfers/{id}/hangup", app.HangupCallTransfer)
 	g.POST("/api/call-transfers/initiate", app.InitiateAgentTransfer)
 
+	// Call Hold
+	g.POST("/api/call-logs/{id}/hold", app.HoldCall)
+	g.POST("/api/call-logs/{id}/resume", app.ResumeCall)
+
 	// Outgoing Calls
 	g.POST("/api/calls/outgoing", app.InitiateOutgoingCall)
 	g.POST("/api/calls/outgoing/{id}/hangup", app.HangupOutgoingCall)
@@ -929,6 +1001,30 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.GET("/api/products/{id}", app.GetCatalogProduct)
 	g.PUT("/api/products/{id}", app.UpdateCatalogProduct)
 	g.DELETE("/api/products/{id}", app.DeleteCatalogProduct)
+
+	// Lead Ads & Sources
+	g.GET("/api/lead-sources", app.ListLeadSources)
+	g.POST("/api/lead-sources", app.CreateLeadSource)
+	g.GET("/api/lead-sources/{id}", app.GetLeadSource)
+	g.PUT("/api/lead-sources/{id}", app.UpdateLeadSource)
+	g.DELETE("/api/lead-sources/{id}", app.DeleteLeadSource)
+	g.POST("/api/lead-sources/{id}/subscribe", app.SubscribeLeadSource)
+	g.POST("/api/lead-sources/{id}/test", app.TestLeadSourceConnection)
+	g.GET("/api/lead-sources/{id}/forms", app.GetLeadSourceForms)
+	g.POST("/api/lead-sources/{id}/sync", app.SyncLeadSource)
+	g.GET("/api/lead-sources/{id}/mappings", app.ListLeadMappings)
+	g.POST("/api/lead-sources/{id}/mappings", app.CreateLeadMapping)
+	g.PUT("/api/lead-mappings/{id}", app.UpdateLeadMapping)
+	g.DELETE("/api/lead-mappings/{id}", app.DeleteLeadMapping)
+	g.POST("/api/lead-mappings/{id}/preview", app.PreviewLeadMapping)
+
+	// Leads Work Queue & Reporting
+	g.GET("/api/leads", app.ListLeads)
+	g.GET("/api/leads/stats", app.GetLeadStats)
+	g.GET("/api/leads/{id}", app.GetLead)
+	g.POST("/api/leads/{id}/retry", app.RetryLead)
+	g.POST("/api/leads/{id}/send", app.SendLeadNow)
+	g.DELETE("/api/leads/{id}", app.DeleteLead)
 
 	// Serve embedded frontend (SPA)
 	if frontend.IsEmbedded() {
@@ -992,4 +1088,46 @@ func corsWrapper(next fasthttp.RequestHandler, allowedOrigins map[string]bool) f
 
 		next(ctx)
 	}
+}
+
+// rateLimitExemptIntegrationPaths are the machine-to-machine endpoints used by
+// external integrations (external message API, template send API and message
+// status lookups). High-volume API-key callers on these paths must not be
+// throttled by the per-user UI rate limiter.
+var rateLimitExemptIntegrationPaths = []string{
+	"/api/messages/external",
+	"/api/messages/template",
+	"/api/messages/status",
+}
+
+// rateLimitExemptProviderCallbackPaths are inbound callbacks from Meta (the
+// WhatsApp webhook carrying messages, statuses and calling events, and the
+// Lead Ads leadgen webhook). They arrive unauthenticated from a small pool of
+// Meta IPs, so the per-user/IP API limiter would throttle legitimate bursts
+// and make Meta retry or drop deliveries. Both GET (verification) and POST
+// are exempt; they are protected by the verify token and payload signature.
+var rateLimitExemptProviderCallbackPaths = map[string]struct{}{
+	"/api/webhook":         {},
+	"/api/webhook/leadgen": {},
+}
+
+// isRateLimitExemptProviderCallback reports whether path is a provider
+// callback that must bypass the global API rate limiter.
+func isRateLimitExemptProviderCallback(path string) bool {
+	_, ok := rateLimitExemptProviderCallbackPaths[strings.TrimSuffix(path, "/")]
+	return ok
+}
+
+// isRateLimitExemptIntegrationRequest reports whether the request is an
+// API-key authenticated call to one of the integration endpoints.
+func isRateLimitExemptIntegrationRequest(r *fastglue.Request, path string) bool {
+	if strings.TrimSpace(string(r.RequestCtx.Request.Header.Peek("X-API-Key"))) == "" {
+		return false
+	}
+	for _, p := range rateLimitExemptIntegrationPaths {
+		if path == p {
+			return true
+		}
+	}
+	return strings.HasPrefix(path, "/api/messages/") && strings.HasSuffix(path, "/status")
 }

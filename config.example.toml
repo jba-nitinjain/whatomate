@@ -48,6 +48,8 @@ type = "local"  # local, s3
 local_path = "./uploads"
 s3_bucket = ""
 s3_region = ""
+# Leave s3_key/s3_secret empty to use the AWS default credential chain
+# (env vars, shared config, EKS IRSA, ECS task role, EC2 instance profile).
 s3_key = ""
 s3_secret = ""
 
@@ -73,6 +75,8 @@ refresh_max_attempts = 30      # Max token refresh attempts per IP per window
 sso_max_attempts = 10          # Max SSO init/callback attempts per IP per window
 window_seconds = 60            # Time window in seconds
 trust_proxy = false            # Trust X-Forwarded-For / X-Real-IP headers (set true behind reverse proxy)
+api_max_requests = 200         # Max requests per IP per window for all /api/ routes (0 = 200)
+api_window_seconds = 60        # Time window for global API rate limit (0 = 60)
 
 # Text-to-Speech for IVR greetings (optional, requires piper + opusenc installed)
 # Download piper: https://github.com/rhasspy/piper/releases (standalone binary)
@@ -93,6 +97,11 @@ trust_proxy = false            # Trust X-Forwarded-For / X-Real-IP headers (set 
 # for accounts that DO have an app secret are always signature-enforced. Set true
 # in production to block spoofed events once app secrets are configured.
 require_webhook_signature = false
+# Legacy Embedded Signup endpoint (/api/accounts/exchange-token) credentials.
+# The onboarding wizard uses the super-admin Meta onboarding settings instead.
+# app_id = ""      # Meta App ID
+# app_secret = ""  # Meta App Secret
+# config_id = ""   # Embedded Signup configuration ID
 
 # WhatsApp Calling / WebRTC
 [calling]
@@ -101,6 +110,9 @@ audio_dir = "./audio"         # Directory for IVR audio files
 # hold_music_file = "hold_music.opus"
 # ringback_file = "ringback.opus"
 transfer_timeout_secs = 120   # How long to wait for agent to accept transfer
+per_agent_timeout_secs = 15   # How long each agent in a team rotation is rung
+sticky_ring_secs = 30         # How long a click-to-call button rings the agent who sent it
+                              # (those calls never fall back to the team)
 recording_enabled = true      # Record calls to S3 (requires [storage] s3 config)
 udp_port_min = 10000          # WebRTC UDP port range start
 udp_port_max = 10100          # WebRTC UDP port range end
@@ -130,6 +142,16 @@ udp_port_max = 10100          # WebRTC UDP port range end
 # urls = ["turn:your-turn-server.com:3478"]
 # username = "user"
 # credential = "password"
+
+# Option D: TURN with a shared secret (coturn "use-auth-secret" / TURN REST API).
+# When `secret` is set it takes priority over username/credential: short-lived
+# credentials are generated per request (username = expiry timestamp, credential
+# = base64(HMAC-SHA1(secret, username))). Match `secret` to coturn's
+# `static-auth-secret`. `credential_ttl` (seconds) sets lifetime (default 86400).
+# [[calling.ice_servers]]
+# urls = ["turn:your-turn-server.com:3478"]
+# secret = "your-coturn-static-auth-secret"
+# credential_ttl = 86400
 
 # Default admin credentials (only used during initial setup when no users exist)
 [default_admin]

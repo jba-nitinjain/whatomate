@@ -108,6 +108,7 @@ Create automated responses triggered by specific keywords or phrases.
    - **Template** - Send a pre-approved template message
    - **Media** - Send image, video, or document
    - **Flow** - Trigger a conversation flow
+   - **Script** - Run a script to build the reply dynamically
    - **Transfer to Agent** - Transfer the conversation to a human agent
 
 4. **Set Priority**
@@ -146,13 +147,14 @@ Configure AI-powered responses to handle queries that don't match keywords or fl
 
 <CardGrid>
   <Card title="OpenAI" icon="setting">
-    GPT-4o, GPT-4o-mini, GPT-4-turbo
+    GPT-4o, GPT-4o-mini, GPT-4-turbo, GPT-3.5-turbo
   </Card>
   <Card title="Anthropic" icon="setting">
-    Claude 3.5 Sonnet, Claude 3.5 Haiku
+    Claude 3.5 Sonnet, Claude 3.5 Haiku, Claude 3 Opus. Models use
+    `-latest` aliases (e.g. `claude-3-5-sonnet-latest`).
   </Card>
   <Card title="Google AI" icon="setting">
-    Gemini 2.0 Flash, Gemini 1.5 Flash
+    Gemini 2.0 Flash, Gemini 2.0 Flash-Lite, Gemini 1.5 Flash, Gemini 1.5 Flash-8B
   </Card>
 </CardGrid>
 
@@ -206,24 +208,42 @@ The visual flow builder allows you to:
 
 ### API Integration
 
-The "Fetch from API" step type allows you to call external APIs and use the response data in your messages.
+The `api_call` node lets you call external APIs and use the response data in your messages. (Use
+`webhook` instead when you don't need the response — it fires and forgets, always taking the
+`default` edge.)
 
-#### Configuring an API Step
+#### Configuring an api_call node
 
 <Steps>
 
 1. **Set API URL and Method**
 
    Enter the API endpoint URL and select the HTTP method (GET, POST, PUT, PATCH).
-   Use `{{variable}}` syntax to include session data in the URL.
+   Use `{{variable}}` syntax to include session data, including built-in
+   variables like `{{phone_number}}` (see [Built-in variables](#built-in-variables)
+   below).
+
+   ```
+   https://api.example.com/users/{{phone_number}}
+   ```
 
 2. **Add Headers (Optional)**
 
    Configure custom headers like Authorization tokens or API keys.
+   Variables are substituted in header values too:
+
+   ```
+   X-User-Phone: {{phone_number}}
+   Authorization: Bearer {{api_token}}
+   ```
 
 3. **Configure Request Body (POST/PUT/PATCH)**
 
-   Enter JSON body with variables: `{"phone": "{{phone_number}}", "name": "{{name}}"}`
+   Enter JSON body with variables. The same substitution rules apply:
+
+   ```json
+   {"phone": "{{phone_number}}", "name": "{{name}}"}
+   ```
 
 4. **Set Response Mapping**
 
@@ -237,6 +257,40 @@ The "Fetch from API" step type allows you to call external APIs and use the resp
    Use the template syntax to format the API response data.
 
 </Steps>
+
+#### Built-in variables
+
+The following variables are always available inside a flow-step API
+config (URL, headers, body) — no capture step required:
+
+| Variable | Value |
+|---|---|
+| `{{phone_number}}` | The contact's WhatsApp number, digits only with **no leading `+`** (e.g. `919876543210`). Set on every `api_call` and `webhook` node. |
+| `{{_flow_id}}` | UUID of the running flow. Seeded when a **trigger keyword** starts the flow. |
+| `{{_flow_name}}` | Human-readable name of the flow. Seeded the same way. |
+
+<Aside type="caution">
+  `_flow_id` / `_flow_name` are written into session data when a flow is started by a matched
+  trigger keyword. A flow reached another way (for example via `goto_flow`) does not re-seed them,
+  so don't rely on them identifying the *currently executing* flow after a jump.
+</Aside>
+
+Anything else has to come from somewhere — typically:
+- An earlier `prompt` or `buttons` node with `store_as` configured (the user's input is saved
+  under that key for later nodes).
+- A previous `api_call` node's `response_mapping` (mapped fields are persisted
+  into the session for the rest of the flow).
+- A `set_variable` node.
+
+The same built-ins are also substituted in **flow-completion webhook**
+URLs, custom bodies, and custom headers, so you can fire any of these
+at downstream systems when a flow finishes.
+
+<Aside type="note">
+  Substitution is verbatim — there's no URL-encoding pass. Since phone numbers are stored without
+  a leading `+`, `{{phone_number}}` is safe in both URL paths and query strings, but any value you
+  captured from user input still needs escaping if it can contain `&`, `#`, or spaces.
+</Aside>
 
 ### Template Syntax
 

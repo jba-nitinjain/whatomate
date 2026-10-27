@@ -2,6 +2,9 @@ import { test, expect, request as playwrightRequest } from '@playwright/test'
 import { Client } from 'pg'
 import { loginAsAdmin, ApiHelper } from '../../helpers'
 import { ChatPage } from '../../pages'
+import { createTestScope } from '../../framework'
+
+const scope = createTestScope('template-sending')
 
 const DB_URL = process.env.TEST_DATABASE_URL || 'postgres://whatomate:whatomate@127.0.0.1:5432/whatomate'
 
@@ -47,8 +50,8 @@ test.describe('Template Sending', () => {
 
     // Always create a fresh contact for template tests so it has no
     // message history from other accounts (which would override selectedAccount).
-    const tplPhone = `91${Date.now().toString().slice(-10)}`
-    await api.createContact(tplPhone, 'Template Test Contact')
+    const tplPhone = scope.phone()
+    await api.createContact(tplPhone, scope.name('contact'))
     const contacts = await api.getContacts()
     // Find the contact we just created (most recent by phone)
     const tplContact = contacts.find((c: any) => c.phone_number === tplPhone) || contacts[0]
@@ -81,7 +84,11 @@ test.describe('Template Sending', () => {
     const orgId = await execSQL(`SELECT organization_id FROM users WHERE email = 'admin@test.com' LIMIT 1`)
 
     // Clean up leftover e2e templates from previous runs
-    await execSQL(`DELETE FROM templates WHERE name LIKE 'e2e_%' AND organization_id = '${orgId}'`)
+    // Only remove this spec's own seeds. A blanket 'e2e_%' wipe races with
+    // specs running in parallel workers (template-header-param seeds
+    // e2e_hdr_*, campaign-header-param seeds e2e_camp_hdr_*) and deletes their
+    // templates mid-run.
+    await execSQL(`DELETE FROM templates WHERE (name LIKE 'e2e_simple_%' OR name LIKE 'e2e_params_%' OR name LIKE 'e2e_buttons_%') AND organization_id = '${orgId}'`)
 
     // Seed APPROVED templates directly via SQL (API only creates DRAFT)
     const uid = Date.now().toString().slice(-6)

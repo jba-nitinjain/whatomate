@@ -178,7 +178,7 @@ func (a *App) postJSONCallback(callbackURL, bearerToken string, payload any) mod
 		result["error"] = err.Error()
 		return result
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	result["status_code"] = resp.StatusCode
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {

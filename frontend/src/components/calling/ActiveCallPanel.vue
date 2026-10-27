@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useCallingStore } from '@/stores/calling'
 import { Button } from '@/components/ui/button'
-import { Phone, PhoneOff, PhoneIncoming, Mic, MicOff, ArrowRightLeft } from 'lucide-vue-next'
+import { Phone, PhoneOff, PhoneIncoming, Mic, MicOff, ArrowRightLeft, Pause, Play } from 'lucide-vue-next'
 import CallTransferPicker from '@/components/calling/CallTransferPicker.vue'
 import { toast } from 'vue-sonner'
 
@@ -42,8 +42,14 @@ const statusText = computed(() => {
       default: return ''
     }
   }
+  if (store.isOnCall && store.isOnHold) {
+    return t('calling.onHold')
+  }
   if (store.isOnCall) {
     return t('callTransfers.callConnected')
+  }
+  if (store.isConnecting) {
+    return `${t('callTransfers.connecting')}...`
   }
   if (store.waitingTransfers.length > 0) {
     return t('callTransfers.incomingTransfer')
@@ -51,7 +57,7 @@ const statusText = computed(() => {
   return ''
 })
 
-const showPanel = computed(() => store.isOnCall || store.waitingTransfers.length > 0)
+const showPanel = computed(() => store.isOnCall || store.isConnecting || store.waitingTransfers.length > 0)
 
 // The first waiting transfer (for single-panel accept button)
 const firstWaiting = computed(() => store.waitingTransfers[0] ?? null)
@@ -84,7 +90,7 @@ async function handleAccept(id: string) {
           :class="store.isOnCall ? 'bg-green-600/20' : 'bg-green-600/20'"
         >
           <PhoneIncoming v-if="!store.isOnCall && firstWaiting" class="h-4 w-4 text-green-400 animate-pulse" />
-          <Phone v-else class="h-4 w-4 text-green-400" />
+          <Phone v-else class="h-4 w-4 text-green-400" :class="{ 'animate-pulse': store.isConnecting }" />
         </div>
         <div>
           <p class="text-sm font-medium text-zinc-100">
@@ -114,6 +120,20 @@ async function handleAccept(id: string) {
           <Mic v-else class="h-4 w-4" />
         </Button>
 
+        <!-- Hold/Resume (only when on active call) -->
+        <Button
+          v-if="store.isOnCall"
+          size="sm"
+          variant="ghost"
+          class="h-10 w-10 rounded-full p-0 border !text-zinc-300"
+          :class="store.isOnHold ? '!bg-amber-900/30 !border-amber-700 hover:!bg-amber-900/50' : '!bg-zinc-800 !border-zinc-600 hover:!bg-zinc-700'"
+          :title="store.isOnHold ? t('calling.resume') : t('calling.hold')"
+          @click="store.isOnHold ? store.resumeCall() : store.holdCall()"
+        >
+          <Play v-if="store.isOnHold" class="h-4 w-4 !text-amber-400" />
+          <Pause v-else class="h-4 w-4" />
+        </Button>
+
         <!-- Transfer (only when on active call) -->
         <Button
           v-if="store.isOnCall"
@@ -140,7 +160,7 @@ async function handleAccept(id: string) {
 
         <!-- Hangup / Decline (red) -->
         <Button
-          v-if="store.isOnCall"
+          v-if="store.isOnCall || store.isConnecting"
           variant="ghost"
           size="sm"
           class="h-10 w-10 rounded-full p-0 !bg-red-600 !text-white hover:!bg-red-500"

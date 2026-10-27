@@ -344,7 +344,7 @@ export class ChatbotFlowBuilderPage extends BasePage {
   }
 
   /** Click a message type button in the center preview palette */
-  async selectMessageType(type: 'Text' | 'Buttons' | 'API' | 'Flow' | 'Transfer') {
+  async selectMessageType(type: 'Text' | 'Buttons' | 'List' | 'API' | 'Flow' | 'Transfer') {
     await this.page.getByRole('button', { name: type, exact: true }).click()
   }
 
@@ -376,6 +376,21 @@ export class ChatbotFlowBuilderPage extends BasePage {
   /** Get a button title input by index (0-based) */
   getButtonTitleInput(index: number) {
     return this.page.getByPlaceholder(/Button Title/i).nth(index)
+  }
+
+  /** "List button text" label (only rendered for reply_mode=list steps) */
+  get listButtonTextLabel() {
+    return this.page.getByText('List button text', { exact: true })
+  }
+
+  /** "List section title" label (only rendered for reply_mode=list steps) */
+  get listSectionTitleLabel() {
+    return this.page.getByText('List section title', { exact: true })
+  }
+
+  /** Per-row description inputs (only rendered for reply_mode=list steps) */
+  get listRowDescriptionInputs() {
+    return this.page.getByPlaceholder('Row description')
   }
 
   /** Get the message text textarea in step properties */

@@ -682,9 +682,9 @@ func (a *App) sendRSVPTemplateWithParams(event *models.RSVPEvent, templateID *uu
 	var messageID string
 	var err error
 	if models.ResolveTemplateDeliveryRoute(&account, &template) == models.TemplateDeliveryRouteMarketingMessagesLite {
-		messageID, err = a.WhatsApp.SendMarketingTemplateMessage(context.Background(), waAccount, contact.PhoneNumber, template.Name, template.Language, components)
+		messageID, err = a.WhatsApp.SendMarketingTemplateMessage(context.Background(), waAccount, contactRecipient(contact), template.Name, template.Language, components)
 	} else {
-		messageID, err = a.WhatsApp.SendTemplateMessage(context.Background(), waAccount, contact.PhoneNumber, template.Name, template.Language, components)
+		messageID, err = a.WhatsApp.SendTemplateMessage(context.Background(), waAccount, contactRecipient(contact), template.Name, template.Language, components)
 	}
 	if err != nil {
 		a.Log.Error("RSVP invite send failed", "error", err)
@@ -729,12 +729,16 @@ func (a *App) ExportRSVPResponses(r *fastglue.Request) error {
 
 	f := excelize.NewFile()
 	sheet := "Responses"
-	f.SetSheetName(f.GetSheetName(0), sheet)
+	if err := f.SetSheetName(f.GetSheetName(0), sheet); err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to build workbook", nil, "")
+	}
 
 	headers := append([]string{"Name", "Mobile", "Attendance", "Responded At (IST)"}, answerKeys...)
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue(sheet, cell, h)
+		if err := f.SetCellValue(sheet, cell, h); err != nil {
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to build workbook", nil, "")
+		}
 	}
 	ist := time.FixedZone("IST", 5*3600+30*60) // UTC+5:30, no DST
 	for rIdx, row := range rows {
@@ -752,7 +756,9 @@ func (a *App) ExportRSVPResponses(r *fastglue.Request) error {
 		}
 		for cIdx, v := range vals {
 			cell, _ := excelize.CoordinatesToCellName(cIdx+1, rIdx+2)
-			f.SetCellValue(sheet, cell, v)
+			if err := f.SetCellValue(sheet, cell, v); err != nil {
+				return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to build workbook", nil, "")
+			}
 		}
 	}
 

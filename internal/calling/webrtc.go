@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pion/webrtc/v4"
 	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/nikyjain/whatomate/pkg/whatsapp"
+	"github.com/pion/webrtc/v4"
 )
 
 // negotiateWebRTC handles the SDP exchange and sets up WebRTC media.
@@ -66,7 +66,18 @@ func (m *Manager) negotiateWebRTC(session *CallSession, account *models.WhatsApp
 		// Store the caller's remote track for potential audio bridge use
 		session.mu.Lock()
 		session.CallerRemoteTrack = track
+		bridge := session.Bridge
+		agentLocal := session.AgentAudioTrack
 		session.mu.Unlock()
+
+		// On incoming calls the caller's media often starts only after the agent
+		// answers, so the transfer bridge may already be running without the
+		// caller track (one-way audio). Wire the track into the live bridge now
+		// so the agent can hear the caller; the bridge becomes the sole reader.
+		if bridge != nil && agentLocal != nil {
+			bridge.AttachCaller(track, agentLocal)
+			return
+		}
 
 		// Consume audio and detect inline DTMF (telephone-event packets
 		// arrive on the same m-line as audio with a different payload type).
@@ -162,10 +173,30 @@ func (m *Manager) negotiateWebRTC(session *CallSession, account *models.WhatsApp
 	// Brief delay to let the media path stabilize before sending audio
 	time.Sleep(500 * time.Millisecond)
 
+	// Sticky-routed call: skip IVR entirely and ring the originating agent
+	// directly via the existing transfer flow. initiateTransfer's
+	// "ring-this-specific-agent-first" branch handles StickyAgentID; an
+	// empty team target keeps the no-team broadcast as the eventual
+	// fallback if the sticky agent doesn't answer.
+	if session.StickyAgentID != nil {
+		go m.initiateTransfer(session, session.AccountName, "", nil)
+		return
+	}
+
 	// Start IVR flow if configured
 	if session.IVRFlow != nil {
 		go m.runIVRFlow(session, waAccount)
 	}
+}
+
+// peerGone reports whether a peer connection state means the far end is no
+// longer on the call. Closed belongs here: a browser hanging up sends a DTLS
+// CloseNotify and Pion closes the PeerConnection itself, so a clean hangup
+// surfaces as Closed rather than Disconnected or Failed.
+func peerGone(state webrtc.PeerConnectionState) bool {
+	return state == webrtc.PeerConnectionStateFailed ||
+		state == webrtc.PeerConnectionStateDisconnected ||
+		state == webrtc.PeerConnectionStateClosed
 }
 
 // waitForICEGathering waits for ICE gathering to complete on a PeerConnection
@@ -202,12 +233,13 @@ func createOpusTrack(pc *webrtc.PeerConnection, streamID string) (*webrtc.TrackL
 
 // createPeerConnection creates a new WebRTC peer connection with Opus codec support
 func (m *Manager) createPeerConnection() (*webrtc.PeerConnection, error) {
+	now := time.Now()
 	iceServers := make([]webrtc.ICEServer, 0, len(m.config.ICEServers))
 	for _, s := range m.config.ICEServers {
 		ice := webrtc.ICEServer{URLs: s.URLs}
-		if s.Username != "" {
-			ice.Username = s.Username
-			ice.Credential = s.Credential
+		if username, credential := s.ResolveCredentials(now); username != "" {
+			ice.Username = username
+			ice.Credential = credential
 			ice.CredentialType = webrtc.ICECredentialTypePassword
 		}
 		iceServers = append(iceServers, ice)
@@ -263,7 +295,8 @@ func (m *Manager) createPeerConnection() (*webrtc.PeerConnection, error) {
 
 	// On cloud/AWS, map private IP to public IP so ICE candidates
 	// advertise the reachable address instead of the internal one.
-	if m.config.PublicIP != "" {
+	// Skip when relay_only — host candidates are not used in relay mode.
+	if m.config.PublicIP != "" && !m.config.RelayOnly {
 		if err := settingEngine.SetICEAddressRewriteRules(webrtc.ICEAddressRewriteRule{
 			External:        []string{m.config.PublicIP},
 			AsCandidateType: webrtc.ICECandidateTypeHost,
@@ -276,7 +309,31 @@ func (m *Manager) createPeerConnection() (*webrtc.PeerConnection, error) {
 		webrtc.WithMediaEngine(mediaEngine),
 		webrtc.WithSettingEngine(settingEngine),
 	)
-	return api.NewPeerConnection(config)
+
+	pc, err := api.NewPeerConnection(config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Debug: log ICE candidates and connection state to diagnose TURN issues.
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c == nil {
+			m.log.Info("ICE gathering complete (no more candidates)")
+			return
+		}
+		m.log.Info("ICE candidate gathered",
+			"type", c.Typ.String(),
+			"address", c.Address,
+			"port", c.Port,
+			"protocol", c.Protocol.String(),
+			"related", c.RelatedAddress,
+		)
+	})
+	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		m.log.Info("ICE connection state changed", "state", state.String())
+	})
+
+	return pc, nil
 }
 
 // consumeAudioTrack reads and discards RTP packets to keep the stream active.

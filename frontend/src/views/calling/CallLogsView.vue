@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
+import { toast } from 'vue-sonner'
 import { useCallingStore } from '@/stores/calling'
 import { accountsService, callLogsService, ivrFlowsService, type CallLog, type CallTransfer, type IVRFlow } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/card'
@@ -8,15 +10,19 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { Phone, PhoneIncoming, PhoneOutgoing, PhoneOff, PhoneMissed, Clock, RefreshCw, Mic, User, Monitor, Headphones, ArrowRightLeft } from 'lucide-vue-next'
+import { Phone, PhoneIncoming, PhoneOutgoing, PhoneOff, PhoneMissed, Clock, RefreshCw, Mic, User, Monitor, Headphones, ArrowRightLeft, Link } from 'lucide-vue-next'
 import DataTable from '@/components/shared/DataTable.vue'
 import type { Column } from '@/components/shared/types'
 import SearchInput from '@/components/shared/SearchInput.vue'
+import { ErrorState } from '@/components/shared'
 import IVRPathTree from '@/components/calling/IVRPathTree.vue'
 import { useViewRefresh } from '@/composables/useViewRefresh'
+import { formatDateTime } from '@/lib/utils'
 
 const { t } = useI18n()
 const store = useCallingStore()
+const route = useRoute()
+const router = useRouter()
 
 // Filters
 const phoneSearch = ref('')
@@ -29,6 +35,7 @@ let searchTimeout: number | null = null
 const pageSize = 20
 const accounts = ref<{ name: string }[]>([])
 const ivrFlows = ref<IVRFlow[]>([])
+const error = ref<string | null>(null)
 
 // Detail dialog
 const showDetail = ref(false)
@@ -61,16 +68,21 @@ const columns = computed<Column<CallLog>[]>(() => [
   { key: 'started_at', label: t('calling.time') },
 ])
 
-function fetchLogs() {
-  store.fetchCallLogs({
-    status: statusFilter.value !== 'all' ? statusFilter.value : undefined,
-    account: accountFilter.value !== 'all' ? accountFilter.value : undefined,
-    direction: directionFilter.value !== 'all' ? directionFilter.value : undefined,
-    ivr_flow_id: ivrFlowFilter.value !== 'all' ? ivrFlowFilter.value : undefined,
-    phone: phoneSearch.value || undefined,
-    page: currentPage.value,
-    limit: pageSize
-  })
+async function fetchLogs() {
+  error.value = null
+  try {
+    await store.fetchCallLogs({
+      status: statusFilter.value !== 'all' ? statusFilter.value : undefined,
+      account: accountFilter.value !== 'all' ? accountFilter.value : undefined,
+      direction: directionFilter.value !== 'all' ? directionFilter.value : undefined,
+      ivr_flow_id: ivrFlowFilter.value !== 'all' ? ivrFlowFilter.value : undefined,
+      phone: phoneSearch.value || undefined,
+      page: currentPage.value,
+      limit: pageSize
+    })
+  } catch {
+    error.value = t('calling.errorLoadingCallLogs')
+  }
 }
 
 const { isRefreshing: isRefreshingView, refreshNow } = useViewRefresh(fetchLogs, { intervalMs: 60000 })
@@ -80,15 +92,20 @@ function handlePageChange(page: number) {
   fetchLogs()
 }
 
-async function viewDetail(log: CallLog) {
-  selectedLog.value = log
+// The open call log is kept in the URL (?id=) so the detail can be shared as a link.
+function viewDetail(log: CallLog) {
+  router.push({ query: { ...route.query, id: log.id } })
+}
+
+async function openDetail(id: string) {
+  selectedLog.value = store.callLogs.find(l => l.id === id) ?? null
   selectedTransfers.value = []
   showDetail.value = true
   recordingURL.value = null
 
   // Fetch full call log detail (includes transfers)
   try {
-    const res = await callLogsService.get(log.id)
+    const res = await callLogsService.get(id)
     const data = (res.data as any).data ?? res.data
     if (data.call_log) {
       selectedLog.value = data.call_log
@@ -97,13 +114,17 @@ async function viewDetail(log: CallLog) {
       selectedTransfers.value = data.transfers
     }
   } catch {
-    // Fall back to list data
+    if (!selectedLog.value) {
+      showDetail.value = false
+      toast.error(t('calling.callLogNotFound'))
+      return
+    }
   }
 
   // Fetch recording URL if recording exists
-  if (log.recording_s3_key) {
+  if (selectedLog.value?.recording_s3_key) {
     recordingLoading.value = true
-    callLogsService.getRecordingURL(log.id)
+    callLogsService.getRecordingURL(id)
       .then(res => {
         const data = (res.data as any).data ?? res.data
         recordingURL.value = data.url
@@ -117,6 +138,29 @@ async function viewDetail(log: CallLog) {
   }
 }
 
+async function copyDetailLink() {
+  try {
+    await navigator.clipboard.writeText(window.location.href)
+    toast.success(t('common.copiedToClipboard'))
+  } catch {
+    toast.error(t('common.clipboardFailed'))
+  }
+}
+
+watch(() => route.query.id, (id) => {
+  if (typeof id === 'string' && id) {
+    openDetail(id)
+  } else {
+    showDetail.value = false
+  }
+}, { immediate: true })
+
+watch(showDetail, (open) => {
+  if (!open && route.query.id) {
+    router.replace({ query: { ...route.query, id: undefined } })
+  }
+})
+
 function formatDuration(seconds: number): string {
   if (!seconds) return '-'
   const m = Math.floor(seconds / 60)
@@ -126,7 +170,7 @@ function formatDuration(seconds: number): string {
 
 function formatDate(dateStr?: string): string {
   if (!dateStr) return '-'
-  return new Date(dateStr).toLocaleString()
+  return formatDateTime(dateStr)
 }
 
 function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
@@ -225,8 +269,17 @@ watch(phoneSearch, () => {
       </Button>
     </div>
 
+    <!-- Error State -->
+    <ErrorState
+      v-if="error && !store.callLogsLoading"
+      :title="$t('common.loadErrorTitle')"
+      :description="error"
+      :retry-label="$t('common.retry')"
+      @retry="fetchLogs"
+    />
+
     <!-- Filters -->
-    <Card>
+    <Card v-if="!error">
       <CardContent class="pt-6">
         <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <SearchInput v-model="phoneSearch" :placeholder="t('calling.searchByPhone')" class="w-full" />
@@ -280,7 +333,7 @@ watch(phoneSearch, () => {
     </Card>
 
     <!-- Table -->
-    <Card>
+    <Card v-if="!error">
       <CardContent class="pt-6">
         <DataTable
           :items="store.callLogs"
@@ -350,8 +403,12 @@ watch(phoneSearch, () => {
       <DialogContent class="max-w-lg">
         <DialogHeader>
           <DialogTitle>{{ t('calling.callDetail') }}</DialogTitle>
-          <DialogDescription>
-            {{ selectedLog?.contact?.profile_name || selectedLog?.caller_phone }}
+          <DialogDescription class="flex items-center justify-between gap-2">
+            <span>{{ selectedLog?.contact?.profile_name || selectedLog?.caller_phone }}</span>
+            <Button variant="outline" size="sm" @click="copyDetailLink">
+              <Link class="h-3.5 w-3.5 mr-1.5" />
+              {{ t('calling.copyLink') }}
+            </Button>
           </DialogDescription>
         </DialogHeader>
         <div v-if="selectedLog" class="space-y-4">
