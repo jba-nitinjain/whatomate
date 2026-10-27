@@ -71,6 +71,18 @@ const router = createRouter({
           meta: { permission: 'templates' }
         },
         {
+          path: 'catalogs',
+          name: 'catalogs',
+          component: () => import('@/views/catalogs/CatalogsView.vue'),
+          meta: { permission: 'catalogs' }
+        },
+        {
+          path: 'catalogs/:id',
+          name: 'catalog-detail',
+          component: () => import('@/views/catalogs/CatalogDetailView.vue'),
+          meta: { permission: 'catalogs' }
+        },
+        {
           path: 'flows',
           name: 'flows',
           component: () => import('@/views/settings/FlowsView.vue'),
@@ -395,6 +407,7 @@ const navigationOrder = [
   { path: '/analytics/agents', permission: 'analytics.agents' },
   { path: '/analytics/meta-insights', permission: 'analytics' },
   { path: '/templates', permission: 'templates' },
+  { path: '/catalogs', permission: 'catalogs' },
   { path: '/flows', permission: 'flows.whatsapp' },
   { path: '/campaigns', permission: 'campaigns' },
   { path: '/rsvp', permission: 'rsvp' },
