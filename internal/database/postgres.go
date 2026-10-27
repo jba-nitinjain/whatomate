@@ -501,6 +501,11 @@ func SeedSystemRolesForAllOrgs(db *gorm.DB) error {
 		return fmt.Errorf("failed to sync admin role permissions: %w", err)
 	}
 
+	// One-time grant of catalog permissions to existing manager roles
+	if err := GrantCatalogPermissionsToManagers(db); err != nil {
+		return fmt.Errorf("failed to grant catalog permissions to managers: %w", err)
+	}
+
 	// Migrate existing users from old role column to new role_id
 	if err := MigrateExistingUserRoles(db); err != nil {
 		return fmt.Errorf("failed to migrate user roles: %w", err)
