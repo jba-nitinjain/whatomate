@@ -22,7 +22,8 @@ import {
   PhoneCall,
   PhoneForwarded,
   ScrollText,
-  CalendarCheck
+  CalendarCheck,
+  Building2
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 
@@ -148,7 +149,7 @@ export const navigationSections: NavSection[] = [
   },
   {
     label: '',
-    permissions: ['settings.general', 'settings.chatbot', 'accounts', 'lead_ads', 'canned_responses', 'tags', 'teams', 'users', 'roles', 'api_keys', 'webhooks', 'custom_actions', 'settings.sso', 'audit_logs'],
+    permissions: ['settings.general', 'settings.chatbot', 'accounts', 'lead_ads', 'canned_responses', 'tags', 'teams', 'users', 'organizations', 'roles', 'api_keys', 'webhooks', 'custom_actions', 'settings.sso', 'audit_logs'],
     pinBottom: true,
     items: [
       {
@@ -156,7 +157,7 @@ export const navigationSections: NavSection[] = [
         path: '/settings',
         icon: Settings,
         permission: 'settings.general',
-        childPermissions: ['settings.general', 'settings.chatbot', 'accounts', 'lead_ads', 'canned_responses', 'tags', 'teams', 'users', 'roles', 'api_keys', 'webhooks', 'custom_actions', 'settings.sso', 'audit_logs'],
+        childPermissions: ['settings.general', 'settings.chatbot', 'accounts', 'lead_ads', 'canned_responses', 'tags', 'teams', 'users', 'organizations', 'roles', 'api_keys', 'webhooks', 'custom_actions', 'settings.sso', 'audit_logs'],
         children: [
           { name: 'nav.general', path: '/settings', icon: Settings, permission: 'settings.general' },
           { name: 'nav.chatbot', path: '/settings/chatbot', icon: Bot, permission: 'settings.chatbot' },
@@ -166,6 +167,7 @@ export const navigationSections: NavSection[] = [
           { name: 'nav.tags', path: '/settings/tags', icon: Tags, permission: 'tags' },
           { name: 'nav.teams', path: '/settings/teams', icon: Users, permission: 'teams' },
           { name: 'nav.users', path: '/settings/users', icon: Users, permission: 'users' },
+          { name: 'nav.orgMembers', path: '/settings/organization-members', icon: Building2, permission: 'organizations' },
           { name: 'nav.roles', path: '/settings/roles', icon: Shield, permission: 'roles' },
           { name: 'nav.apiKeys', path: '/settings/api-keys', icon: Key, permission: 'api_keys' },
           { name: 'nav.webhooks', path: '/settings/webhooks', icon: Webhook, permission: 'webhooks' },

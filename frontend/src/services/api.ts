@@ -1126,12 +1126,41 @@ export interface Organization {
   created_at: string;
 }
 
+// A user's membership in the current organisation. `user_id` is the key the
+// update/remove endpoints expect; `is_default` marks the member's home org.
+export interface OrganizationMember {
+  id: string;
+  user_id: string;
+  organization_id: string;
+  role_id?: string;
+  role_name?: string;
+  is_default: boolean;
+  email: string;
+  full_name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface OrganizationMembersResponse {
+  members: OrganizationMember[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 export const organizationsService = {
   list: () => api.get<{ organizations: Organization[] }>("/organizations"),
   create: (data: { name: string }) => api.post("/organizations", data),
+  getCurrent: () => api.get<Organization>("/organizations/current"),
   // Members
+  listMembers: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<OrganizationMembersResponse>("/organizations/members", { params }),
   addMember: (data: { user_id?: string; email?: string; role_id?: string }) =>
     api.post("/organizations/members", data),
+  updateMemberRole: (userId: string, roleId: string) =>
+    api.put(`/organizations/members/${userId}`, { role_id: roleId }),
+  removeMember: (userId: string) =>
+    api.delete(`/organizations/members/${userId}`),
 };
 
 export interface Webhook {

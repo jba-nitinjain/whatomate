@@ -300,6 +300,12 @@ const router = createRouter({
           meta: { permission: 'webhooks' }
         },
         {
+          path: 'settings/organization-members',
+          name: 'organization-members',
+          component: () => import('@/views/settings/OrganizationMembersView.vue'),
+          meta: { permission: 'organizations' }
+        },
+        {
           path: 'settings/sso',
           name: 'sso-settings',
           component: () => import('@/views/settings/SSOSettingsView.vue'),
@@ -413,6 +419,7 @@ const navigationOrder = [
     { path: '/settings/tags', permission: 'tags' },
     { path: '/settings/teams', permission: 'teams' },
     { path: '/settings/users', permission: 'users' },
+    { path: '/settings/organization-members', permission: 'organizations' },
     { path: '/settings/roles', permission: 'roles' },
     { path: '/settings/api-keys', permission: 'api_keys' },
     { path: '/settings/webhooks', permission: 'webhooks' },
