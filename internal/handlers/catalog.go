@@ -63,9 +63,9 @@ type SyncCatalogsRequest struct {
 
 // ListCatalogs returns all catalogs for the organization
 func (a *App) ListCatalogs(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCatalogs, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	whatsAppAccount := string(r.RequestCtx.QueryArgs().Peek("whatsapp_account"))
@@ -96,9 +96,9 @@ func (a *App) ListCatalogs(r *fastglue.Request) error {
 
 // CreateCatalog creates a new catalog in Meta and stores it locally
 func (a *App) CreateCatalog(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCatalogs, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	var req CatalogRequest
@@ -123,7 +123,7 @@ func (a *App) CreateCatalog(r *fastglue.Request) error {
 	metaCatalogID, err := a.WhatsApp.CreateCatalog(ctx, waAccount, req.Name)
 	if err != nil {
 		a.Log.Error("Failed to create catalog in Meta", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create catalog", nil, "")
+		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Failed to create catalog in Meta: "+err.Error(), nil, "")
 	}
 
 	// Store catalog locally
@@ -145,9 +145,9 @@ func (a *App) CreateCatalog(r *fastglue.Request) error {
 
 // GetCatalog returns a single catalog with its products
 func (a *App) GetCatalog(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCatalogs, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "catalog")
@@ -172,9 +172,9 @@ func (a *App) GetCatalog(r *fastglue.Request) error {
 
 // DeleteCatalog deletes a catalog from Meta and locally
 func (a *App) DeleteCatalog(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCatalogs, models.ActionDelete)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "catalog")
@@ -216,9 +216,9 @@ func (a *App) DeleteCatalog(r *fastglue.Request) error {
 
 // SyncCatalogs syncs catalogs from Meta API
 func (a *App) SyncCatalogs(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCatalogs, models.ActionSync)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	var req SyncCatalogsRequest
@@ -243,7 +243,7 @@ func (a *App) SyncCatalogs(r *fastglue.Request) error {
 	metaCatalogs, err := a.WhatsApp.ListCatalogs(ctx, waAccount)
 	if err != nil {
 		a.Log.Error("Failed to fetch catalogs from Meta", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to fetch catalogs", nil, "")
+		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Failed to fetch catalogs from Meta: "+err.Error(), nil, "")
 	}
 
 	// Sync each catalog
@@ -282,9 +282,9 @@ func (a *App) SyncCatalogs(r *fastglue.Request) error {
 
 // ListCatalogProducts returns all products in a catalog
 func (a *App) ListCatalogProducts(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCatalogs, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	catalogID, err := parsePathUUID(r, "id", "catalog")
@@ -317,9 +317,9 @@ func (a *App) ListCatalogProducts(r *fastglue.Request) error {
 
 // CreateCatalogProduct creates a new product in a catalog
 func (a *App) CreateCatalogProduct(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCatalogs, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	catalogID, err := parsePathUUID(r, "id", "catalog")
@@ -370,7 +370,7 @@ func (a *App) CreateCatalogProduct(r *fastglue.Request) error {
 	metaProductID, err := a.WhatsApp.CreateProduct(ctx, waAccount, catalog.MetaCatalogID, productInput)
 	if err != nil {
 		a.Log.Error("Failed to create product in Meta", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create product", nil, "")
+		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Failed to create product in Meta: "+err.Error(), nil, "")
 	}
 
 	// Store product locally
@@ -398,9 +398,9 @@ func (a *App) CreateCatalogProduct(r *fastglue.Request) error {
 
 // GetCatalogProduct returns a single product
 func (a *App) GetCatalogProduct(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCatalogs, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "product")
@@ -418,9 +418,9 @@ func (a *App) GetCatalogProduct(r *fastglue.Request) error {
 
 // UpdateCatalogProduct updates a product
 func (a *App) UpdateCatalogProduct(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCatalogs, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "product")
@@ -465,7 +465,7 @@ func (a *App) UpdateCatalogProduct(r *fastglue.Request) error {
 
 	if err := a.WhatsApp.UpdateProduct(ctx, waAccount, product.MetaProductID, productInput); err != nil {
 		a.Log.Error("Failed to update product in Meta", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to update product", nil, "")
+		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Failed to update product in Meta: "+err.Error(), nil, "")
 	}
 
 	// Update locally
@@ -501,9 +501,9 @@ func (a *App) UpdateCatalogProduct(r *fastglue.Request) error {
 
 // DeleteCatalogProduct deletes a product
 func (a *App) DeleteCatalogProduct(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCatalogs, models.ActionDelete)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "product")

@@ -1445,6 +1445,69 @@ export const tagsService = {
   delete: (name: string) => api.delete(`/tags/${encodeURIComponent(name)}`),
 };
 
+// Product Catalogs (WhatsApp Commerce)
+export interface CatalogProduct {
+  id: string;
+  meta_product_id: string;
+  name: string;
+  description: string;
+  /** Price in minor units (e.g. cents / paise) */
+  price: number;
+  currency: string;
+  url: string;
+  image_url: string;
+  retailer_id: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Catalog {
+  id: string;
+  meta_catalog_id: string;
+  whatsapp_account: string;
+  name: string;
+  is_active: boolean;
+  product_count: number;
+  products?: CatalogProduct[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CatalogProductPayload {
+  name: string;
+  description?: string;
+  price: number;
+  currency: string;
+  url?: string;
+  image_url?: string;
+  retailer_id?: string;
+}
+
+export interface CatalogSyncResult {
+  message: string;
+  synced: number;
+  total: number;
+}
+
+export const catalogsService = {
+  list: (params?: { whatsapp_account?: string }) =>
+    api.get<{ catalogs: Catalog[] }>("/catalogs", { params }),
+  get: (id: string) => api.get<Catalog>(`/catalogs/${id}`),
+  create: (data: { name: string; whatsapp_account: string }) =>
+    api.post<Catalog>("/catalogs", data),
+  delete: (id: string) => api.delete(`/catalogs/${id}`),
+  sync: (whatsappAccount: string) =>
+    api.post<CatalogSyncResult>("/catalogs/sync", { whatsapp_account: whatsappAccount }),
+  listProducts: (catalogId: string) =>
+    api.get<{ products: CatalogProduct[] }>(`/catalogs/${catalogId}/products`),
+  createProduct: (catalogId: string, data: CatalogProductPayload) =>
+    api.post<CatalogProduct>(`/catalogs/${catalogId}/products`, data),
+  updateProduct: (productId: string, data: CatalogProductPayload) =>
+    api.put<CatalogProduct>(`/products/${productId}`, data),
+  deleteProduct: (productId: string) => api.delete(`/products/${productId}`),
+};
+
 // Conversation Notes
 export interface ConversationNote {
   id: string;

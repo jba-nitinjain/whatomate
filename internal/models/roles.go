@@ -87,6 +87,7 @@ const (
 	ResourceOutgoingCalls           = "outgoing_calls"
 	ResourceAuditLogs               = "audit_logs"
 	ResourceLeadAds                 = "lead_ads"
+	ResourceCatalogs                = "catalogs"
 )
 
 // PermissionAction constants for available actions
@@ -250,6 +251,12 @@ func DefaultPermissions() []Permission {
 		{Resource: ResourceLeadAds, Action: ActionExport, Description: "Export leads"},
 		// Audit Logs
 		{Resource: ResourceAuditLogs, Action: ActionRead, Description: "View audit logs"},
+
+		// Product Catalogs
+		{Resource: ResourceCatalogs, Action: ActionRead, Description: "View product catalogs and products"},
+		{Resource: ResourceCatalogs, Action: ActionWrite, Description: "Create catalogs and add or edit products"},
+		{Resource: ResourceCatalogs, Action: ActionDelete, Description: "Delete catalogs and products"},
+		{Resource: ResourceCatalogs, Action: ActionSync, Description: "Sync catalogs from Meta"},
 	}
 }
 
@@ -305,6 +312,8 @@ func SystemRolePermissions() map[string][]string {
 		"outgoing_calls:read", "outgoing_calls:write",
 		// Lead Ads
 		"lead_ads:read", "lead_ads:write", "lead_ads:delete", "lead_ads:execute", "lead_ads:export",
+		// Product Catalogs
+		"catalogs:read", "catalogs:write", "catalogs:delete", "catalogs:sync",
 	}
 
 	agentPermissions := []string{

@@ -23,7 +23,8 @@ import {
   PhoneForwarded,
   ScrollText,
   CalendarCheck,
-  Building2
+  Building2,
+  ShoppingBag
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 
@@ -72,7 +73,7 @@ export const navigationSections: NavSection[] = [
   },
   {
     label: 'nav.sectionMessaging',
-    permissions: ['settings.chatbot', 'chatbot.keywords', 'flows.chatbot', 'chatbot.ai', 'transfers', 'campaigns', 'rsvp', 'lead_ads', 'templates', 'flows.whatsapp'],
+    permissions: ['settings.chatbot', 'chatbot.keywords', 'flows.chatbot', 'chatbot.ai', 'transfers', 'campaigns', 'rsvp', 'lead_ads', 'templates', 'catalogs', 'flows.whatsapp'],
     items: [
       {
         name: 'nav.chatbot',
@@ -111,6 +112,12 @@ export const navigationSections: NavSection[] = [
         path: '/templates',
         icon: FileText,
         permission: 'templates'
+      },
+      {
+        name: 'nav.catalogs',
+        path: '/catalogs',
+        icon: ShoppingBag,
+        permission: 'catalogs'
       },
       {
         name: 'nav.flows',

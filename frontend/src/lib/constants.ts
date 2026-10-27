@@ -42,6 +42,7 @@ export const RESOURCE_LABELS: Record<string, string> = {
   apikeys: 'API Keys',
   roles: 'Roles',
   tags: 'Tags',
+  catalogs: 'Catalogs',
 } as const
 
 // Default pagination settings
