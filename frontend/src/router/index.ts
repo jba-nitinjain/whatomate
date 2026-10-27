@@ -177,6 +177,18 @@ const router = createRouter({
           meta: { permission: 'chatbot.ai' }
         },
         {
+          path: 'chatbot/sessions',
+          name: 'chatbot-sessions',
+          component: () => import('@/views/chatbot/ChatbotSessionsView.vue'),
+          meta: { permission: 'flows.chatbot' }
+        },
+        {
+          path: 'chatbot/sessions/:id',
+          name: 'chatbot-session-detail',
+          component: () => import('@/views/chatbot/ChatbotSessionDetailView.vue'),
+          meta: { permission: 'flows.chatbot' }
+        },
+        {
           path: 'chatbot/transfers',
           name: 'chatbot-transfers',
           component: () => import('@/views/chatbot/AgentTransfersView.vue'),
@@ -407,7 +419,8 @@ const navigationOrder = [
     { path: '/chatbot', permission: 'settings.chatbot' },
     { path: '/chatbot/keywords', permission: 'chatbot.keywords' },
     { path: '/chatbot/flows', permission: 'flows.chatbot' },
-    { path: '/chatbot/ai', permission: 'chatbot.ai' }
+    { path: '/chatbot/ai', permission: 'chatbot.ai' },
+    { path: '/chatbot/sessions', permission: 'flows.chatbot' }
   ]},
   { path: '/chatbot/transfers', permission: 'transfers' },
   { path: '/analytics/agents', permission: 'analytics.agents' },

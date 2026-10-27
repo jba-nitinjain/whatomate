@@ -24,7 +24,8 @@ import {
   ScrollText,
   CalendarCheck,
   Building2,
-  ShoppingBag
+  ShoppingBag,
+  History
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 
@@ -86,6 +87,7 @@ export const navigationSections: NavSection[] = [
           { name: 'nav.keywords', path: '/chatbot/keywords', icon: Key, permission: 'chatbot.keywords' },
           { name: 'nav.flows', path: '/chatbot/flows', icon: Workflow, permission: 'flows.chatbot' },
           { name: 'nav.aiContexts', path: '/chatbot/ai', icon: Sparkles, permission: 'chatbot.ai' },
+          { name: 'nav.chatbotSessions', path: '/chatbot/sessions', icon: History, permission: 'flows.chatbot' },
           { name: 'nav.transfers', path: '/chatbot/transfers', icon: UserX, permission: 'transfers' }
         ]
       },
