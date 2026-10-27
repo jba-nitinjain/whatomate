@@ -2352,13 +2352,21 @@ func createSessionForChatbotTest(t *testing.T, app *handlers.App, orgID, contact
 	return session
 }
 
+// sessionReaderRole returns a user option granting flows.chatbot:read, the
+// permission required to view chatbot conversation history.
+func sessionReaderRole(t *testing.T, app *handlers.App, orgID uuid.UUID) testutil.UserOption {
+	t.Helper()
+	role := testutil.CreateTestRoleWithKeys(t, app.DB, orgID, "session-reader-"+uuid.NewString()[:8], []string{"flows.chatbot:read"})
+	return testutil.WithRoleID(&role.ID)
+}
+
 func TestApp_ListChatbotSessions(t *testing.T) {
 	t.Parallel()
 
 	t.Run("success returns all sessions", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, sessionReaderRole(t, app, org.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
 		createSessionForChatbotTest(t, app, org.ID, contact.ID, "+1234567890", models.SessionStatusActive)
@@ -2384,7 +2392,7 @@ func TestApp_ListChatbotSessions(t *testing.T) {
 	t.Run("empty list", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, sessionReaderRole(t, app, org.ID))
 
 		req := testutil.NewGETRequest(t)
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -2406,7 +2414,7 @@ func TestApp_ListChatbotSessions(t *testing.T) {
 	t.Run("filter by status active", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, sessionReaderRole(t, app, org.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
 		createSessionForChatbotTest(t, app, org.ID, contact.ID, "+1111111111", models.SessionStatusActive)
@@ -2437,7 +2445,7 @@ func TestApp_ListChatbotSessions(t *testing.T) {
 	t.Run("filter by status completed", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, sessionReaderRole(t, app, org.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 
 		createSessionForChatbotTest(t, app, org.ID, contact.ID, "+2222222222", models.SessionStatusActive)
@@ -2466,12 +2474,12 @@ func TestApp_ListChatbotSessions(t *testing.T) {
 		app := newTestApp(t)
 
 		org1 := testutil.CreateTestOrganization(t, app.DB)
-		user1 := testutil.CreateTestUser(t, app.DB, org1.ID)
+		user1 := testutil.CreateTestUser(t, app.DB, org1.ID, sessionReaderRole(t, app, org1.ID))
 		contact1 := testutil.CreateTestContact(t, app.DB, org1.ID)
 		createSessionForChatbotTest(t, app, org1.ID, contact1.ID, "+3333333333", models.SessionStatusActive)
 
 		org2 := testutil.CreateTestOrganization(t, app.DB)
-		user2 := testutil.CreateTestUser(t, app.DB, org2.ID,
+		user2 := testutil.CreateTestUser(t, app.DB, org2.ID, sessionReaderRole(t, app, org2.ID),
 			testutil.WithEmail(testutil.UniqueEmail("org2-sess")),
 		)
 		contact2 := testutil.CreateTestContact(t, app.DB, org2.ID)
@@ -2519,7 +2527,7 @@ func TestApp_GetChatbotSession(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, sessionReaderRole(t, app, org.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 		session := createSessionForChatbotTest(t, app, org.ID, contact.ID, "+5555555555", models.SessionStatusActive)
 
@@ -2544,7 +2552,7 @@ func TestApp_GetChatbotSession(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, sessionReaderRole(t, app, org.ID))
 
 		req := testutil.NewGETRequest(t)
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -2558,7 +2566,7 @@ func TestApp_GetChatbotSession(t *testing.T) {
 	t.Run("session with messages", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, sessionReaderRole(t, app, org.ID))
 		contact := testutil.CreateTestContact(t, app.DB, org.ID)
 		session := createSessionForChatbotTest(t, app, org.ID, contact.ID, "+6666666666", models.SessionStatusActive)
 
@@ -2605,7 +2613,7 @@ func TestApp_GetChatbotSession(t *testing.T) {
 		session := createSessionForChatbotTest(t, app, org1.ID, contact1.ID, "+7777777777", models.SessionStatusActive)
 
 		org2 := testutil.CreateTestOrganization(t, app.DB)
-		user2 := testutil.CreateTestUser(t, app.DB, org2.ID,
+		user2 := testutil.CreateTestUser(t, app.DB, org2.ID, sessionReaderRole(t, app, org2.ID),
 			testutil.WithEmail(testutil.UniqueEmail("org2-getsess")),
 		)
 

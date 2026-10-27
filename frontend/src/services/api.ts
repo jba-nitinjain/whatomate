@@ -1254,6 +1254,50 @@ export const auditLogsService = {
     api.get<{ audit_logs: AuditLogEntry[]; total: number }>('/audit-logs', { params }),
 }
 
+export type ChatbotSessionStatus = 'active' | 'completed' | 'cancelled' | 'timeout'
+
+export interface ChatbotSessionMessage {
+  id: string
+  session_id: string
+  direction: 'incoming' | 'outgoing'
+  message: string
+  step_name: string
+  created_at: string
+}
+
+export interface ChatbotSession {
+  id: string
+  contact_id: string
+  whatsapp_account: string
+  phone_number: string
+  status: ChatbotSessionStatus
+  current_flow_id?: string
+  current_step: string
+  step_retries: number
+  session_data: Record<string, unknown>
+  started_at: string
+  last_activity_at: string
+  completed_at?: string
+  flow_name: string
+  message_count: number
+  contact?: { id: string; profile_name?: string; phone_number: string }
+  messages?: ChatbotSessionMessage[]
+}
+
+export const chatbotSessionsService = {
+  list: (params?: {
+    status?: string
+    flow_id?: string
+    search?: string
+    from?: string
+    to?: string
+    page?: number
+    limit?: number
+  }) =>
+    api.get<{ sessions: ChatbotSession[]; total: number }>('/chatbot/sessions', { params }),
+  get: (id: string) => api.get<ChatbotSession>(`/chatbot/sessions/${id}`),
+}
+
 export const webhooksService = {
   list: (params?: { search?: string; page?: number; limit?: number }) =>
     api.get<{
