@@ -122,9 +122,9 @@ func (a *App) applyRSVPEventRequest(e *models.RSVPEvent, req rsvpEventRequest) e
 // ---------------------------------------------------------------------------
 
 func (a *App) ListRSVPEvents(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	pg := parsePagination(r)
 	search := string(r.RequestCtx.QueryArgs().Peek("search"))
@@ -154,9 +154,9 @@ func (a *App) ListRSVPEvents(r *fastglue.Request) error {
 }
 
 func (a *App) CreateRSVPEvent(r *fastglue.Request) error {
-	orgID, userID, err := a.getOrgAndUserID(r)
+	orgID, userID, err := a.requireAuth(r, models.ResourceRSVP, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	var req rsvpEventRequest
 	if err := a.decodeRequest(r, &req); err != nil {
@@ -185,9 +185,9 @@ func (a *App) CreateRSVPEvent(r *fastglue.Request) error {
 }
 
 func (a *App) GetRSVPEvent(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	id, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -201,9 +201,9 @@ func (a *App) GetRSVPEvent(r *fastglue.Request) error {
 }
 
 func (a *App) UpdateRSVPEvent(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	id, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -236,9 +236,9 @@ func (a *App) UpdateRSVPEvent(r *fastglue.Request) error {
 }
 
 func (a *App) DeleteRSVPEvent(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionDelete)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	id, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -305,9 +305,9 @@ func (a *App) syncRSVPFlowKeyword(event *models.RSVPEvent) {
 }
 
 func (a *App) ActivateRSVPEvent(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	id, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -329,9 +329,9 @@ func (a *App) ActivateRSVPEvent(r *fastglue.Request) error {
 }
 
 func (a *App) CloseRSVPEvent(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	id, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -353,9 +353,9 @@ func (a *App) CloseRSVPEvent(r *fastglue.Request) error {
 // ---------------------------------------------------------------------------
 
 func (a *App) ListRSVPResponses(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -412,9 +412,9 @@ func isValidRSVPAttendance(v string) bool {
 
 // UpdateRSVPResponse edits an existing received response (attendance, answers, notes).
 func (a *App) UpdateRSVPResponse(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -467,9 +467,9 @@ func (a *App) UpdateRSVPResponse(r *fastglue.Request) error {
 
 // DeleteRSVPResponse removes a received response from an event.
 func (a *App) DeleteRSVPResponse(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionDelete)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -490,9 +490,9 @@ func (a *App) DeleteRSVPResponse(r *fastglue.Request) error {
 }
 
 func (a *App) GetRSVPTally(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -698,9 +698,9 @@ func (a *App) sendRSVPTemplateWithParams(event *models.RSVPEvent, templateID *uu
 // ---------------------------------------------------------------------------
 
 func (a *App) ExportRSVPResponses(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionExport)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {

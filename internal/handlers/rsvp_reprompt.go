@@ -85,9 +85,9 @@ func (a *App) computeRepromptTargets(orgID uuid.UUID, event *models.RSVPEvent) (
 // RepromptPreview returns the list of guests who would be re-prompted and the
 // message they would receive, without sending anything.
 func (a *App) RepromptPreview(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {
@@ -130,9 +130,9 @@ func firstFlowStepMessage(flow *models.ChatbotFlow) string {
 // resetting their response to pending first so it re-runs cleanly and the
 // duplicate guard doesn't turn them away.
 func (a *App) RepromptRSVPFlowSessions(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionExecute)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {

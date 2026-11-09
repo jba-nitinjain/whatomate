@@ -8,16 +8,18 @@ func init() {
 	})
 	register(
 		Entry{
-			Area:    "settings",
-			Method:  "GET",
-			Path:    "/api/settings/sso",
-			Summary: "List the organisation's single sign-on providers and whether each is enabled (secrets are not shown).",
+			Area:       "settings",
+			Method:     "GET",
+			Path:       "/api/settings/sso",
+			Permission: "settings.sso:read",
+			Summary:    "List the organisation's single sign-on providers and whether each is enabled (secrets are not shown).",
 		},
 		Entry{
-			Area:    "settings",
-			Method:  "PUT",
-			Path:    "/api/settings/sso/{provider}",
-			Summary: "Create or update a single sign-on provider. provider is one of google, microsoft, github, facebook, custom.",
+			Area:       "settings",
+			Method:     "PUT",
+			Path:       "/api/settings/sso/{provider}",
+			Permission: "settings.sso:write",
+			Summary:    "Create or update a single sign-on provider. provider is one of google, microsoft, github, facebook, custom.",
 			Body: admObj(map[string]any{
 				"client_id":         admStr("OAuth client ID from the provider."),
 				"client_secret":     admStr("OAuth client secret. Leave empty on update to keep the stored one."),
@@ -35,6 +37,7 @@ func init() {
 			Area:        "settings",
 			Method:      "DELETE",
 			Path:        "/api/settings/sso/{provider}",
+			Permission:  "settings.sso:write",
 			Summary:     "Remove a single sign-on provider. provider is one of google, microsoft, github, facebook, custom.",
 			SideEffects: "People can no longer sign in with that provider.",
 		},

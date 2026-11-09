@@ -40,10 +40,11 @@ func init() {
 			SideEffects: "Creates a login for a new person (or restores a previously deleted account with the same email).",
 		},
 		Entry{
-			Area:    "users",
-			Method:  "GET",
-			Path:    "/api/users/{id}",
-			Summary: "Show one user of the current organisation, including their role here.",
+			Area:       "users",
+			Method:     "GET",
+			Path:       "/api/users/{id}",
+			Permission: "users:read (not needed for your own user id)",
+			Summary:    "Show one user of the current organisation, including their role here.",
 		},
 		Entry{
 			Area:        "users",

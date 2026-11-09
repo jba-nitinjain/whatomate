@@ -8,9 +8,10 @@ func init() {
 	})
 
 	register(Entry{
-		Area:   "flow_media",
-		Method: "POST",
-		Path:   "/api/flow-media/upload",
+		Area:       "flow_media",
+		Method:     "POST",
+		Path:       "/api/flow-media/upload",
+		Permission: "flows.chatbot:write",
 		Summary: "Upload a media file (max 16 MB) for a chatbot flow step. Returns a public URL to " +
 			"put in the step's media settings.",
 		Multipart: &MultipartSpec{

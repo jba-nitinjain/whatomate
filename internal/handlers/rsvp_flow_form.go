@@ -57,9 +57,9 @@ func buildRSVPFormScreen(attendanceField, spouseField string) map[string]interfa
 // spouse mobile) for an RSVP event. The user reviews it in Flows, then Saves to
 // Meta and Publishes, and finally sends it from a whatsapp_flow chatbot step.
 func (a *App) GenerateRSVPFlowForm(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {

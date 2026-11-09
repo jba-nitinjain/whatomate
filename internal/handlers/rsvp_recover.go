@@ -141,9 +141,9 @@ func (a *App) reconstructRSVPFromChat(orgID uuid.UUID, event *models.RSVPEvent, 
 // reconstructs answers from the stored chat history for every still-incomplete
 // guest — so recovery works even when the session is long gone. Idempotent.
 func (a *App) RecoverRSVPPartials(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceRSVP, models.ActionExecute)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	eventID, err := parsePathUUID(r, "id", "RSVP event")
 	if err != nil {

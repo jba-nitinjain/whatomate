@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 )
@@ -32,8 +33,9 @@ func flowMediaToken(secret, name string) string {
 // UploadFlowMedia stores an uploaded image/video/document and returns a public,
 // token-signed URL usable as a chatbot media header (WhatsApp fetches it by link).
 func (a *App) UploadFlowMedia(r *fastglue.Request) error {
-	if _, err := a.getOrgID(r); err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	// Flow media is uploaded from the chatbot flow builder.
+	if _, _, err := a.requireAuth(r, models.ResourceFlowsChatbot, models.ActionWrite); err != nil {
+		return nil
 	}
 
 	form, err := r.RequestCtx.MultipartForm()

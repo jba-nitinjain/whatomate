@@ -65,9 +65,9 @@ type OrganizationSettings struct {
 
 // GetOrganizationSettings returns the organization settings
 func (a *App) GetOrganizationSettings(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceSettingsGeneral, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	var org models.Organization
@@ -168,6 +168,18 @@ func (a *App) UpdateOrganizationSettings(r *fastglue.Request) error {
 	metaAppCredsTouched := req.MetaAppID != nil || req.MetaConfigID != nil || req.MetaAppSecret != nil
 	if metaAppCredsTouched {
 		if err := a.requirePermission(r, userID, models.ResourceAccounts, models.ActionWrite); err != nil {
+			return nil
+		}
+	}
+	// Every other field (general, calling and retention settings) is edited
+	// from Settings → General and needs settings.general:write. A request that
+	// only carries the Meta app fields keeps needing accounts:write alone.
+	otherFieldsTouched := req.MaskPhoneNumbers != nil || req.Timezone != nil || req.DateFormat != nil ||
+		req.Name != nil || req.CallingEnabled != nil || req.MaxCallDuration != nil ||
+		req.TransferTimeoutSecs != nil || req.HoldMusicFile != nil || req.RingbackFile != nil ||
+		req.MessageRetentionDays != nil
+	if otherFieldsTouched || !metaAppCredsTouched {
+		if err := a.requirePermission(r, userID, models.ResourceSettingsGeneral, models.ActionWrite); err != nil {
 			return nil
 		}
 	}
