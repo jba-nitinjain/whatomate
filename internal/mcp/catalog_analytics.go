@@ -34,12 +34,13 @@ func init() {
 	}
 	register(
 		Entry{
-			Area:    "analytics",
-			Method:  "GET",
-			Path:    "/api/analytics/dashboard",
-			Summary: "Dashboard summary for a date range: messages, contacts, chatbot sessions and campaigns sent, each with % change versus the previous period of the same length, plus recent messages.",
-			Query:   admDateRange(),
-			Tool:    "whatomate_dashboard_analytics",
+			Area:       "analytics",
+			Method:     "GET",
+			Path:       "/api/analytics/dashboard",
+			Permission: "analytics:read",
+			Summary:    "Dashboard summary for a date range: messages, contacts, chatbot sessions and campaigns sent, each with % change versus the previous period of the same length, plus recent messages.",
+			Query:      admDateRange(),
+			Tool:       "whatomate_dashboard_analytics",
 		},
 		Entry{
 			Area:    "analytics",
@@ -134,11 +135,12 @@ func init() {
 			Summary: "List the data sources and fields a widget can use.",
 		},
 		Entry{
-			Area:    "analytics",
-			Method:  "GET",
-			Path:    "/api/widgets/data",
-			Summary: "Calculate the values of all your visible widgets for a date range.",
-			Query:   admDateRange(),
+			Area:       "analytics",
+			Method:     "GET",
+			Path:       "/api/widgets/data",
+			Permission: "analytics:read",
+			Summary:    "Calculate the values of all your visible widgets for a date range.",
+			Query:      admDateRange(),
 		},
 		Entry{
 			Area:       "analytics",
@@ -165,17 +167,19 @@ func init() {
 			SideEffects: "Removes the widget from the dashboard.",
 		},
 		Entry{
-			Area:    "analytics",
-			Method:  "GET",
-			Path:    "/api/widgets/{id}/data",
-			Summary: "Calculate one widget's value for a date range.",
-			Query:   admDateRange(),
+			Area:       "analytics",
+			Method:     "GET",
+			Path:       "/api/widgets/{id}/data",
+			Permission: "analytics:read",
+			Summary:    "Calculate one widget's value for a date range.",
+			Query:      admDateRange(),
 		},
 		Entry{
-			Area:    "analytics",
-			Method:  "POST",
-			Path:    "/api/widgets/layout",
-			Summary: "Save the dashboard layout (position and size of each widget).",
+			Area:       "analytics",
+			Method:     "POST",
+			Path:       "/api/widgets/layout",
+			Permission: "analytics:write",
+			Summary:    "Save the dashboard layout (position and size of each widget).",
 			Body: admObj(map[string]any{
 				"layout": admArr(admObj(map[string]any{
 					"id":     admStr("Widget ID."),

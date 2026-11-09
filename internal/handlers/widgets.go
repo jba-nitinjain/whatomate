@@ -517,9 +517,9 @@ func (a *App) DeleteWidget(r *fastglue.Request) error {
 
 // SaveWidgetLayout bulk saves grid positions for all widgets
 func (a *App) SaveWidgetLayout(r *fastglue.Request) error {
-	orgID, userID, err := a.getOrgAndUserID(r)
+	orgID, userID, err := a.requireAuth(r, models.ResourceAnalytics, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	var req struct {
@@ -669,9 +669,9 @@ func formatLabel(s string) string {
 
 // GetWidgetData executes the widget query and returns the data
 func (a *App) GetWidgetData(r *fastglue.Request) error {
-	orgID, userID, err := a.getOrgAndUserID(r)
+	orgID, userID, err := a.requireAuth(r, models.ResourceAnalytics, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "widget")
@@ -705,9 +705,9 @@ func (a *App) GetWidgetData(r *fastglue.Request) error {
 
 // GetAllWidgetsData returns data for all user's widgets in a single request
 func (a *App) GetAllWidgetsData(r *fastglue.Request) error {
-	orgID, userID, err := a.getOrgAndUserID(r)
+	orgID, userID, err := a.requireAuth(r, models.ResourceAnalytics, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	// Parse date range from query params

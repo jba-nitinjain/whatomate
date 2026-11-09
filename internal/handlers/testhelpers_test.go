@@ -5,11 +5,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nikyjain/whatomate/internal/config"
 	"github.com/nikyjain/whatomate/internal/handlers"
+	"github.com/nikyjain/whatomate/internal/models"
 	"github.com/nikyjain/whatomate/internal/queue"
 	"github.com/nikyjain/whatomate/pkg/whatsapp"
 	"github.com/nikyjain/whatomate/test/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 // appOption configures an App for testing.
@@ -27,6 +30,34 @@ func withWhatsApp(wa *whatsapp.Client) appOption {
 	return func(a *handlers.App) {
 		a.WhatsApp = wa
 	}
+}
+
+// withPerms gives a fixture user a role in orgID that holds exactly the given
+// "resource:action" keys. Use it for tests that exercise a handler behind a
+// permission check rather than the check itself.
+//
+// The role and its role_permissions rows are inserted directly (no upsert of
+// the shared permissions table), so parallel tests do not contend on it.
+func withPerms(t *testing.T, app *handlers.App, orgID uuid.UUID, keys ...string) testutil.UserOption {
+	t.Helper()
+	testutil.GetOrCreateTestPermissions(t, app.DB)
+
+	var perms []models.Permission
+	require.NoError(t, app.DB.Where("resource || ':' || action IN ?", keys).Find(&perms).Error)
+	require.Len(t, perms, len(keys), "unknown permission key in %v", keys)
+
+	role := &models.CustomRole{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: orgID,
+		Name:           "fixture_" + uuid.NewString()[:8],
+	}
+	require.NoError(t, app.DB.Omit("Permissions").Create(role).Error)
+	links := make([]models.RolePermission, len(perms))
+	for i, p := range perms {
+		links[i] = models.RolePermission{CustomRoleID: role.ID, PermissionID: p.ID}
+	}
+	require.NoError(t, app.DB.Create(&links).Error)
+	return testutil.WithRoleID(&role.ID)
 }
 
 // withHTTPClient sets the HTTP client on the test App.

@@ -24,9 +24,9 @@ var campaignReportFilenameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 // ExportCampaignReport returns a formatted XLSX report for a campaign.
 func (a *App) ExportCampaignReport(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceCampaigns, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "campaign")

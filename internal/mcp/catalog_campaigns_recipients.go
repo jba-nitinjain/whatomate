@@ -3,15 +3,17 @@ package mcp
 func init() {
 	register(
 		Entry{
-			Area:    "campaigns",
-			Method:  "GET",
-			Path:    "/api/campaigns/{id}/recipients",
-			Summary: "List every recipient of a campaign with its delivery status and error.",
+			Area:       "campaigns",
+			Method:     "GET",
+			Path:       "/api/campaigns/{id}/recipients",
+			Permission: "campaigns:read",
+			Summary:    "List every recipient of a campaign with its delivery status and error.",
 		},
 		Entry{
-			Area:   "campaigns",
-			Method: "POST",
-			Path:   "/api/campaigns/{id}/recipients/import",
+			Area:       "campaigns",
+			Method:     "POST",
+			Path:       "/api/campaigns/{id}/recipients/import",
+			Permission: "campaigns:write",
 			Summary: "Add recipients to a campaign by phone number list, existing contacts or tag names. " +
 				"Phone numbers are stored in canonical form. Not allowed on RSVP reminder campaigns.",
 			Body: mxObj(nil, map[string]any{
@@ -30,13 +32,15 @@ func init() {
 			Area:        "campaigns",
 			Method:      "DELETE",
 			Path:        "/api/campaigns/{id}/recipients/{recipientId}",
+			Permission:  "campaigns:write",
 			Summary:     "Remove one recipient from a draft campaign.",
 			SideEffects: "deletes data",
 		},
 		Entry{
-			Area:   "campaigns",
-			Method: "POST",
-			Path:   "/api/campaigns/{id}/media",
+			Area:       "campaigns",
+			Method:     "POST",
+			Path:       "/api/campaigns/{id}/media",
+			Permission: "campaigns:write",
 			Summary: "Upload the header image, video or document (max 16 MB) for a draft campaign whose " +
 				"template has a media header.",
 			Multipart: &MultipartSpec{
@@ -45,10 +49,11 @@ func init() {
 			},
 		},
 		Entry{
-			Area:    "campaigns",
-			Method:  "GET",
-			Path:    "/api/campaigns/{id}/media",
-			Summary: "Download the campaign's uploaded header media file (preview).",
+			Area:       "campaigns",
+			Method:     "GET",
+			Path:       "/api/campaigns/{id}/media",
+			Permission: "campaigns:read",
+			Summary:    "Download the campaign's uploaded header media file (preview).",
 		},
 	)
 }

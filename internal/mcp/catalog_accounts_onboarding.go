@@ -12,15 +12,18 @@ func init() {
 	sess := "/api/accounts/onboarding/sessions/{id}"
 	register(
 		Entry{Area: "accounts", Method: "POST", Path: "/api/accounts/onboarding/sessions",
-			Summary: "Start a new WhatsApp onboarding wizard session (the preferred way to connect a number). " + onboardingOrder,
+			Permission: "accounts:write",
+			Summary:    "Start a new WhatsApp onboarding wizard session (the preferred way to connect a number). " + onboardingOrder,
 			Body: setupObj(map[string]any{
 				"mode": setupEnum("embedded_signup (Meta pop-up flow, default) or manual_import (paste credentials).",
 					"embedded_signup", "manual_import"),
 				"account_name": setupStr("Name to give the new WhatsApp account in Whatomate."),
 			})},
 		Entry{Area: "accounts", Method: "GET", Path: sess,
-			Summary: "Get an onboarding session with its current step, per-step state, readiness checklist and last error. Use it to resume the wizard."},
+			Permission: "accounts:read",
+			Summary:    "Get an onboarding session with its current step, per-step state, readiness checklist and last error. Use it to resume the wizard."},
 		Entry{Area: "accounts", Method: "POST", Path: sess + "/embedded-signup/complete",
+			Permission: "accounts:write",
 			Summary: "Wizard step 2 (embedded signup): hand over what Meta's Embedded Signup returned (a code to exchange, or an access token) " +
 				"plus phone/WABA IDs; Whatomate imports the account. Needs the super-admin Meta app config when a code is sent.",
 			Body: setupObj(map[string]any{
@@ -36,7 +39,8 @@ func init() {
 			}),
 			SideEffects: "Calls Meta to exchange the code; creates or updates the WhatsApp account."},
 		Entry{Area: "accounts", Method: "POST", Path: sess + "/manual-import",
-			Summary: "Wizard step 2 (manual): import a number from credentials copied from Meta Business Manager; Whatomate validates them with Meta and creates the account.",
+			Permission: "accounts:write",
+			Summary:    "Wizard step 2 (manual): import a number from credentials copied from Meta Business Manager; Whatomate validates them with Meta and creates the account.",
 			Body: setupObj(map[string]any{
 				"account_name":         setupStr("Account name in Whatomate."),
 				"app_id":               setupStr("Meta App ID."),
@@ -49,17 +53,20 @@ func init() {
 			}, "phone_id", "business_id", "access_token"),
 			SideEffects: "Calls Meta to validate; creates or updates the WhatsApp account."},
 		Entry{Area: "accounts", Method: "POST", Path: sess + "/request-code",
-			Summary: "Wizard step 3: ask Meta to send a verification code to the phone (skip when the number is already verified or is a Coexistence number).",
+			Permission: "accounts:write",
+			Summary:    "Wizard step 3: ask Meta to send a verification code to the phone (skip when the number is already verified or is a Coexistence number).",
 			Body: setupObj(map[string]any{
 				"code_method": setupEnum("Delivery method (default SMS).", "SMS", "VOICE"),
 				"language":    setupStr("Language for the code message, e.g. en_US."),
 			}),
 			SideEffects: "Meta sends an SMS or voice call to the phone."},
 		Entry{Area: "accounts", Method: "POST", Path: sess + "/verify-code",
+			Permission:  "accounts:write",
 			Summary:     "Wizard step 4: submit the verification code the phone received.",
 			Body:        setupObj(map[string]any{"code": setupStr("The received code.")}, "code"),
 			SideEffects: "Calls Meta to verify the phone."},
 		Entry{Area: "accounts", Method: "POST", Path: sess + "/register-phone",
+			Permission: "accounts:write",
 			Summary: "Wizard step 5: register the number with Meta using a 6-digit two-step PIN. " +
 				"Coexistence (WhatsApp Business app) numbers skip Meta registration automatically.",
 			Body: setupObj(map[string]any{
@@ -71,12 +78,15 @@ func init() {
 			}, "pin"),
 			SideEffects: "Registers the phone number with Meta."},
 		Entry{Area: "accounts", Method: "POST", Path: sess + "/validate-webhook",
+			Permission:  "accounts:write",
 			Summary:     "Wizard step 6: check that the public HTTPS webhook callback URL answers Meta's verification challenge with this account's verify token.",
 			SideEffects: "Makes an HTTP request to the public callback URL."},
 		Entry{Area: "accounts", Method: "POST", Path: sess + "/subscribe-webhooks",
+			Permission:  "accounts:write",
 			Summary:     "Wizard step 7: subscribe the Meta app to the WABA's webhooks so messages and delivery reports arrive.",
 			SideEffects: "Calls Meta to subscribe webhooks."},
 		Entry{Area: "accounts", Method: "POST", Path: sess + "/finalize",
+			Permission:  "accounts:write",
 			Summary:     "Wizard step 8: run the final connection test and compute readiness (ready / action_required / waiting_on_meta with Meta-owned checkpoints).",
 			SideEffects: "Calls Meta Graph API (read only)."},
 		Entry{Area: "accounts", Method: "POST", Path: "/api/accounts/exchange-token",

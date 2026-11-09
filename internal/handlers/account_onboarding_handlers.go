@@ -17,9 +17,9 @@ import (
 
 // CreateWhatsAppOnboardingSession creates a resumable onboarding session for the current organization.
 func (a *App) CreateWhatsAppOnboardingSession(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	var req createOnboardingSessionRequest
@@ -58,6 +58,9 @@ func (a *App) CreateWhatsAppOnboardingSession(r *fastglue.Request) error {
 
 // GetWhatsAppOnboardingSession returns a persisted onboarding session.
 func (a *App) GetWhatsAppOnboardingSession(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionRead); err != nil {
+		return nil
+	}
 	session, err := a.resolveOnboardingSessionByID(r)
 	if err != nil {
 		return nil
@@ -75,6 +78,9 @@ func (a *App) GetWhatsAppOnboardingSession(r *fastglue.Request) error {
 
 // CompleteEmbeddedSignupOnboarding stores the assets returned by Meta embedded signup and imports the account.
 func (a *App) CompleteEmbeddedSignupOnboarding(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	session, err := a.resolveOnboardingSessionByID(r)
 	if err != nil {
 		return nil
@@ -135,6 +141,9 @@ func (a *App) CompleteEmbeddedSignupOnboarding(r *fastglue.Request) error {
 
 // ManualImportWhatsAppOnboarding imports manually provided Meta asset values into an onboarding session.
 func (a *App) ManualImportWhatsAppOnboarding(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	session, err := a.resolveOnboardingSessionByID(r)
 	if err != nil {
 		return nil
@@ -176,6 +185,9 @@ func (a *App) ManualImportWhatsAppOnboarding(r *fastglue.Request) error {
 
 // RequestOnboardingPhoneCode requests the Meta verification code for the onboarding session's phone number.
 func (a *App) RequestOnboardingPhoneCode(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	session, err := a.resolveOnboardingSessionByID(r)
 	if err != nil {
 		return nil
@@ -230,6 +242,9 @@ func (a *App) RequestOnboardingPhoneCode(r *fastglue.Request) error {
 
 // VerifyOnboardingPhoneCode confirms the OTP from Meta for the session phone number.
 func (a *App) VerifyOnboardingPhoneCode(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	session, err := a.resolveOnboardingSessionByID(r)
 	if err != nil {
 		return nil
@@ -280,6 +295,9 @@ func (a *App) VerifyOnboardingPhoneCode(r *fastglue.Request) error {
 
 // RegisterOnboardingPhone completes Meta phone registration for the session.
 func (a *App) RegisterOnboardingPhone(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	session, err := a.resolveOnboardingSessionByID(r)
 	if err != nil {
 		return nil
@@ -376,6 +394,9 @@ func (a *App) RegisterOnboardingPhone(r *fastglue.Request) error {
 
 // ValidateOnboardingWebhook checks that the public callback URL is reachable and that Meta verification succeeds.
 func (a *App) ValidateOnboardingWebhook(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	session, err := a.resolveOnboardingSessionByID(r)
 	if err != nil {
 		return nil
@@ -453,6 +474,9 @@ func (a *App) ValidateOnboardingWebhook(r *fastglue.Request) error {
 
 // SubscribeOnboardingWebhooks subscribes the current app to WABA webhooks for the onboarding session.
 func (a *App) SubscribeOnboardingWebhooks(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	session, err := a.resolveOnboardingSessionByID(r)
 	if err != nil {
 		return nil
@@ -500,6 +524,9 @@ func (a *App) SubscribeOnboardingWebhooks(r *fastglue.Request) error {
 
 // FinalizeWhatsAppOnboarding runs the connection test and computes the final readiness state.
 func (a *App) FinalizeWhatsAppOnboarding(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	session, err := a.resolveOnboardingSessionByID(r)
 	if err != nil {
 		return nil
