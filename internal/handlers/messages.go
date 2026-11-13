@@ -419,8 +419,12 @@ func (a *App) buildInteractiveData(req OutgoingMessageRequest) models.JSONB {
 			maps.Copy(resolved, btnMap)
 			if resolved["type"] == "URL" {
 				if urlStr, ok := resolved["url"].(string); ok {
-					idx := fmt.Sprintf("%d", i)
-					if val, exists := req.ButtonURLParams[idx]; exists {
+					val, exists := req.ButtonParams[i]
+					if !exists || val == "" {
+						idx := fmt.Sprintf("%d", i)
+						val = req.ButtonURLParams[idx]
+					}
+					if val != "" {
 						resolved["url"] = templateutil.ParameterPattern.ReplaceAllString(urlStr, val)
 					}
 				}
