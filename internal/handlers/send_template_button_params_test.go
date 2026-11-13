@@ -131,6 +131,17 @@ func TestSendTemplate_ButtonParamsFillDynamicURLButton(t *testing.T) {
 	assert.Equal(t, "url", buttons[0]["sub_type"])
 	assert.Equal(t, "0", buttons[0]["index"])
 	assert.Equal(t, "abc123", firstParam(t, buttons[0])["text"])
+
+	// Verify message record in DB has resolved dynamic URL in InteractiveData
+	var dbMsg models.Message
+	require.NoError(t, f.app.DB.Where("contact_id = ?", f.contact.ID).Order("created_at desc").First(&dbMsg).Error)
+	require.NotNil(t, dbMsg.InteractiveData)
+	dbButtons, ok := dbMsg.InteractiveData["buttons"].([]any)
+	require.True(t, ok)
+	require.Len(t, dbButtons, 1)
+	btnMap, ok := dbButtons[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "https://example.com/t/abc123", btnMap["url"])
 }
 
 // Main behaviour preserved: a URL button value from template_params is sent
