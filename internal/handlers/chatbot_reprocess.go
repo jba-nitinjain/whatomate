@@ -12,9 +12,9 @@ import (
 // otherwise skip chatbot processing) and then either continues an in-progress
 // flow or matches a flow trigger by the message text.
 func (a *App) ReprocessMessageFlow(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceChat, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 	msgID, err := parsePathUUID(r, "id", "message")
 	if err != nil {

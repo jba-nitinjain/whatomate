@@ -94,7 +94,7 @@ func TestApp_GetChatbotSettings(t *testing.T) {
 	t.Run("success returns default settings when none exist", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read"))
 
 		req := testutil.NewGETRequest(t)
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -134,7 +134,7 @@ func TestApp_UpdateChatbotSettings(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read", "settings.chatbot:write"))
 
 		enabled := true
 		greeting := "Welcome to our shop!"
@@ -207,7 +207,7 @@ func TestApp_ListKeywordRules(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:read"))
 
 		createTestKeywordRule(t, app, org.ID, "Greeting Rule", []string{"hello", "hi"})
 		createTestKeywordRule(t, app, org.ID, "Help Rule", []string{"help", "support"})
@@ -232,7 +232,7 @@ func TestApp_ListKeywordRules(t *testing.T) {
 	t.Run("empty list", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:read"))
 
 		req := testutil.NewGETRequest(t)
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -262,7 +262,7 @@ func TestApp_CreateKeywordRule(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":          "Greeting Rule",
@@ -307,7 +307,7 @@ func TestApp_CreateKeywordRule(t *testing.T) {
 	t.Run("validation error missing keywords", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":          "Bad Rule",
@@ -327,7 +327,7 @@ func TestApp_CreateKeywordRule(t *testing.T) {
 	t.Run("defaults name to first keyword when name empty", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"keywords":      []string{"pricing"},
@@ -370,7 +370,7 @@ func TestApp_GetKeywordRule(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:read"))
 		rule := createTestKeywordRule(t, app, org.ID, "Greeting", []string{"hello"})
 
 		req := testutil.NewGETRequest(t)
@@ -396,7 +396,7 @@ func TestApp_GetKeywordRule(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:read"))
 
 		req := testutil.NewGETRequest(t)
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -418,7 +418,7 @@ func TestApp_UpdateKeywordRule(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 		rule := createTestKeywordRule(t, app, org.ID, "Original", []string{"hello"})
 
 		updatedName := "Updated Greeting"
@@ -467,7 +467,7 @@ func TestApp_DeleteKeywordRule(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:delete"))
 		rule := createTestKeywordRule(t, app, org.ID, "To Delete", []string{"delete"})
 
 		req := testutil.NewGETRequest(t)
@@ -496,7 +496,7 @@ func TestApp_DeleteKeywordRule(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:delete"))
 
 		req := testutil.NewGETRequest(t)
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -826,7 +826,7 @@ func TestApp_ListAIContexts(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:read"))
 
 		createTestAIContext(t, app, org.ID, "FAQ Context")
 		createTestAIContext(t, app, org.ID, "Product Context")
@@ -851,7 +851,7 @@ func TestApp_ListAIContexts(t *testing.T) {
 	t.Run("empty list", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:read"))
 
 		req := testutil.NewGETRequest(t)
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -881,7 +881,7 @@ func TestApp_CreateAIContext(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":             "Product FAQ",
@@ -931,7 +931,7 @@ func TestApp_GetAIContext(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:read"))
 		ctx := createTestAIContext(t, app, org.ID, "FAQ Context")
 
 		req := testutil.NewGETRequest(t)
@@ -955,7 +955,7 @@ func TestApp_GetAIContext(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:read"))
 
 		req := testutil.NewGETRequest(t)
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -977,7 +977,7 @@ func TestApp_DeleteAIContext(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:delete"))
 		ctx := createTestAIContext(t, app, org.ID, "To Delete Context")
 
 		req := testutil.NewGETRequest(t)
@@ -1006,7 +1006,7 @@ func TestApp_DeleteAIContext(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:delete"))
 
 		req := testutil.NewGETRequest(t)
 		testutil.SetAuthContext(req, org.ID, user.ID)
@@ -1028,7 +1028,7 @@ func TestApp_GetChatbotSettings_ExistingSettings(t *testing.T) {
 	t.Run("returns persisted settings when they exist", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read"))
 
 		// Create settings directly in the DB
 		settings := &models.ChatbotSettings{
@@ -1073,7 +1073,7 @@ func TestApp_GetChatbotSettings_ExistingSettings(t *testing.T) {
 	t.Run("stats reflect actual data counts", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read"))
 
 		// Create some keyword rules and flows so stats are non-zero
 		createTestKeywordRule(t, app, org.ID, "Rule A", []string{"hi"})
@@ -1110,7 +1110,7 @@ func TestApp_UpdateChatbotSettings_PartialUpdate(t *testing.T) {
 	t.Run("partial update only changes provided fields", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read", "settings.chatbot:write"))
 
 		// First, create full settings
 		setupReq := testutil.NewJSONRequest(t, map[string]any{
@@ -1155,7 +1155,7 @@ func TestApp_UpdateChatbotSettings_PartialUpdate(t *testing.T) {
 	t.Run("update business hours settings", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read", "settings.chatbot:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"business_hours_enabled":        true,
@@ -1193,7 +1193,7 @@ func TestApp_UpdateChatbotSettings_PartialUpdate(t *testing.T) {
 	t.Run("opt-in upstream behaviour flags round-trip", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read", "settings.chatbot:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"skip_transfer_outside_hours": true,
@@ -1219,7 +1219,7 @@ func TestApp_UpdateChatbotSettings_PartialUpdate(t *testing.T) {
 	t.Run("update agent assignment settings", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read", "settings.chatbot:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"allow_agent_queue_pickup":        false,
@@ -1253,7 +1253,7 @@ func TestApp_UpdateChatbotSettings_PartialUpdate(t *testing.T) {
 	t.Run("update client inactivity settings", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read", "settings.chatbot:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"client_reminder_enabled":   true,
@@ -1291,7 +1291,7 @@ func TestApp_UpdateChatbotSettings_PartialUpdate(t *testing.T) {
 	t.Run("update SLA settings", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read", "settings.chatbot:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"sla_enabled":            true,
@@ -1333,7 +1333,7 @@ func TestApp_UpdateChatbotSettings_PartialUpdate(t *testing.T) {
 	t.Run("invalid JSON body returns 400", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:read", "settings.chatbot:write"))
 
 		ctx := &fasthttp.RequestCtx{}
 		ctx.Request.Header.SetContentType("application/json")
@@ -1358,7 +1358,7 @@ func TestApp_CreateKeywordRule_MatchTypes(t *testing.T) {
 	t.Run("exact match type", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":          "Exact Match Rule",
@@ -1397,7 +1397,7 @@ func TestApp_CreateKeywordRule_MatchTypes(t *testing.T) {
 	t.Run("starts_with match type", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":          "Prefix Rule",
@@ -1434,7 +1434,7 @@ func TestApp_CreateKeywordRule_MatchTypes(t *testing.T) {
 	t.Run("regex match type", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":          "Regex Rule",
@@ -1471,7 +1471,7 @@ func TestApp_CreateKeywordRule_MatchTypes(t *testing.T) {
 	t.Run("transfer response type", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":          "Transfer Rule",
@@ -1510,7 +1510,7 @@ func TestApp_CreateKeywordRule_MatchTypes(t *testing.T) {
 	t.Run("defaults match_type and response_type when omitted", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":     "Default Types Rule",
@@ -1554,7 +1554,7 @@ func TestApp_UpdateKeywordRule_Additional(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name": "Ghost",
@@ -1570,7 +1570,7 @@ func TestApp_UpdateKeywordRule_Additional(t *testing.T) {
 	t.Run("update match_type and response_content", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 		rule := createTestKeywordRule(t, app, org.ID, "MatchUpdate", []string{"hello"})
 
 		newMatchType := models.MatchTypeExact
@@ -1596,7 +1596,7 @@ func TestApp_UpdateKeywordRule_Additional(t *testing.T) {
 	t.Run("update response_type to transfer", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:write"))
 		rule := createTestKeywordRule(t, app, org.ID, "TypeSwitch", []string{"agent"})
 
 		newRespType := models.ResponseTypeTransfer
@@ -1627,11 +1627,11 @@ func TestApp_ListKeywordRules_OrgIsolation(t *testing.T) {
 		app := newTestApp(t)
 
 		org1 := testutil.CreateTestOrganization(t, app.DB)
-		user1 := testutil.CreateTestUser(t, app.DB, org1.ID)
+		user1 := testutil.CreateTestUser(t, app.DB, org1.ID, withPerms(t, app, org1.ID, "chatbot.keywords:read"))
 		createTestKeywordRule(t, app, org1.ID, "Org1 Rule", []string{"org1"})
 
 		org2 := testutil.CreateTestOrganization(t, app.DB)
-		user2 := testutil.CreateTestUser(t, app.DB, org2.ID,
+		user2 := testutil.CreateTestUser(t, app.DB, org2.ID, withPerms(t, app, org2.ID, "chatbot.keywords:read"),
 			testutil.WithEmail(testutil.UniqueEmail("org2-kw")),
 		)
 		createTestKeywordRule(t, app, org2.ID, "Org2 Rule", []string{"org2"})
@@ -2006,7 +2006,7 @@ func TestApp_CreateAIContext_Additional(t *testing.T) {
 	t.Run("validation error missing name", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"context_type":     "static",
@@ -2023,7 +2023,7 @@ func TestApp_CreateAIContext_Additional(t *testing.T) {
 	t.Run("defaults context_type to static when omitted", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":             "Defaulted Context",
@@ -2056,7 +2056,7 @@ func TestApp_CreateAIContext_Additional(t *testing.T) {
 	t.Run("create API context type", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":             "API Context",
@@ -2091,7 +2091,7 @@ func TestApp_CreateAIContext_Additional(t *testing.T) {
 	t.Run("persist api_config for API context", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name":         "API Context With Config",
@@ -2143,7 +2143,7 @@ func TestApp_UpdateAIContext(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:write"))
 		aiCtx := createTestAIContext(t, app, org.ID, "Original Context")
 
 		req := testutil.NewJSONRequest(t, map[string]any{
@@ -2182,7 +2182,7 @@ func TestApp_UpdateAIContext(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:write"))
 
 		req := testutil.NewJSONRequest(t, map[string]any{
 			"name": "Ghost Context",
@@ -2198,7 +2198,7 @@ func TestApp_UpdateAIContext(t *testing.T) {
 	t.Run("partial update only changes provided fields", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:write"))
 		aiCtx := createTestAIContext(t, app, org.ID, "Partial Update Ctx")
 
 		// Only update the name
@@ -2225,7 +2225,7 @@ func TestApp_UpdateAIContext(t *testing.T) {
 	t.Run("change context_type from static to api", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:write"))
 		aiCtx := createTestAIContext(t, app, org.ID, "Type Change Ctx")
 
 		req := testutil.NewJSONRequest(t, map[string]any{
@@ -2246,7 +2246,7 @@ func TestApp_UpdateAIContext(t *testing.T) {
 	t.Run("update api_config for API context", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.ai:write"))
 		aiCtx := createTestAIContext(t, app, org.ID, "API Config Update Ctx")
 
 		req := testutil.NewJSONRequest(t, map[string]any{
@@ -2286,11 +2286,11 @@ func TestApp_ListAIContexts_OrgIsolation(t *testing.T) {
 		app := newTestApp(t)
 
 		org1 := testutil.CreateTestOrganization(t, app.DB)
-		user1 := testutil.CreateTestUser(t, app.DB, org1.ID)
+		user1 := testutil.CreateTestUser(t, app.DB, org1.ID, withPerms(t, app, org1.ID, "chatbot.ai:read"))
 		createTestAIContext(t, app, org1.ID, "Org1 Context")
 
 		org2 := testutil.CreateTestOrganization(t, app.DB)
-		user2 := testutil.CreateTestUser(t, app.DB, org2.ID,
+		user2 := testutil.CreateTestUser(t, app.DB, org2.ID, withPerms(t, app, org2.ID, "chatbot.ai:read"),
 			testutil.WithEmail(testutil.UniqueEmail("org2-ai")),
 		)
 		createTestAIContext(t, app, org2.ID, "Org2 Context")
@@ -2642,7 +2642,7 @@ func TestApp_DeleteKeywordRule_CrossOrg(t *testing.T) {
 		rule := createTestKeywordRule(t, app, org1.ID, "Org1 Rule", []string{"org1"})
 
 		org2 := testutil.CreateTestOrganization(t, app.DB)
-		user2 := testutil.CreateTestUser(t, app.DB, org2.ID,
+		user2 := testutil.CreateTestUser(t, app.DB, org2.ID, withPerms(t, app, org2.ID, "chatbot.keywords:delete"),
 			testutil.WithEmail(testutil.UniqueEmail("org2-delkw")),
 		)
 
@@ -2711,7 +2711,7 @@ func TestApp_DeleteAIContext_CrossOrg(t *testing.T) {
 		aiCtx := createTestAIContext(t, app, org1.ID, "Org1 AI Context")
 
 		org2 := testutil.CreateTestOrganization(t, app.DB)
-		user2 := testutil.CreateTestUser(t, app.DB, org2.ID,
+		user2 := testutil.CreateTestUser(t, app.DB, org2.ID, withPerms(t, app, org2.ID, "chatbot.ai:delete"),
 			testutil.WithEmail(testutil.UniqueEmail("org2-delai")),
 		)
 
@@ -2744,7 +2744,7 @@ func TestApp_GetKeywordRule_CrossOrg(t *testing.T) {
 		rule := createTestKeywordRule(t, app, org1.ID, "Org1 Rule", []string{"secret"})
 
 		org2 := testutil.CreateTestOrganization(t, app.DB)
-		user2 := testutil.CreateTestUser(t, app.DB, org2.ID,
+		user2 := testutil.CreateTestUser(t, app.DB, org2.ID, withPerms(t, app, org2.ID, "chatbot.keywords:read"),
 			testutil.WithEmail(testutil.UniqueEmail("org2-getkw")),
 		)
 
@@ -2803,7 +2803,7 @@ func TestApp_GetAIContext_CrossOrg(t *testing.T) {
 		aiCtx := createTestAIContext(t, app, org1.ID, "Org1 Secret Context")
 
 		org2 := testutil.CreateTestOrganization(t, app.DB)
-		user2 := testutil.CreateTestUser(t, app.DB, org2.ID,
+		user2 := testutil.CreateTestUser(t, app.DB, org2.ID, withPerms(t, app, org2.ID, "chatbot.ai:read"),
 			testutil.WithEmail(testutil.UniqueEmail("org2-getai")),
 		)
 
@@ -2827,7 +2827,7 @@ func TestApp_GetKeywordRule_ResponseFields(t *testing.T) {
 	t.Run("response includes all expected fields", func(t *testing.T) {
 		app := newTestApp(t)
 		org := testutil.CreateTestOrganization(t, app.DB)
-		user := testutil.CreateTestUser(t, app.DB, org.ID)
+		user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "chatbot.keywords:read"))
 
 		rule := &models.KeywordRule{
 			BaseModel:       models.BaseModel{ID: uuid.New()},
@@ -2917,7 +2917,7 @@ func TestApp_UpdateChatbotSettings_RejectsUnsendableButtons(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			app := newTestApp(t)
 			org := testutil.CreateTestOrganization(t, app.DB)
-			user := testutil.CreateTestUser(t, app.DB, org.ID)
+			user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:write"))
 
 			req := testutil.NewJSONRequest(t, map[string]any{tt.field: tt.buttons})
 			testutil.SetAuthContext(req, org.ID, user.ID)
@@ -2948,7 +2948,7 @@ func TestApp_UpdateChatbotSettings_AcceptsSingleURLButton(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID)
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.chatbot:write"))
 
 	req := testutil.NewJSONRequest(t, map[string]any{
 		"greeting_message": "Hi!",

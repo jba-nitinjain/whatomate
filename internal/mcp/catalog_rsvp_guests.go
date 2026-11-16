@@ -63,15 +63,17 @@ func init() {
 			SideEffects: "sends WhatsApp invitation template messages",
 		},
 		Entry{
-			Area:    "rsvp",
-			Method:  "GET",
-			Path:    "/api/rsvp-events/{id}/reprompt/preview",
-			Summary: "Preview which guests with an unfinished RSVP would be re-prompted and the message they would get. Sends nothing.",
+			Area:       "rsvp",
+			Method:     "GET",
+			Path:       "/api/rsvp-events/{id}/reprompt/preview",
+			Permission: "rsvp:read",
+			Summary:    "Preview which guests with an unfinished RSVP would be re-prompted and the message they would get. Sends nothing.",
 		},
 		Entry{
-			Area:   "rsvp",
-			Method: "POST",
-			Path:   "/api/rsvp-events/{id}/reprompt",
+			Area:       "rsvp",
+			Method:     "POST",
+			Path:       "/api/rsvp-events/{id}/reprompt",
+			Permission: "rsvp:execute",
 			Summary: "Re-send the RSVP flow to guests who started but did not finish, resetting their response to " +
 				"pending first. Optionally only the listed phone numbers.",
 			Body: mxObj(nil, map[string]any{
@@ -80,9 +82,10 @@ func init() {
 			SideEffects: "sends WhatsApp messages",
 		},
 		Entry{
-			Area:   "rsvp",
-			Method: "POST",
-			Path:   "/api/rsvp-events/{id}/recover-partials",
+			Area:       "rsvp",
+			Method:     "POST",
+			Path:       "/api/rsvp-events/{id}/recover-partials",
+			Permission: "rsvp:execute",
 			Summary: "Save partial answers of guests who dropped off mid-flow, rebuilt from their chat history. " +
 				"Safe to repeat. Sends nothing.",
 		},

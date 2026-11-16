@@ -21,7 +21,7 @@ func TestApp_GetOrganizationSettings_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("get-settings")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:read"), testutil.WithEmail(testutil.UniqueEmail("get-settings")))
 
 	// Set organization settings
 	org.Settings = models.JSONB{
@@ -58,7 +58,7 @@ func TestApp_GetOrganizationSettings_Defaults(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("get-settings-defaults")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:read"), testutil.WithEmail(testutil.UniqueEmail("get-settings-defaults")))
 
 	// Organization with nil settings should return defaults
 	req := testutil.NewGETRequest(t)
@@ -102,7 +102,7 @@ func TestApp_UpdateOrganizationSettings_Success(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("update-settings")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:write", "accounts:write"), testutil.WithEmail(testutil.UniqueEmail("update-settings")))
 
 	maskEnabled := true
 	timezone := "America/New_York"
@@ -145,7 +145,7 @@ func TestApp_UpdateOrganizationSettings_PartialUpdate(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("partial-update")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:write", "accounts:write"), testutil.WithEmail(testutil.UniqueEmail("partial-update")))
 
 	// Set initial settings
 	org.Settings = models.JSONB{
@@ -196,7 +196,7 @@ func TestApp_UpdateOrganizationSettings_EmptyNameIgnored(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("empty-name")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:write", "accounts:write"), testutil.WithEmail(testutil.UniqueEmail("empty-name")))
 	originalName := org.Name
 
 	// Send an empty name -- should be ignored
@@ -220,7 +220,7 @@ func TestApp_UpdateOrganizationSettings_InvalidJSON(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("invalid-json")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:write", "accounts:write"), testutil.WithEmail(testutil.UniqueEmail("invalid-json")))
 
 	// Create a request with invalid JSON body
 	req := testutil.NewGETRequest(t)
@@ -302,7 +302,7 @@ func TestApp_GetOrganizationSettings_CallingDefaults(t *testing.T) {
 	app.Config.Calling.TransferTimeoutSecs = 60
 
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("calling-defaults")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:read"), testutil.WithEmail(testutil.UniqueEmail("calling-defaults")))
 
 	req := testutil.NewGETRequest(t)
 	testutil.SetAuthContext(req, org.ID, user.ID)
@@ -333,7 +333,7 @@ func TestApp_GetOrganizationSettings_CallingOverrides(t *testing.T) {
 	app.Config.Calling.TransferTimeoutSecs = 60
 
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("calling-overrides")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:read"), testutil.WithEmail(testutil.UniqueEmail("calling-overrides")))
 
 	// Set org-level calling overrides
 	org.Settings = models.JSONB{
@@ -368,7 +368,7 @@ func TestApp_UpdateOrganizationSettings_CallingFields(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("update-calling")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:write", "accounts:write"), testutil.WithEmail(testutil.UniqueEmail("update-calling")))
 
 	// Enable calling with custom values
 	req := testutil.NewJSONRequest(t, map[string]any{
@@ -397,7 +397,7 @@ func TestApp_UpdateOrganizationSettings_CallingPartialUpdate(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("calling-partial")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:write", "accounts:write"), testutil.WithEmail(testutil.UniqueEmail("calling-partial")))
 
 	// Set initial calling settings
 	org.Settings = models.JSONB{
@@ -431,7 +431,7 @@ func TestApp_UpdateOrganizationSettings_CallingDisable(t *testing.T) {
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("calling-disable")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:write", "accounts:write"), testutil.WithEmail(testutil.UniqueEmail("calling-disable")))
 
 	// Start with calling enabled
 	org.Settings = models.JSONB{
@@ -459,7 +459,7 @@ func TestApp_UpdateOrganizationSettings_CallingZeroDurationIgnored(t *testing.T)
 
 	app := newTestApp(t)
 	org := testutil.CreateTestOrganization(t, app.DB)
-	user := testutil.CreateTestUser(t, app.DB, org.ID, testutil.WithEmail(testutil.UniqueEmail("calling-zero")))
+	user := testutil.CreateTestUser(t, app.DB, org.ID, withPerms(t, app, org.ID, "settings.general:write", "accounts:write"), testutil.WithEmail(testutil.UniqueEmail("calling-zero")))
 
 	// Set initial calling settings
 	org.Settings = models.JSONB{

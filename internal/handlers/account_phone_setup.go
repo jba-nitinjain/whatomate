@@ -48,6 +48,9 @@ type accountTwoStepVerificationRequest struct {
 
 // GetAccountPhoneStatus returns the current phone verification and registration state from Meta.
 func (a *App) GetAccountPhoneStatus(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionRead); err != nil {
+		return nil
+	}
 	waAccount, err := a.resolveWhatsAppAccountForPhoneSetup(r)
 	if err != nil {
 		return nil
@@ -76,6 +79,9 @@ func (a *App) GetAccountPhoneStatus(r *fastglue.Request) error {
 
 // RequestAccountPhoneVerificationCode asks Meta to send the phone verification code by SMS or voice.
 func (a *App) RequestAccountPhoneVerificationCode(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	waAccount, err := a.resolveWhatsAppAccountForPhoneSetup(r)
 	if err != nil {
 		return nil
@@ -109,6 +115,9 @@ func (a *App) RequestAccountPhoneVerificationCode(r *fastglue.Request) error {
 
 // VerifyAccountPhoneCode confirms the phone verification code received from Meta.
 func (a *App) VerifyAccountPhoneCode(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	waAccount, err := a.resolveWhatsAppAccountForPhoneSetup(r)
 	if err != nil {
 		return nil
@@ -139,6 +148,9 @@ func (a *App) VerifyAccountPhoneCode(r *fastglue.Request) error {
 
 // RegisterAccountPhone enables messaging on the phone number and sets the initial PIN.
 func (a *App) RegisterAccountPhone(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	account, err := a.resolveWhatsAppAccountModelForPhoneSetup(r)
 	if err != nil {
 		return nil
@@ -197,6 +209,9 @@ func (a *App) RegisterAccountPhone(r *fastglue.Request) error {
 
 // UpdateAccountTwoStepVerification sets or rotates the 6-digit two-step PIN.
 func (a *App) UpdateAccountTwoStepVerification(r *fastglue.Request) error {
+	if _, _, err := a.requireAuth(r, models.ResourceAccounts, models.ActionWrite); err != nil {
+		return nil
+	}
 	waAccount, err := a.resolveWhatsAppAccountForPhoneSetup(r)
 	if err != nil {
 		return nil

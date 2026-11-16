@@ -41,9 +41,10 @@ type FlowResponse struct {
 
 // ListFlows returns all flows for the organization
 func (a *App) ListFlows(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	// The chatbot flow builder lists WhatsApp flows to link them from a step.
+	orgID, _, err := a.requireAnyPermission(r, permKey(models.ResourceFlowsWhatsApp, models.ActionRead), permKey(models.ResourceFlowsChatbot, models.ActionRead))
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	pg := parsePagination(r)
@@ -87,9 +88,9 @@ func (a *App) ListFlows(r *fastglue.Request) error {
 
 // CreateFlow creates a new WhatsApp flow
 func (a *App) CreateFlow(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceFlowsWhatsApp, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	var req FlowRequest
@@ -141,9 +142,9 @@ func (a *App) CreateFlow(r *fastglue.Request) error {
 
 // GetFlow returns a single flow by ID
 func (a *App) GetFlow(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceFlowsWhatsApp, models.ActionRead)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "flow")
@@ -163,9 +164,9 @@ func (a *App) GetFlow(r *fastglue.Request) error {
 
 // UpdateFlow updates an existing flow
 func (a *App) UpdateFlow(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceFlowsWhatsApp, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "flow")
@@ -222,9 +223,9 @@ func (a *App) UpdateFlow(r *fastglue.Request) error {
 
 // DeleteFlow deletes a flow
 func (a *App) DeleteFlow(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceFlowsWhatsApp, models.ActionDelete)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "flow")
@@ -252,9 +253,9 @@ func (a *App) DeleteFlow(r *fastglue.Request) error {
 
 // SaveFlowToMeta saves/updates a flow to Meta (keeps it in DRAFT status on Meta)
 func (a *App) SaveFlowToMeta(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceFlowsWhatsApp, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "flow")
@@ -359,9 +360,9 @@ func (a *App) SaveFlowToMeta(r *fastglue.Request) error {
 
 // PublishFlow publishes a flow to Meta
 func (a *App) PublishFlow(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceFlowsWhatsApp, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "flow")
@@ -431,9 +432,9 @@ func (a *App) PublishFlow(r *fastglue.Request) error {
 
 // DeprecateFlow deprecates a published flow
 func (a *App) DeprecateFlow(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceFlowsWhatsApp, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "flow")
@@ -490,9 +491,9 @@ func (a *App) DeprecateFlow(r *fastglue.Request) error {
 // DuplicateFlow creates a copy of an existing flow as a new DRAFT
 // This is useful for editing published flows - duplicate, edit, then publish the new one
 func (a *App) DuplicateFlow(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	orgID, _, err := a.requireAuth(r, models.ResourceFlowsWhatsApp, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	id, err := parsePathUUID(r, "id", "flow")
@@ -533,9 +534,10 @@ func (a *App) DuplicateFlow(r *fastglue.Request) error {
 
 // SyncFlows syncs flows from Meta for a specific WhatsApp account
 func (a *App) SyncFlows(r *fastglue.Request) error {
-	orgID, err := a.getOrgID(r)
+	// flows.whatsapp has no sync action; syncing from Meta rewrites local flows.
+	orgID, _, err := a.requireAuth(r, models.ResourceFlowsWhatsApp, models.ActionWrite)
 	if err != nil {
-		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+		return nil
 	}
 
 	// Get account name from request

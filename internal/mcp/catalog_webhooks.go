@@ -24,14 +24,14 @@ func init() {
 		Description: "Send Whatomate events (messages, contacts, transfers, leads) to your own systems by HTTP.",
 	})
 	register(
-		Entry{Area: "webhooks", Method: "GET", Path: "/api/webhooks", Summary: "List outgoing webhooks and the available event names.",
+		Entry{Area: "webhooks", Method: "GET", Path: "/api/webhooks", Permission: "webhooks:read", Summary: "List outgoing webhooks and the available event names.",
 			Query: append(setupPage(50), setupSearch("webhook name or URL"))},
-		Entry{Area: "webhooks", Method: "POST", Path: "/api/webhooks", Summary: "Create an outgoing webhook.",
+		Entry{Area: "webhooks", Method: "POST", Path: "/api/webhooks", Permission: "webhooks:write", Summary: "Create an outgoing webhook.",
 			Body: webhookBody("name", "url", "events"), SideEffects: "Whatomate will POST event data to this URL."},
-		Entry{Area: "webhooks", Method: "GET", Path: "/api/webhooks/{id}", Summary: "Get one webhook (the secret is never returned)."},
-		Entry{Area: "webhooks", Method: "PUT", Path: "/api/webhooks/{id}", Summary: "Update a webhook; empty text fields keep their value.", Body: webhookBody()},
-		Entry{Area: "webhooks", Method: "DELETE", Path: "/api/webhooks/{id}", Summary: "Delete a webhook.", SideEffects: "Deletes the webhook."},
-		Entry{Area: "webhooks", Method: "POST", Path: "/api/webhooks/{id}/test", Summary: "Send a test event to the webhook URL and report the response.",
+		Entry{Area: "webhooks", Method: "GET", Path: "/api/webhooks/{id}", Permission: "webhooks:read", Summary: "Get one webhook (the secret is never returned)."},
+		Entry{Area: "webhooks", Method: "PUT", Path: "/api/webhooks/{id}", Permission: "webhooks:write", Summary: "Update a webhook; empty text fields keep their value.", Body: webhookBody()},
+		Entry{Area: "webhooks", Method: "DELETE", Path: "/api/webhooks/{id}", Permission: "webhooks:delete", Summary: "Delete a webhook.", SideEffects: "Deletes the webhook."},
+		Entry{Area: "webhooks", Method: "POST", Path: "/api/webhooks/{id}/test", Permission: "webhooks:write", Summary: "Send a test event to the webhook URL and report the response.",
 			SideEffects: "Makes an HTTP request to the webhook URL."},
 	)
 }

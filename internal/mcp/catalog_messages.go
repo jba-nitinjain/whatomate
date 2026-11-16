@@ -111,9 +111,10 @@ func init() {
 				"Returns the file, not JSON.",
 		},
 		Entry{
-			Area:   "messages",
-			Method: "POST",
-			Path:   "/api/chat/messages/{id}/reprocess",
+			Area:       "messages",
+			Method:     "POST",
+			Path:       "/api/chat/messages/{id}/reprocess",
+			Permission: "chat:write",
 			Summary: "Run the chatbot again on a received message (continues or starts the matching flow) " +
 				"and ends any active agent transfer for that contact.",
 			SideEffects: "may send chatbot WhatsApp replies",

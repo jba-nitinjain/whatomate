@@ -74,17 +74,18 @@ func init() {
 			SideEffects: "The user loses access to this organisation.",
 		},
 		Entry{
-			Area:    "organizations",
-			Method:  "GET",
-			Path:    "/api/org/settings",
-			Summary: "Show the current organisation's settings: name, timezone, date format, phone masking, message retention, calling options and Meta app details.",
+			Area:       "organizations",
+			Method:     "GET",
+			Path:       "/api/org/settings",
+			Permission: "settings.general:read",
+			Summary:    "Show the current organisation's settings: name, timezone, date format, phone masking, message retention, calling options and Meta app details.",
 		},
 		Entry{
 			Area:       "organizations",
 			Method:     "PUT",
 			Path:       "/api/org/settings",
 			Summary:    "Change the current organisation's settings. Only the fields you send change. Changing meta_app_id, meta_config_id or meta_app_secret needs accounts:write.",
-			Permission: "",
+			Permission: "settings.general:write (meta_app_* fields: accounts:write)",
 			Body: admObj(map[string]any{
 				"name":                   admStr("Organisation name (empty is ignored)."),
 				"timezone":               admStr("IANA timezone, e.g. Asia/Kolkata."),
